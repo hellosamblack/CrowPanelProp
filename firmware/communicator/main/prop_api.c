@@ -2,6 +2,7 @@
 #include "prop_api.h"
 #include "prop_engine.h"
 #include "prop_net.h"
+#include "prop_ui.h"
 #include "bsp_io.h"
 #include <string.h>
 #include <strings.h>   /* strcasecmp */
@@ -10,9 +11,12 @@
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
+#include "esp_lvgl_port.h"
+#include "lvgl.h"
 #include "cJSON.h"
 
 #define API_TAG "PROP_API"
@@ -86,6 +90,12 @@ static esp_err_t dispatch_command(const char *json, int len)
             }
             if (idx >= 0 && cJSON_IsBool(on)) {
                 err = prop_engine_set_led(idx, cJSON_IsTrue(on));
+            }
+        } else if (strcmp(c, "ui") == 0) {
+            const cJSON *screen = cJSON_GetObjectItem(root, "screen");
+            if (cJSON_IsString(screen)) {        /* remote nav for testing/screenshots */
+                prop_ui_goto(screen->valuestring);
+                err = ESP_OK;
             }
         } else if (strcmp(c, "wifi") == 0) {
             const cJSON *ssid = cJSON_GetObjectItem(root, "ssid");
@@ -301,10 +311,62 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* GET /screenshot — capture the live screen as raw RGB565 (little-endian).
+ * Dimensions come back in X-Width/X-Height headers. Decode host-side with
+ * tools/screenshot.py. This is the remote "see the UI" path for graphics work. */
+static esp_err_t screenshot_get_handler(httpd_req_t *req)
+{
+    void *buf = NULL;
+    lv_img_dsc_t dsc = { 0 };
+    bool ok = false;
+
+    if (lvgl_port_lock(1000)) {
+        lv_obj_t *scr = lv_scr_act();
+        uint32_t sz = lv_snapshot_buf_size_needed(scr, LV_IMG_CF_TRUE_COLOR);
+        if (sz > 0) {
+            buf = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM);
+            if (buf && lv_snapshot_take_to_buf(scr, LV_IMG_CF_TRUE_COLOR, &dsc, buf, sz) == LV_RES_OK) {
+                ok = true;
+            }
+        }
+        lvgl_port_unlock();
+    }
+    if (!ok) {
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "snapshot failed");
+        return ESP_FAIL;
+    }
+
+    char w_str[8], h_str[8];
+    snprintf(w_str, sizeof(w_str), "%d", (int)dsc.header.w);
+    snprintf(h_str, sizeof(h_str), "%d", (int)dsc.header.h);
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "X-Width", w_str);
+    httpd_resp_set_hdr(req, "X-Height", h_str);
+    httpd_resp_set_hdr(req, "X-Format", "RGB565LE");
+
+    const char *p = (const char *)dsc.data;
+    size_t remaining = dsc.data_size;
+    esp_err_t err = ESP_OK;
+    while (remaining > 0) {
+        size_t chunk = remaining > 8192 ? 8192 : remaining;
+        if (httpd_resp_send_chunk(req, p, chunk) != ESP_OK) {
+            err = ESP_FAIL;
+            break;
+        }
+        p += chunk;
+        remaining -= chunk;
+    }
+    httpd_resp_send_chunk(req, NULL, 0);   /* end response */
+    free(buf);
+    return err;
+}
+
 esp_err_t prop_api_init(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 10;
     config.lru_purge_enable = true;
     config.stack_size = 8192;
 
@@ -319,13 +381,15 @@ esp_err_t prop_api_init(void)
     httpd_uri_t cmd  = { .uri = "/cmd",  .method = HTTP_POST, .handler = cmd_post_handler };
     httpd_uri_t ota  = { .uri = "/ota",  .method = HTTP_POST, .handler = ota_post_handler };
     httpd_uri_t ws   = { .uri = "/ws",   .method = HTTP_GET,  .handler = ws_handler, .is_websocket = true };
+    httpd_uri_t shot = { .uri = "/screenshot", .method = HTTP_GET, .handler = screenshot_get_handler };
     httpd_register_uri_handler(s_server, &root);
     httpd_register_uri_handler(s_server, &st);
     httpd_register_uri_handler(s_server, &cmd);
     httpd_register_uri_handler(s_server, &ota);
     httpd_register_uri_handler(s_server, &ws);
+    httpd_register_uri_handler(s_server, &shot);
 
     prop_engine_add_observer(broadcast_observer, NULL);
-    ESP_LOGI(API_TAG, "HTTP API up (/, /state, /cmd, /ws, /ota)");
+    ESP_LOGI(API_TAG, "HTTP API up (/, /state, /cmd, /ws, /ota, /screenshot)");
     return ESP_OK;
 }

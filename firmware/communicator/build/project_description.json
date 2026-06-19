@@ -1,7 +1,7 @@
 {
     "version":            "1.3",
     "project_name":       "communicator",
-    "project_version":    "bcdcc75",
+    "project_version":    "cb89ca3-dirty",
     "project_path":       "F:/git/personal/CrowPanelProp/firmware/communicator",
     "idf_path":           "C:/esp/v6.0.1/esp-idf",
     "build_dir":          "F:/git/personal/CrowPanelProp/firmware/communicator/build",

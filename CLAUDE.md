@@ -8,6 +8,19 @@ This is the support repository for the **CrowPanel Advance ESP32-P4 7-inch displ
 
 The board is an **ESP32-P4** (RISC-V dual-core HP @ up to 400 MHz, 32 MB PSRAM, 16 MB flash) paired with an **ESP32-C6** companion module that provides Wi-Fi/Bluetooth (the P4 has no native radio). Optional plug-in wireless modules: SX1262 (LoRa), nRF24L01.
 
+### This fork: the prop firmware (active development)
+
+The real work in this fork is **`firmware/communicator/`** — a custom ESP-IDF app turning the board
+into a cassette-futurism communicator/scanner prop. **It has its own `CLAUDE.md` — read
+`firmware/communicator/CLAUDE.md` before working there.** Highlights that differ from the stock examples:
+
+- Builds on **ESP-IDF 6.0.1** (not the examples' 5.4.2); the board is **chip rev v1.3** so config pins
+  the pre-v3 silicon line. Activate IDF + build/flash quirks are in that CLAUDE.md and the
+  `idf6-migration` memory.
+- **Remote visual development:** the firmware serves `GET /screenshot` (live screen as RGB565) and
+  accepts `{"cmd":"ui","screen":"..."}` to navigate. Use `firmware/communicator/tools/screenshot.py`
+  to grab a PNG and *look at the UI yourself* instead of asking the user to eyeball it.
+
 ## Repository layout
 
 - `example/V1.0`, `V1.1`, `V1.2` — example code per hardware revision. **V1.2 is the latest; default to it** unless asked otherwise. Each version directory contains parallel implementations:

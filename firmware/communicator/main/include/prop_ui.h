@@ -13,4 +13,9 @@
 
 esp_err_t prop_ui_init(void);
 
+/* Navigate the UI to a named screen (thread-safe; takes the LVGL lock). Used by
+ * the API {"cmd":"ui","screen":"..."} for remote testing + screenshots.
+ * Names: "home", "menu", "wifi", "display", "audio", "leds", "about". */
+void prop_ui_goto(const char *screen);
+
 #endif /* _PROP_UI_H_ */

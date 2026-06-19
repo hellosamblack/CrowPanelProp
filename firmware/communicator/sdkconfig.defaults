@@ -44,3 +44,7 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
 # LVGL fonts used by the cassette-futurism UI (montserrat_14 is on by default).
 CONFIG_LV_FONT_MONTSERRAT_24=y
+
+# LVGL snapshot: lets the firmware capture the screen to a buffer for the
+# /screenshot HTTP endpoint (remote visual verification during UI development).
+CONFIG_LV_USE_SNAPSHOT=y

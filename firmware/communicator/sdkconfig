@@ -4931,7 +4931,6 @@ CONFIG_LV_USE_GRID=y
 #
 # Others
 #
-# default:
 CONFIG_LV_USE_SNAPSHOT=y
 # default:
 # CONFIG_LV_USE_MONKEY is not set

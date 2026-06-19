@@ -54,6 +54,7 @@ static bool s_pass_shown;
 static lv_obj_t *s_setup_menu;                    /* global SETUP page */
 static lv_obj_t *s_setup_panels[SETUP_PANEL_MAX]; /* every full-screen setup panel */
 static int s_setup_panel_count;
+static lv_obj_t *s_panel_display, *s_panel_audio, *s_panel_leds, *s_panel_about;
 
 /* Register a panel so the navigation helpers can manage it (starts hidden). */
 static void register_panel(lv_obj_t *p)
@@ -342,48 +343,54 @@ static lv_obj_t *build_settings_panel(lv_obj_t *parent)
 {
     s_setup_panel = make_panel(parent, "WI-FI", back_to_menu_cb);
 
+    /* Content starts below the header (BACK button + title occupy ~y12..62). */
     /* Row 1: SCAN + SSID dropdown (left) ............ FORGET + CONNECT (right) */
-    make_btn(s_setup_panel, "SCAN", 110, LV_ALIGN_TOP_LEFT, 30, 56, setup_scan_cb);
+    make_btn(s_setup_panel, "SCAN", 110, LV_ALIGN_TOP_LEFT, 30, 84, setup_scan_cb);
 
     s_ssid_dd = lv_dropdown_create(s_setup_panel);
     lv_dropdown_set_options(s_ssid_dd, "(tap SCAN)");
     lv_obj_set_width(s_ssid_dd, 340);
-    lv_obj_align(s_ssid_dd, LV_ALIGN_TOP_LEFT, 150, 56);
+    lv_obj_align(s_ssid_dd, LV_ALIGN_TOP_LEFT, 150, 84);
     style_field(s_ssid_dd);
     lv_obj_add_event_cb(s_ssid_dd, ssid_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    make_btn(s_setup_panel, "CONNECT", 150, LV_ALIGN_TOP_RIGHT, -30, 56, setup_connect_cb);
-    s_forget_btn = make_btn(s_setup_panel, "FORGET", 150, LV_ALIGN_TOP_RIGHT, -190, 56, setup_forget_cb);
+    make_btn(s_setup_panel, "CONNECT", 150, LV_ALIGN_TOP_RIGHT, -30, 84, setup_connect_cb);
+    s_forget_btn = make_btn(s_setup_panel, "FORGET", 150, LV_ALIGN_TOP_RIGHT, -190, 84, setup_forget_cb);
     lv_obj_add_flag(s_forget_btn, LV_OBJ_FLAG_HIDDEN);
 
     /* Row 2: PASS + field + reveal (left). (BACK in the header replaces CANCEL.) */
     lv_obj_t *pass_lbl = lv_label_create(s_setup_panel);
     lv_label_set_text(pass_lbl, "PASS");
     lv_obj_set_style_text_color(pass_lbl, COL_AMBER, 0);
-    lv_obj_align(pass_lbl, LV_ALIGN_TOP_LEFT, 30, 128);
+    lv_obj_align(pass_lbl, LV_ALIGN_TOP_LEFT, 30, 156);
 
     s_pass_ta = lv_textarea_create(s_setup_panel);
     lv_textarea_set_one_line(s_pass_ta, true);
     lv_textarea_set_password_mode(s_pass_ta, true);
     lv_textarea_set_placeholder_text(s_pass_ta, "password");
     lv_obj_set_width(s_pass_ta, 300);
-    lv_obj_align(s_pass_ta, LV_ALIGN_TOP_LEFT, 100, 116);
+    lv_obj_align(s_pass_ta, LV_ALIGN_TOP_LEFT, 100, 144);
     style_field(s_pass_ta);
     lv_obj_add_event_cb(s_pass_ta, ta_focus_cb, LV_EVENT_FOCUSED, NULL);
 
-    s_show_btn = make_btn(s_setup_panel, LV_SYMBOL_EYE_OPEN, 70, LV_ALIGN_TOP_LEFT, 410, 116, setup_show_cb);
+    s_show_btn = make_btn(s_setup_panel, LV_SYMBOL_EYE_OPEN, 70, LV_ALIGN_TOP_LEFT, 410, 144, setup_show_cb);
 
     /* Row 3: Remember checkbox + status */
     s_remember_cb = lv_checkbox_create(s_setup_panel);
     lv_checkbox_set_text(s_remember_cb, "Remember this network");
     lv_obj_set_style_text_color(s_remember_cb, COL_AMBER, 0);
-    lv_obj_align(s_remember_cb, LV_ALIGN_TOP_LEFT, 30, 184);
+    lv_obj_align(s_remember_cb, LV_ALIGN_TOP_LEFT, 30, 212);
     lv_obj_add_state(s_remember_cb, LV_STATE_CHECKED);
+    /* Theme the tick box amber instead of the default blue. */
+    lv_obj_set_style_border_color(s_remember_cb, COL_DIM, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_remember_cb, COL_PANEL_ITEM, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_remember_cb, COL_AMBER, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(s_remember_cb, COL_AMBER, LV_PART_INDICATOR | LV_STATE_CHECKED);
 
     s_setup_status = lv_label_create(s_setup_panel);
     lv_label_set_text(s_setup_status, "");
     lv_obj_set_style_text_color(s_setup_status, COL_AMBER, 0);
-    lv_obj_align(s_setup_status, LV_ALIGN_TOP_LEFT, 360, 186);
+    lv_obj_align(s_setup_status, LV_ALIGN_TOP_LEFT, 360, 214);
 
     /* Big themed on-screen keyboard, hidden until the password field is focused. */
     s_keyboard = lv_keyboard_create(s_setup_panel);
@@ -400,17 +407,17 @@ static lv_obj_t *build_settings_panel(lv_obj_t *parent)
 static void build_setup_screens(lv_obj_t *parent)
 {
     build_settings_panel(parent);                              /* sets s_setup_panel (WI-FI) */
-    lv_obj_t *p_display = build_stub(parent, "DISPLAY");
-    lv_obj_t *p_audio   = build_stub(parent, "AUDIO");
-    lv_obj_t *p_leds    = build_stub(parent, "LEDS");
-    lv_obj_t *p_about   = build_stub(parent, "ABOUT");
+    s_panel_display = build_stub(parent, "DISPLAY");
+    s_panel_audio   = build_stub(parent, "AUDIO");
+    s_panel_leds    = build_stub(parent, "LEDS");
+    s_panel_about   = build_stub(parent, "ABOUT");
 
     s_setup_menu = make_panel(parent, "SETUP", close_setup_cb);   /* BACK here exits to main */
     menu_item(s_setup_menu, "WI-FI",   0, open_wifi_cb, NULL);
-    menu_item(s_setup_menu, "DISPLAY", 1, open_stub_cb, p_display);
-    menu_item(s_setup_menu, "AUDIO",   2, open_stub_cb, p_audio);
-    menu_item(s_setup_menu, "LEDS",    3, open_stub_cb, p_leds);
-    menu_item(s_setup_menu, "ABOUT",   4, open_stub_cb, p_about);
+    menu_item(s_setup_menu, "DISPLAY", 1, open_stub_cb, s_panel_display);
+    menu_item(s_setup_menu, "AUDIO",   2, open_stub_cb, s_panel_audio);
+    menu_item(s_setup_menu, "LEDS",    3, open_stub_cb, s_panel_leds);
+    menu_item(s_setup_menu, "ABOUT",   4, open_stub_cb, s_panel_about);
 }
 
 static void build_screen(void)
@@ -549,6 +556,22 @@ static void ui_observer(const prop_state_t *st, void *ctx)
     }
 
     lvgl_port_unlock();
+}
+
+void prop_ui_goto(const char *screen)
+{
+    if (!screen || !lvgl_port_lock(500)) {
+        return;
+    }
+    if (strcmp(screen, "home") == 0)         show_only(NULL);
+    else if (strcmp(screen, "menu") == 0)    show_only(s_setup_menu);
+    else if (strcmp(screen, "wifi") == 0)    open_wifi();
+    else if (strcmp(screen, "display") == 0) show_only(s_panel_display);
+    else if (strcmp(screen, "audio") == 0)   show_only(s_panel_audio);
+    else if (strcmp(screen, "leds") == 0)    show_only(s_panel_leds);
+    else if (strcmp(screen, "about") == 0)   show_only(s_panel_about);
+    lvgl_port_unlock();
+    ESP_LOGI(UI_TAG, "goto screen: %s", screen);
 }
 
 esp_err_t prop_ui_init(void)
