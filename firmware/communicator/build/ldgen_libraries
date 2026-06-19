@@ -204,6 +204,8 @@ F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/protobuf-c/lib
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/esp_local_ctrl/libesp_local_ctrl.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/protocomm/libprotocomm.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/esp_https_server/libesp_https_server.a
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__mdns/libespressif__mdns.a
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/esp_eth/libesp_eth.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/wear_levelling/libwear_levelling.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/fatfs/libfatfs.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/wear_levelling/libwear_levelling.a
@@ -230,13 +232,14 @@ F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/bsp_display/li
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/bsp_io/libbsp_io.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__button/libespressif__button.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__cjson/libespressif__cjson.a
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__mdns/libespressif__mdns.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__esp_hosted/libespressif__esp_hosted.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__esp_serial_slave_link/libespressif__esp_serial_slave_link.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__eppp_link/libespressif__eppp_link.a
-F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/esp_eth/libesp_eth.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__esp_serial_slave_link/libespressif__esp_serial_slave_link.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__esp_wifi_remote/libespressif__esp_wifi_remote.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/main/libmain.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/bsp_illuminate/libbsp_illuminate.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/bsp_io/libbsp_io.a
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__cjson/libespressif__cjson.a
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/esp_driver_tsens/libesp_driver_tsens.a

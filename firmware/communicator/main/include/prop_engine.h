@@ -20,6 +20,13 @@
 
 #define PROP_TEXT_MAX 40
 
+/* Waveform recorder trace: a chart-recorder/oscilloscope trail laid down behind
+ * the sweep in the main scanner track. The engine owns the samples (one ring of
+ * signed deflections, -100..100 = full down..full up); the UI just plots them.
+ * Sized to the track width in display columns — small enough to copy by value in
+ * every state snapshot without churning memory. */
+#define PROP_WAVE_SAMPLES 160
+
 typedef enum {
     SCENE_IDLE = 0,
     SCENE_SCANNING,
@@ -43,6 +50,14 @@ typedef struct {
     char channel[PROP_TEXT_MAX];       /* secondary readout, e.g. "CH 04 / 147.55 MHz" */
     prop_link_t link;
     uint32_t tick;                     /* monotonic animation frame counter */
+
+    /* Phase-1 main-readout dynamics (engine-owned; the UI is a pure plotter). */
+    int8_t wave[PROP_WAVE_SAMPLES];    /* recorder trail, per display column */
+    uint16_t wave_head;                /* index of the newest column (write head) */
+    uint32_t scene_tick;              /* ticks since the scene last changed */
+    bool booting;                      /* power-on self-test choreography in progress */
+    uint8_t sensitivity;               /* 0..100 receiver gain — scales waveform amplitude */
+    uint8_t chan_pos;                  /* 0..100 tuned position on the band (channel gauge) */
 } prop_state_t;
 
 typedef void (*prop_observer_cb_t)(const prop_state_t *state, void *ctx);
@@ -61,6 +76,8 @@ esp_err_t prop_engine_set_channel(const char *text);
 /* Manual LED override (e.g. operator forcing a lamp); persists until the scene
  * animation next drives that LED. */
 esp_err_t prop_engine_set_led(uint32_t led_index, bool on);
+/* Receiver sensitivity 0..100 (clamped); scales the live waveform amplitude. */
+esp_err_t prop_engine_set_sensitivity(uint8_t pct);
 
 /* Cycle to the next scene — handy default for a physical "mode" button. */
 esp_err_t prop_engine_next_scene(void);

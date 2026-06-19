@@ -20,6 +20,11 @@ CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 # PSRAM (32 MB on board) — needed for LVGL framebuffers.
 CONFIG_SPIRAM=y
 
+# NOTE: do NOT raise CONFIG_LV_MEM_SIZE_KILOBYTES above 32 — esp_hosted's SDIO
+# DMA mempool needs internal RAM and cannot move to PSRAM, so a bigger LV_MEM
+# triggers "HS_MP: mempool create failed: no mem" and a boot loop (confirmed).
+# Keep LVGL object count in check instead (lazy-build/tear-down SETUP panels).
+
 # HTTP server: allow enough handlers + WebSocket support for the live control API.
 CONFIG_HTTPD_WS_SUPPORT=y
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024

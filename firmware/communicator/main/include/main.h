@@ -20,6 +20,8 @@
 #include "prop_net.h"
 #include "prop_api.h"
 #include "prop_ui.h"
+#include "prop_fx.h"
+#include "prop_mic.h"
 
 #define MAIN_TAG "MAIN"
 #define MAIN_INFO(fmt, ...)  ESP_LOGI(MAIN_TAG, fmt, ##__VA_ARGS__)

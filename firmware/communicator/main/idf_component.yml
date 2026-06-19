@@ -8,6 +8,8 @@ dependencies:
   lvgl/lvgl: ^8.3.11
   # cJSON: removed from IDF core in 6.0, now pulled from the registry
   espressif/cjson: '*'
+  # mDNS: advertise <PROP_HOSTNAME>.local + the _http._tcp web console
+  espressif/mdns: '*'
   # WiFi via the onboard ESP32-C6 co-processor.
   # esp_wifi_remote 1.x is the line that targets IDF 6.0 (0.x referenced the
   # removed esp_interface.h). Let the resolver pick a coherent hosted+remote pair.

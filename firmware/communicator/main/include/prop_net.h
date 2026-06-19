@@ -20,6 +20,10 @@
 #define PROP_AP_SSID     "PROP-COMMS"
 #define PROP_AP_PASSWD   "scanner99"     /* >=8 chars; change for production */
 
+/* mDNS / DHCP hostname. The prop advertises itself so it can be reached at
+ * "<PROP_HOSTNAME>.local" instead of a hunt-the-IP-in-the-serial-log dance. */
+#define PROP_HOSTNAME    "comm-unit-7"
+
 /* One discovered access point (from prop_net_scan). */
 typedef struct {
     char    ssid[33];
@@ -59,5 +63,9 @@ prop_sta_state_t prop_net_sta_state(void);
 
 /* Copy the current STA IP ("0.0.0.0" if not connected) into out (>=16 bytes). */
 void prop_net_get_ip(char *out, size_t out_len);
+
+/* Current STA signal strength in dBm (negative; closer to 0 = stronger), or 0 if
+ * not connected / unavailable. Crosses the SDIO bus to the C6 — call sparingly. */
+int prop_net_get_rssi(void);
 
 #endif /* _PROP_NET_H_ */

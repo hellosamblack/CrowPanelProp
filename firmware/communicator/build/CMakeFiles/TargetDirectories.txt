@@ -1203,6 +1203,13 @@ F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__cjs
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__cjson/CMakeFiles/install.dir
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__cjson/CMakeFiles/install/local.dir
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__cjson/CMakeFiles/install/strip.dir
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__mdns/CMakeFiles/__idf_espressif__mdns.dir
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__mdns/CMakeFiles/edit_cache.dir
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__mdns/CMakeFiles/rebuild_cache.dir
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__mdns/CMakeFiles/list_install_components.dir
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__mdns/CMakeFiles/install.dir
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__mdns/CMakeFiles/install/local.dir
+F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__mdns/CMakeFiles/install/strip.dir
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__esp_hosted/CMakeFiles/__idf_espressif__esp_hosted.dir
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__esp_hosted/CMakeFiles/edit_cache.dir
 F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__esp_hosted/CMakeFiles/rebuild_cache.dir

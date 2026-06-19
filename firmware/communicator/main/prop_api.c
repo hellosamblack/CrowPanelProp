@@ -3,6 +3,7 @@
 #include "prop_engine.h"
 #include "prop_net.h"
 #include "prop_ui.h"
+#include "prop_fx.h"
 #include "bsp_io.h"
 #include <string.h>
 #include <strings.h>   /* strcasecmp */
@@ -37,6 +38,8 @@ static char *state_to_json(void)
     cJSON_AddStringToObject(root, "status", st.status);
     cJSON_AddStringToObject(root, "channel", st.channel);
     cJSON_AddNumberToObject(root, "link", st.link);
+    cJSON_AddNumberToObject(root, "sensitivity", st.sensitivity);
+    cJSON_AddNumberToObject(root, "channel_pos", st.chan_pos);
     cJSON_AddStringToObject(root, "ip", ip);
     cJSON *leds = cJSON_AddArrayToObject(root, "leds");
     for (int i = 0; i < LED_COUNT; i++) {
@@ -73,6 +76,18 @@ static esp_err_t dispatch_command(const char *json, int len)
             err = prop_engine_set_status(value->valuestring);
         } else if (strcmp(c, "channel") == 0 && cJSON_IsString(value)) {
             err = prop_engine_set_channel(value->valuestring);
+        } else if (strcmp(c, "sens") == 0 && cJSON_IsNumber(value)) {
+            int v = value->valueint;
+            err = prop_engine_set_sensitivity((uint8_t)(v < 0 ? 0 : v));
+        } else if (strcmp(c, "fx") == 0) {
+            const cJSON *on = cJSON_GetObjectItem(root, "on");
+            if (cJSON_IsBool(on)) {
+                prop_fx_set_enabled(cJSON_IsTrue(on));
+            }
+            if (cJSON_IsNumber(value)) {   /* intensity 0..100 */
+                prop_fx_set_intensity((uint8_t)(value->valueint < 0 ? 0 : value->valueint));
+            }
+            err = (on || cJSON_IsNumber(value)) ? ESP_OK : ESP_ERR_INVALID_ARG;
         } else if (strcmp(c, "led") == 0) {
             const cJSON *on = cJSON_GetObjectItem(root, "on");
             const cJSON *index = cJSON_GetObjectItem(root, "index");
@@ -293,14 +308,25 @@ static const char s_console_html[] =
 "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
 "<title>PROP CUE BOARD</title><style>body{background:#111;color:#e0b000;font-family:monospace;text-align:center}"
 "button{background:#222;color:#e0b000;border:2px solid #e0b000;padding:14px 18px;margin:6px;font:inherit;font-size:18px}"
-"#st{margin:16px;font-size:20px;white-space:pre}</style></head><body><h2>PROP CUE BOARD</h2><div id=st>connecting...</div>"
-"<div id=scenes></div><script>"
+"#st{margin:16px;font-size:20px;white-space:pre}"
+"#sens{margin:18px auto;max-width:520px;border:2px solid #e0b000;padding:14px}"
+"#sens label{font-size:18px}#sr{width:100%;accent-color:#e0b000;height:28px}"
+"</style></head><body><h2>PROP CUE BOARD</h2><div id=st>connecting...</div>"
+"<div id=scenes></div>"
+"<div id=sens><label>SENSITIVITY <span id=sv>--</span>%</label><br>"
+"<input id=sr type=range min=0 max=100 value=65></div><script>"
 "var ws=new WebSocket('ws://'+location.host+'/ws');"
 "var scenes=['IDLE','SCANNING','SIGNAL_ACQUIRED','COMMS','ALERT'];"
 "var d=document.getElementById('scenes');scenes.forEach(function(s){var b=document.createElement('button');"
 "b.textContent=s;b.onclick=function(){ws.send(JSON.stringify({cmd:'scene',value:s}))};d.appendChild(b)});"
+"var sr=document.getElementById('sr'),sv=document.getElementById('sv'),drag=false,st=0;"
+"function sendSens(){ws.send(JSON.stringify({cmd:'sens',value:+sr.value}))}"
+"sr.oninput=function(){sv.textContent=sr.value;drag=true;var n=Date.now();"
+"if(n-st>50){st=n;sendSens()}};"   /* throttle drags to ~20/s */
+"sr.onchange=function(){drag=false;sendSens()};"   /* always send the final value */
 "ws.onmessage=function(e){var o=JSON.parse(e.data);document.getElementById('st').textContent="
-"'SCENE: '+o.scene+'\\nSTATUS: '+o.status+'\\n'+o.channel+'\\nLINK:'+o.link+'  IP:'+o.ip};"
+"'SCENE: '+o.scene+'\\nSTATUS: '+o.status+'\\n'+o.channel+'\\nLINK:'+o.link+'  IP:'+o.ip;"
+"if(o.sensitivity!=null&&!drag){sr.value=o.sensitivity;sv.textContent=o.sensitivity}};"
 "ws.onopen=function(){ws.send(JSON.stringify({cmd:'next_scene'}));ws.send(JSON.stringify({cmd:'scene',value:'IDLE'}))};"
 "</script></body></html>";
 
@@ -325,11 +351,22 @@ static esp_err_t screenshot_get_handler(httpd_req_t *req)
         uint32_t sz = lv_snapshot_buf_size_needed(scr, LV_IMG_CF_TRUE_COLOR);
         if (sz > 0) {
             buf = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM);
-            if (buf && lv_snapshot_take_to_buf(scr, LV_IMG_CF_TRUE_COLOR, &dsc, buf, sz) == LV_RES_OK) {
-                ok = true;
+            if (!buf) {
+                ESP_LOGE(API_TAG, "snapshot: malloc %u failed (psram_largest=%u)",
+                         (unsigned)sz,
+                         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+            } else {
+                lv_res_t r = lv_snapshot_take_to_buf(scr, LV_IMG_CF_TRUE_COLOR, &dsc, buf, sz);
+                if (r == LV_RES_OK) {
+                    ok = true;
+                } else {
+                    ESP_LOGE(API_TAG, "snapshot: take_to_buf returned %d", (int)r);
+                }
             }
         }
         lvgl_port_unlock();
+    } else {
+        ESP_LOGE(API_TAG, "snapshot: could not lock LVGL");
     }
     if (!ok) {
         free(buf);

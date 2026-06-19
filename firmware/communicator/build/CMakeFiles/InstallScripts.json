@@ -171,6 +171,7 @@
 		"F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__button/cmake_install.cmake",
 		"F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/bsp_io/cmake_install.cmake",
 		"F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__cjson/cmake_install.cmake",
+		"F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__mdns/cmake_install.cmake",
 		"F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__esp_hosted/cmake_install.cmake",
 		"F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__esp_serial_slave_link/cmake_install.cmake",
 		"F:/git/personal/CrowPanelProp/firmware/communicator/build/esp-idf/espressif__eppp_link/cmake_install.cmake",

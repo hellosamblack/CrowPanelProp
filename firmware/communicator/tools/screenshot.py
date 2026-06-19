@@ -6,12 +6,14 @@ This converts to PNG using only the Python stdlib (no Pillow needed) so the
 image can be opened/inspected directly.
 
 Usage:
-    python screenshot.py [host_or_url] [out.png]
+    python screenshot.py [host_or_url] [out.png] [--crop X,Y,W,H] [--zoom N]
 
 Examples:
-    python screenshot.py 192.168.4.1                 # AP address, -> screenshot.png
-    python screenshot.py 172.17.2.167 wifi_page.png  # STA address on the LAN
-    python screenshot.py http://10.0.0.5/screenshot shot.png
+    python screenshot.py comm-unit-7.local            # mDNS name (no IP hunting)
+    python screenshot.py 192.168.4.1                  # AP address, -> screenshot.png
+    python screenshot.py 172.17.2.167 wifi_page.png   # STA address on the LAN
+    # inspect a small detail (e.g. the top-right LINK/signal corner) up close:
+    python screenshot.py comm-unit-7.local corner.png --crop 764,8,260,90 --zoom 3
 """
 import sys
 import struct
@@ -45,6 +47,28 @@ def rgb565le_to_rgb888_rows(data, w, h):
     return b"".join(rows)
 
 
+def crop_rgb888_rows(raw, w, h, box, zoom):
+    """Crop (and optionally nearest-neighbour zoom) already-decoded RGB888 rows.
+
+    `raw` is PNG-filtered scanlines (a leading 0 byte per row); `box` is
+    (x, y, cw, ch). Returns (out_w, out_h, new filtered rows). Handy for reading
+    small details on the 7" panel without squinting at a 1024x600 dump.
+    """
+    x, y, cw, ch = box
+    x = max(0, min(x, w)); y = max(0, min(y, h))
+    cw = max(1, min(cw, w - x)); ch = max(1, min(ch, h - y))
+    stride = 1 + w * 3
+    out = []
+    for ry in range(ch):
+        src = (y + ry) * stride + 1 + x * 3
+        line = raw[src:src + cw * 3]
+        if zoom > 1:
+            line = b"".join(line[i:i + 3] * zoom for i in range(0, len(line), 3))
+        row = bytes(line)
+        out.extend([b"\x00" + row] * zoom)
+    return cw * zoom, ch * zoom, b"".join(out)
+
+
 def write_png(path, w, h, raw):
     def chunk(typ, payload):
         return (struct.pack(">I", len(payload)) + typ + payload +
@@ -57,13 +81,30 @@ def write_png(path, w, h, raw):
 
 
 def main():
-    host = sys.argv[1] if len(sys.argv) > 1 else "192.168.4.1"
-    out = sys.argv[2] if len(sys.argv) > 2 else "screenshot.png"
+    args = sys.argv[1:]
+    crop = None
+    zoom = 1
+    pos = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--crop" and i + 1 < len(args):
+            crop = tuple(int(v) for v in args[i + 1].split(",")); i += 2
+        elif args[i] == "--zoom" and i + 1 < len(args):
+            zoom = max(1, int(args[i + 1])); i += 2
+        else:
+            pos.append(args[i]); i += 1
+    host = pos[0] if pos else "192.168.4.1"
+    out = pos[1] if len(pos) > 1 else "screenshot.png"
     url = host if host.startswith("http") else f"http://{host}/screenshot"
     w, h, data = fetch(url)
     raw = rgb565le_to_rgb888_rows(data, w, h)
-    write_png(out, w, h, raw)
-    print(f"saved {out} ({w}x{h}, {len(data)} bytes raw)")
+    if crop or zoom > 1:
+        ow, oh, raw = crop_rgb888_rows(raw, w, h, crop or (0, 0, w, h), zoom)
+        write_png(out, ow, oh, raw)
+        print(f"saved {out} ({ow}x{oh} from {w}x{h}, crop={crop} zoom={zoom})")
+    else:
+        write_png(out, w, h, raw)
+        print(f"saved {out} ({w}x{h}, {len(data)} bytes raw)")
 
 
 if __name__ == "__main__":

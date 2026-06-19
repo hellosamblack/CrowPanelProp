@@ -80,11 +80,31 @@ void app_main(void)
      * reboots and reflashes. */
     ESP_ERROR_CHECK(prop_settings_init());
 
+    /* Re-apply the saved backlight brightness (hardware_init lit it at 100%). */
+    uint32_t brightness = 80;
+    prop_settings_get_u32("brightness", &brightness, 80);
+    set_lcd_blight(brightness);
+
     /* Brain: must exist before observers (UI/API) attach. */
     ESP_ERROR_CHECK(prop_engine_init());
 
     /* Screen UI (observer) — after display + engine. */
     ESP_ERROR_CHECK(prop_ui_init());
+
+    /* CRT effects overlay on the top layer (hidden unless enabled in settings). */
+    esp_err_t fx_err = prop_fx_init();
+    if (fx_err != ESP_OK) {
+        MAIN_ERROR("fx overlay unavailable (%s) — running without CRT effects",
+                   esp_err_to_name(fx_err));
+    }
+
+    /* PDM microphone capture for the SPECTRUM instrument. NON-fatal: the prop
+     * runs fine without audio input (the spectrum screen shows offline). */
+    esp_err_t mic_err = prop_mic_init();
+    if (mic_err != ESP_OK) {
+        MAIN_ERROR("mic unavailable (%s) — SPECTRUM will show offline",
+                   esp_err_to_name(mic_err));
+    }
 
     /* WiFi (AP+STA via the C6) then the live control API. Both are NON-fatal:
      * the C6 radio is optional to the prop's core function, so a co-processor

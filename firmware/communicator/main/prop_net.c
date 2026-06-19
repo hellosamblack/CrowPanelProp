@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_mac.h"
+#include "mdns.h"
 
 #define NET_TAG "PROP_NET"
 #define MAX_RETRY 8
@@ -24,6 +25,8 @@ static esp_netif_t *s_netif_sta;
 static int s_retry_num;
 static char s_ip[16] = "0.0.0.0";
 static volatile prop_sta_state_t s_sta_state = STA_IDLE;
+static volatile int s_rssi;      /* cached signal strength (dBm), 0 = unknown */
+static void rssi_task(void *arg);
 
 static void load_sta_credentials(char *ssid, size_t ssid_len, char *pass, size_t pass_len)
 {
@@ -74,9 +77,26 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     }
 }
 
+/* Bring up mDNS so the prop answers "<PROP_HOSTNAME>.local" and advertises its
+ * web console over _http._tcp. Best-effort: failure here just means you fall back
+ * to the raw IP, so we log and carry on rather than aborting WiFi. */
+static void start_mdns(void)
+{
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(NET_TAG, "mdns_init failed: %s (no .local name)", esp_err_to_name(err));
+        return;
+    }
+    mdns_hostname_set(PROP_HOSTNAME);
+    mdns_instance_name_set("Communicator Prop");
+    mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+    ESP_LOGI(NET_TAG, "mDNS up: http://%s.local/", PROP_HOSTNAME);
+}
+
 static esp_err_t wifi_init_softap(void)
 {
     s_netif_ap = esp_netif_create_default_wifi_ap();
+    esp_netif_set_hostname(s_netif_ap, PROP_HOSTNAME);
     wifi_config_t ap = {
         .ap = {
             .ssid = PROP_AP_SSID,
@@ -131,6 +151,7 @@ esp_err_t prop_net_init(void)
     }
 
     s_netif_sta = esp_netif_create_default_wifi_sta();
+    esp_netif_set_hostname(s_netif_sta, PROP_HOSTNAME);   /* DHCP option 12 */
     char ssid[33] = {0}, pass[65] = {0};
     load_sta_credentials(ssid, sizeof(ssid), pass, sizeof(pass));
     apply_sta_config(ssid, pass);   /* STA config is best-effort */
@@ -143,6 +164,8 @@ esp_err_t prop_net_init(void)
         return err;
     }
     prop_engine_set_link(LINK_AP);   /* hotspot live immediately; STA pending */
+    start_mdns();                     /* advertise <PROP_HOSTNAME>.local */
+    xTaskCreate(rssi_task, "rssi", 4096, NULL, 3, NULL);   /* background RSSI poll */
     ESP_LOGI(NET_TAG, "WiFi APSTA started (sta ssid='%s')", ssid);
     return ESP_OK;
 }
@@ -244,5 +267,26 @@ void prop_net_get_ip(char *out, size_t out_len)
 {
     if (out && out_len) {
         strlcpy(out, s_ip, out_len);
+    }
+}
+
+int prop_net_get_rssi(void)
+{
+    return s_rssi;   /* cached by rssi_task; cheap, no SDIO round-trip here */
+}
+
+/* Poll RSSI in the background (~1 Hz) so UI code can read it without crossing the
+ * SDIO bus on the render path — doing that under the LVGL lock stalls the panel. */
+static void rssi_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        int rssi = 0;
+        if (s_sta_state == STA_CONNECTED && esp_wifi_sta_get_rssi(&rssi) == ESP_OK) {
+            s_rssi = rssi;
+        } else {
+            s_rssi = 0;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

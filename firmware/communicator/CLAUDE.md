@@ -22,19 +22,21 @@ pre-v3 silicon line — don't touch `CONFIG_ESP32P4_*REV*` or it won't boot. See
 
 ## Seeing the UI WITHOUT asking a human (use this constantly for graphics)
 
-The firmware serves a live screen capture. The dev machine and the board are on the same LAN
-(board STA IP shows in the serial log, e.g. `172.17.2.167`; AP fallback is `192.168.4.1`).
+The firmware serves a live screen capture. The board advertises **mDNS**, so reach it at
+**`comm-unit-7.local`** (hostname `PROP_HOSTNAME`) instead of hunting the IP — no serial grep
+needed. (STA IP still shows in the log, e.g. `172.17.2.167`; AP fallback is `192.168.4.1`.)
 
 ```powershell
 # 1) drive the UI to any screen:  home | menu | wifi | display | audio | leds | about
-Invoke-RestMethod -Uri "http://<ip>/cmd" -Method Post -Body '{"cmd":"ui","screen":"wifi"}'
-# 2) capture it to a PNG you can open/Read:
-python tools/screenshot.py <ip> wifi_page.png
+Invoke-RestMethod -Uri "http://comm-unit-7.local/cmd" -Method Post -Body '{"cmd":"ui","screen":"wifi"}'
+# 2) capture it to a PNG you can open/Read (add --crop X,Y,W,H --zoom N for small details):
+python tools/screenshot.py comm-unit-7.local wifi_page.png
+python tools/screenshot.py comm-unit-7.local corner.png --crop 764,8,260,86 --zoom 3
 ```
 
 `/screenshot` returns raw RGB565LE + `X-Width`/`X-Height`; `tools/screenshot.py` converts to PNG
-with the stdlib (no Pillow). **Prefer this over asking the user to eyeball the screen.**
-To find the IP from serial: capture COM7 and grep `STA got IP`.
+with the stdlib (no Pillow) and can crop/zoom a region. **Prefer this over asking the user to
+eyeball the screen.** For the full iteration loop see the project skill `communicator-ui`.
 
 ## UI architecture (where to make graphics changes)
 
@@ -57,14 +59,21 @@ To find the IP from serial: capture COM7 and grep `STA got IP`.
 
 Palette + helpers are at the top of `prop_ui.c`:
 
-- `COL_BG` (0x0A0A06), `COL_AMBER` (0xE0B000), `COL_DIM` (0x6B5300), `COL_ALERT` (0xFF3030),
-  `COL_PANEL_ITEM` (0x141008).
+- `COL_BG` (0x0A0A06), `COL_AMBER` (0xE0B000), `COL_MUTE` (0xB58A00), `COL_DIM` (0x6B5300),
+  `COL_ALERT` (0xFF3030), `COL_PANEL_ITEM` (0x141008).
+- **Camera legibility is a requirement** (7" panel filmed on set): never use `COL_DIM` for text the
+  viewer must read — use `COL_MUTE` + a bold font. `COL_DIM` is for unlit/de-emphasised elements.
 - `style_btn()`, `style_field()` (textarea/dropdown), `style_keyboard()` — apply these to new
   widgets so they match (square corners, amber-on-black). `make_btn()` builds a themed button.
-- Fonts: `montserrat_14` (default) and `montserrat_24` are enabled. To add another size, set
-  `CONFIG_LV_FONT_MONTSERRAT_NN=y` in `sdkconfig.defaults` (each size costs flash).
+- **Font is Eurostile** (cassette-futurism), not montserrat: `FONT_BODY` (`eurostile_14`, 16 px
+  Bold) and `FONT_HEAD` (`eurostile_24`, 24 px Bold), generated from `resources/Eurostile-*.ttf`.
+  `build_screen()` sets `FONT_BODY` on the screen so all widgets inherit it. To regen/add a size,
+  use the `lv_font_conv` recipe in the `communicator-ui` skill (must merge the FontAwesome symbol
+  range or `LV_SYMBOL_*` glyphs vanish; fix the generated `#include` to plain `"lvgl.h"`).
 - Default LVGL widgets render blue/white — always theme indicators (e.g. checkbox `LV_PART_INDICATOR`)
   or they clash.
+- **Never call WiFi/SDIO APIs (e.g. `esp_wifi_sta_get_rssi`) under the LVGL lock** — it stalls the
+  panel (caused ~30 s boot flicker). Cache such values from a background task; the UI reads the cache.
 
 ## Adding images / custom fonts
 
@@ -91,7 +100,20 @@ Palette + helpers are at the top of `prop_ui.c`:
 | `main/prop_net.c` | WiFi AP+STA via C6, scan, STA state, NVS creds |
 | `main/prop_api.c` | HTTP: `/`, `/state`, `/cmd`, `/ws`, `/ota`, `/screenshot` |
 | `main/prop_settings.c` | NVS key/value (survives reflash) |
+| `main/prop_fx.c` | CRT post overlay on `lv_layer_top()` (scanlines/grid/phosphor); lazy-allocated, off by default |
+| `main/prop_mic.c` | PDM mic capture (I2S0) + FFT → cached spectrum bands + dB level |
 | `peripheral/bsp_*` | display/touch/backlight (bsp_illuminate, bsp_display, bsp_i2c), LEDs+buttons (bsp_io) |
+
+### Hardware notes (non-obvious; confirmed from vendor examples)
+
+- **Microphone is PDM** straight into the P4's I2S0 (no codec): **CLK GPIO24, DATA GPIO26**,
+  16 kHz / 16-bit / mono, `driver/i2s_pdm.h`. The root `readme.md` documents only audio-OUT
+  (I2S LRCLK 21 / BCLK 22 / SDATA 23, amp ctrl 30); the input path came from
+  `example/*/Lesson11-Playback_After_Recording/peripheral/bsp_mic/`. See the `board-mic-path` memory.
+- **LV_MEM is hard-capped at 32 KB** — raising it boot-loops ("HS_MP: mempool create failed:
+  no mem"): esp_hosted's SDIO DMA mempool needs internal RAM and can't move to PSRAM. Keep LVGL
+  object count down instead — SETUP/instrument panels are **lazily built, one alive at a time**
+  (`open_panel`/`close_panel` in `prop_ui.c`), so peak usage is "main screen + one panel".
 
 ## API quick reference (for scripting/tests)
 

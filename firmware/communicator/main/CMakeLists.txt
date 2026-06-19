@@ -5,4 +5,5 @@ idf_component_register(SRCS ${main}
                        REQUIRES bsp_display bsp_illuminate bsp_i2c bsp_io
                                 esp_timer esp_lvgl_port lvgl
                                 esp_wifi esp_netif esp_event nvs_flash
-                                esp_http_server app_update cjson)
+                                esp_http_server app_update cjson mdns
+                                esp_driver_tsens esp_driver_i2s)
