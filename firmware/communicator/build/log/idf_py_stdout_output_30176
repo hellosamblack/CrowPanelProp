@@ -1,0 +1,41 @@
+Command: cmake -G Ninja -B F:\git\personal\CrowPanelProp\firmware\communicator\build -DPYTHON_DEPS_CHECKED=1 -DPYTHON=C:\Espressif\tools\python\v6.0.1\venv\Scripts\python.exe -DESP_PLATFORM=1 -DCCACHE_ENABLE=True F:\git\personal\CrowPanelProp\firmware\communicator
+-- IDF_TARGET is not set, guessed 'esp32p4' from sdkconfig 'F:/git/personal/CrowPanelProp/firmware/communicator/sdkconfig.defaults'
+-- Found Git: C:/Program Files/Git/cmd/git.exe (found version "2.54.0.windows.1")
+-- Component directory C:/esp/v6.0.1/esp-idf/components/mqtt does not contain a CMakeLists.txt file. No component will be added
+-- Minimal build - OFF
+-- ccache will be used for faster recompilation
+-- The C compiler identification is GNU 15.2.0
+-- The CXX compiler identification is GNU 15.2.0
+-- The ASM compiler identification is GNU
+-- Found assembler: C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/riscv32-esp-elf-gcc.exe
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/riscv32-esp-elf-gcc.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/riscv32-esp-elf-g++.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Building ESP-IDF components for target esp32p4
+NOTICE: Manifest files have changed, solving dependencies.
+.......................NOTICE: Updating lock file at F:\git\personal\CrowPanelProp\firmware\communicator\dependencies.lock
+NOTICE: Processing 14 dependencies:
+NOTICE: [1/14] espressif/button (4.2.0)
+NOTICE: [2/14] espressif/cjson (1.7.19~2)
+NOTICE: [3/14] espressif/cmake_utilities (0.5.3)
+NOTICE: [4/14] espressif/eppp_link (1.1.5)
+NOTICE: [5/14] espressif/esp_hosted (2.12.9)
+NOTICE: [6/14] espressif/esp_lcd_ek79007 (1.0.4)
+NOTICE: [7/14] espressif/esp_lcd_touch (1.2.1)
+NOTICE: [8/14] espressif/esp_lcd_touch_gt911 (1.2.0~2)
+NOTICE: [9/14] espressif/esp_lvgl_port (2.8.0~1)
+NOTICE: [10/14] espressif/esp_serial_slave_link (1.1.2)
+NOTICE: [11/14] espressif/esp_wifi_remote (0.16.3)
+NOTICE: [12/14] espressif/wifi_remote_over_eppp (0.3.2)
+NOTICE: [13/14] lvgl/lvgl (8.4.0)
+NOTICE: [14/14] idf (6.0.1)
+-- Using new driver components (IDF >= 5.0)
+-- ESP-TEE is currently supported only on the esp32c6;esp32h2;esp32c5;esp32c61 SoCs
+-- Configuring incomplete, errors occurred!

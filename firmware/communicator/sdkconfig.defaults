@@ -1,0 +1,46 @@
+# Target + board defaults for the communicator prop firmware.
+# Generated as a starting point; run `idf.py set-target esp32p4` then `idf.py menuconfig` to refine.
+
+CONFIG_IDF_TARGET="esp32p4"
+
+# This board uses an early P4 (chip revision v1.3 / engineering sample). IDF 6.0
+# defaults to v3.x silicon, which refuses to boot on it. Switch to the pre-v3
+# line (supports rev 0.x/1.x, max v1.99) and set the minimum to v1.0.
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+
+# Custom partition table with factory + ota_0 + ota_1 (copied from Lesson09) so WiFi OTA works.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Board has 16 MB flash; needed for the factory + ota_0 + ota_1 partition layout.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# PSRAM (32 MB on board) — needed for LVGL framebuffers.
+CONFIG_SPIRAM=y
+
+# HTTP server: allow enough handlers + WebSocket support for the live control API.
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
+# FreeRTOS tick at 1 kHz for smooth animation timing.
+CONFIG_FREERTOS_HZ=1000
+
+# ESP32-C6 WiFi co-processor link (esp_hosted over SDIO). These pins are specific
+# to the CrowPanel Advance V1.0 board (from the Lesson17 reference config): 1-bit
+# SDIO on slot 1, slave reset on GPIO32. esp_hosted's defaults (reset GPIO54) do
+# not match this board and cause "failed to read registers" SDIO timeouts.
+CONFIG_ESP_HOSTED_SDIO_SLOT_1=y
+CONFIG_ESP_HOSTED_SDIO_1_BIT_BUS=y
+CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=32
+CONFIG_ESP_HOSTED_SDIO_PIN_CMD=19
+CONFIG_ESP_HOSTED_SDIO_PIN_CLK=18
+CONFIG_ESP_HOSTED_SDIO_PIN_D0=14
+CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
+
+# Log level
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# LVGL fonts used by the cassette-futurism UI (montserrat_14 is on by default).
+CONFIG_LV_FONT_MONTSERRAT_24=y

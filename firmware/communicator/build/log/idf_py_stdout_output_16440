@@ -1,0 +1,26 @@
+Command: ninja all
+[1/11] Performing build step for 'bootloader'
+[1/1] C:\WINDOWS\system32\cmd.exe /C "cd /D F:\git\personal\CrowPanelProp\firmware\communicator\build\bootloader && C:\Espressif\tools\python\v6.0.1\venv\Scripts\python.exe C:/esp/v6.0.1/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x2000 F:/git/personal/CrowPanelProp/firmware/communicator/build/bootloader/bootloader.bin"
+Bootloader binary size 0x5c00 bytes. 0x400 bytes (4%) free.
+[2/11] No install step for 'bootloader'
+[3/11] Completed 'bootloader'
+[4/11] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/prop_net.c.obj
+[5/11] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/prop_ui.c.obj
+[6/11] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/main.c.obj
+[7/11] Linking C static library esp-idf\main\libmain.a
+[8/11] Generating esp-idf/esp_system/ld/sections.ld
+[9/11] Linking CXX executable communicator.elf
+FAILED: communicator.elf 
+C:\WINDOWS\system32\cmd.exe /C "cd . && C:\Espressif\tools\riscv32-esp-elf\esp-15.2.0_20251204\riscv32-esp-elf\bin\riscv32-esp-elf-g++.exe @"F:/git/personal/CrowPanelProp/firmware/communicator/build/toolchain/cxxflags" @"F:/git/personal/CrowPanelProp/firmware/communicator/build/toolchain/ldflags" -Wl,--cref -Wl,--defsym=IDF_TARGET_ESP32P4=0 -Wl,--Map=F:/git/personal/CrowPanelProp/firmware/communicator/build/communicator.map -Wl,--no-warn-rwx-segments -Wl,--orphan-handling=error -fno-lto -Wl,--gc-sections -Wl,--warn-common -T rom.api.ld -T esp32p4.peripherals.ld -T esp32p4.rom.eco5.ld -T esp32p4.rom.api.ld -T esp32p4.rom.eco5.rvfp.ld -T esp32p4.rom.systimer.ld -T esp32p4.rom.version.ld -T esp32p4.rom.eco5.libc.ld -T memory.ld -T sections.ld -T rom.wdt.ld @CMakeFiles\communicator.elf.rsp -o communicator.elf && cd ."
+C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/../lib/gcc/riscv32-esp-elf/15.2.0/../../../../riscv32-esp-elf/bin/ld.exe: esp-idf/main/libmain.a(prop_net.c.obj): in function `load_sta_credentials':
+F:/git/personal/CrowPanelProp/firmware/communicator/main/prop_net.c:28:(.text.load_sta_credentials+0x22): undefined reference to `prop_settings_get_str'
+C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/../lib/gcc/riscv32-esp-elf/15.2.0/../../../../riscv32-esp-elf/bin/ld.exe: F:/git/personal/CrowPanelProp/firmware/communicator/main/prop_net.c:29:(.text.load_sta_credentials+0x3a): undefined reference to `prop_settings_get_str'
+C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/../lib/gcc/riscv32-esp-elf/15.2.0/../../../../riscv32-esp-elf/bin/ld.exe: esp-idf/main/libmain.a(prop_net.c.obj): in function `prop_net_set_sta_credentials':
+F:/git/personal/CrowPanelProp/firmware/communicator/main/prop_net.c:136:(.text.prop_net_set_sta_credentials+0x1a): undefined reference to `prop_settings_set_str'
+C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/../lib/gcc/riscv32-esp-elf/15.2.0/../../../../riscv32-esp-elf/bin/ld.exe: F:/git/personal/CrowPanelProp/firmware/communicator/main/prop_net.c:136:(.text.prop_net_set_sta_credentials+0x34): undefined reference to `prop_settings_set_str'
+C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/../lib/gcc/riscv32-esp-elf/15.2.0/../../../../riscv32-esp-elf/bin/ld.exe: esp-idf/main/libmain.a(main.c.obj): in function `app_main':
+F:/git/personal/CrowPanelProp/firmware/communicator/main/main.c:77:(.text.app_main+0x66): undefined reference to `prop_settings_init'
+C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/../lib/gcc/riscv32-esp-elf/15.2.0/../../../../riscv32-esp-elf/bin/ld.exe: esp-idf/main/libmain.a(prop_ui.c.obj): in function `lv_color_hex':
+F:/git/personal/CrowPanelProp/firmware/communicator/managed_components/lvgl__lvgl/src/misc/lv_color.h:623:(.text.show_setup_panel+0x1e): undefined reference to `prop_settings_get_str'
+collect2.exe: error: ld returned 1 exit status
+ninja: build stopped: subcommand failed.

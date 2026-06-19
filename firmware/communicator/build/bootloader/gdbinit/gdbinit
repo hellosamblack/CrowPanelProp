@@ -1,0 +1,2 @@
+source F:/git/personal/CrowPanelProp/firmware/communicator/build/bootloader/gdbinit/symbols
+source F:/git/personal/CrowPanelProp/firmware/communicator/build/bootloader/gdbinit/connect

@@ -1,0 +1,10 @@
+Command: ninja flash
+
+A fatal error occurred: 'bootloader/bootloader.bin' requires chip revision in range [v3.1 - v3.99] (this chip is revision v1.3). Use the force argument to flash anyway.
+CMake Error at C:/esp/v6.0.1/esp-idf/components/esptool_py/run_serial_tool.cmake:67 (message):
+  
+  C:/Espressif/tools/python/v6.0.1/venv/Scripts/python.exe;-m;esptool;--chip;esp32p4
+  failed.
+
+
+
