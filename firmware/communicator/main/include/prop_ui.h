@@ -9,13 +9,26 @@
  *
  * Call AFTER display_init() (LVGL must be running). */
 
+#include <stdbool.h>
 #include "esp_err.h"
 
 esp_err_t prop_ui_init(void);
 
 /* Navigate the UI to a named screen (thread-safe; takes the LVGL lock). Used by
- * the API {"cmd":"ui","screen":"..."} for remote testing + screenshots.
- * Names: "home", "menu", "wifi", "display", "audio", "leds", "about". */
+ * the API {"cmd":"ui","screen":"..."} for remote testing + screenshots. Names:
+ * "home" (console), "scanner", "archive", "cassette", "insights", "menu", "wifi",
+ * "display", "audio", "leds", "about", "vitals", "scan", "spectrum". */
 void prop_ui_goto(const char *screen);
+
+/* Physical-control input, decoupled from hardware (web portal drives it now; the
+ * real knobs/switches route here later). Thread-safe; takes the LVGL lock.
+ *   control = "selector": arg >0 = rotate CW, <0 = CCW, 0 = press
+ *   control = "tab":      arg = archive section index
+ *   control = "action":   arg 1 = primary/select, 2 = back to console */
+void prop_ui_input(const char *control, int arg);
+
+/* Show/hide the FPS meter HUD (top-right). Persisted to NVS ("fps_on").
+ * Thread-safe; takes the LVGL lock. */
+void prop_ui_set_fps(bool on);
 
 #endif /* _PROP_UI_H_ */

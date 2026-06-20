@@ -341,7 +341,8 @@ uint8_t prop_fx_refresh(void) { return s_refresh_pct; }
 #define TR_NW 160
 #define TR_NH 100
 static lv_obj_t  *s_tr_box;        /* clipping container on the active screen */
-static lv_obj_t  *s_tr_img;        /* noise image inside it */
+static lv_obj_t  *s_tr_img;        /* noise image inside it (snow flavors only) */
+static lv_obj_t  *s_tr_seam;       /* bright sweep/pinch line (roll/collapse) */
 static void      *s_tr_buf;        /* noise pixel buffer (PSRAM) */
 static lv_img_dsc_t s_tr_noise;
 static uint32_t   s_tr_mode = 1;
@@ -359,7 +360,7 @@ static void tr_fill_noise(void)
 static void tr_ready_cb(lv_anim_t *a)
 {
     (void)a;
-    if (s_tr_box) { lv_obj_del(s_tr_box); s_tr_box = NULL; s_tr_img = NULL; }
+    if (s_tr_box) { lv_obj_del(s_tr_box); s_tr_box = NULL; s_tr_img = NULL; s_tr_seam = NULL; }
 }
 
 static void tr_exec_cb(void *var, int32_t v)
@@ -412,28 +413,41 @@ void prop_fx_transition_play(void)
     if (s_tr_box) {
         lv_anim_del(s_tr_box, tr_exec_cb);
         lv_obj_del(s_tr_box);
-        s_tr_box = NULL; s_tr_img = NULL;
+        s_tr_box = NULL; s_tr_img = NULL; s_tr_seam = NULL;
     }
 
-    tr_fill_noise();
+    bool snow = (mode == 1 || mode == 4);   /* noise-textured flavors */
 
+    /* The mask: black for roll/collapse (the "tube" going dark), noise for snow.
+     * v8 clips children to the box, so shrinking it crops the contents. */
     s_tr_box = lv_obj_create(lv_scr_act());
     lv_obj_remove_style_all(s_tr_box);
     lv_obj_set_size(s_tr_box, FX_W, FX_H);
     lv_obj_set_pos(s_tr_box, 0, 0);
     lv_obj_clear_flag(s_tr_box, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(s_tr_box, LV_OBJ_FLAG_CLICKABLE);
-    /* v8 clips children to the parent box by default, so shrinking the box on a
-     * collapse crops the noise — no extra clip flag needed. */
     lv_obj_set_style_bg_opa(s_tr_box, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(s_tr_box, FX_BLACK, 0);
 
-    s_tr_img = lv_img_create(s_tr_box);
-    lv_img_set_src(s_tr_img, &s_tr_noise);
-    lv_img_set_antialias(s_tr_img, false);
-    /* Uniform zoom that overfills 1024x600 from the 160x100 tile (clipped by box). */
-    lv_img_set_zoom(s_tr_img, (256 * FX_W / TR_NW) + 1);
-    lv_obj_align(s_tr_img, LV_ALIGN_CENTER, 0, 0);
+    if (snow) {
+        tr_fill_noise();
+        s_tr_img = lv_img_create(s_tr_box);
+        lv_img_set_src(s_tr_img, &s_tr_noise);
+        lv_img_set_antialias(s_tr_img, false);
+        lv_img_set_zoom(s_tr_img, (256 * FX_W / TR_NW) + 1);   /* overfill 1024x600 */
+        lv_obj_align(s_tr_img, LV_ALIGN_CENTER, 0, 0);
+    }
+
+    /* Bright phosphor sweep/pinch line for roll + collapse (not snow). */
+    if (mode == 2 || mode == 3) {
+        s_tr_seam = lv_obj_create(s_tr_box);
+        lv_obj_remove_style_all(s_tr_seam);
+        lv_obj_set_size(s_tr_seam, FX_W, 4);
+        lv_obj_set_style_bg_opa(s_tr_seam, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(s_tr_seam, FX_GLOW, 0);
+        /* roll: seam rides the box's lower edge; collapse: it sits at the pinch centre. */
+        lv_obj_align(s_tr_seam, mode == 2 ? LV_ALIGN_BOTTOM_MID : LV_ALIGN_CENTER, 0, 0);
+    }
 
     lv_anim_t a;
     lv_anim_init(&a);
@@ -441,10 +455,10 @@ void prop_fx_transition_play(void)
     lv_anim_set_exec_cb(&a, tr_exec_cb);
     lv_anim_set_ready_cb(&a, tr_ready_cb);
     switch (mode) {
-        case 1: lv_anim_set_values(&a, 0, 1);     lv_anim_set_time(&a, 180); break;
-        case 2: lv_anim_set_values(&a, 0, FX_H);  lv_anim_set_time(&a, 200); break;
-        case 3: lv_anim_set_values(&a, 0, FX_H);  lv_anim_set_time(&a, 150); break;
-        case 4: lv_anim_set_values(&a, 0, FX_H);  lv_anim_set_time(&a, 240); break;
+        case 1: lv_anim_set_values(&a, 0, 6);     lv_anim_set_time(&a, 280); break;  /* snow shimmer */
+        case 2: lv_anim_set_values(&a, 0, FX_H);  lv_anim_set_time(&a, 420); break;  /* roll up */
+        case 3: lv_anim_set_values(&a, 0, FX_H);  lv_anim_set_time(&a, 340); break;  /* collapse */
+        case 4: lv_anim_set_values(&a, 0, FX_H);  lv_anim_set_time(&a, 440); break;  /* snow+collapse */
     }
     lv_anim_start(&a);
 }

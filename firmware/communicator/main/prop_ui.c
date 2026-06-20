@@ -703,6 +703,10 @@ static void fx_trans_cb(lv_event_t *e)
     uint32_t v = lv_dropdown_get_selected(lv_event_get_target(e));
     prop_settings_set_u32("fx_trans", v);   /* 0 off, 1 snow, 2 roll, 3 collapse, 4 snow+collapse */
 }
+static void fps_toggle_cb(lv_event_t *e)
+{
+    prop_ui_set_fps(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
 
 /* One labelled FX slider row at vertical position y; returns the value label. */
 static lv_obj_t *fx_row(lv_obj_t *p, const char *name, lv_coord_t y,
@@ -750,6 +754,12 @@ static lv_obj_t *build_display_panel(lv_obj_t *parent)
     lv_obj_align(dd, LV_ALIGN_TOP_RIGHT, -40, 502);
     style_field(dd);
     lv_obj_add_event_cb(dd, fx_trans_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* FPS meter HUD toggle (top-right perf readout). */
+    panel_label(p, "FPS METER", 40, 560);
+    uint32_t fps_on = 0;
+    prop_settings_get_u32("fps_on", &fps_on, 0);
+    make_switch(p, fps_on != 0, SCAN_W - 140, 556, fps_toggle_cb, NULL);
     return p;
 }
 
@@ -2497,6 +2507,94 @@ void prop_ui_input(const char *control, int arg)
     ESP_LOGI(UI_TAG, "input %s %d", control, arg);
 }
 
+/* ---- FPS meter (optional dev HUD, top-right) ------------------------------
+ * Counts genuinely rendered frames via the display monitor_cb (called once per
+ * refresh that draws). When active it drops the refresh-timer period from the
+ * 30 ms default (33 fps cap) to 8 ms, so animations that invalidate small regions
+ * can run up to ~60 fps. It deliberately does NOT force a full-screen redraw every
+ * frame: a whole-screen software render at 1024x600 takes ~250 ms (≈4 fps) and
+ * saturates the CPU, so forcing it is counter-productive. The counter therefore
+ * reflects real render activity — high during motion, low when the screen is idle.
+ *
+ * The HUD is an OPAQUE child of the active screen, NOT lv_layer_top — a
+ * translucent top-layer object made LVGL recomposite the whole layer each frame
+ * and thrashed lv_mem_buf_get into a watchdog hang. The esp_lvgl_port task keeps
+ * a >=5 ms vTaskDelay every loop, so faster refresh can't starve the WDT. */
+#define FPS_REFR_FAST_MS 8     /* refresh-timer period while FPS active (~120 fps ceiling) */
+#define FPS_REFR_IDLE_MS 30    /* LVGL default (LV_DISP_DEF_REFR_PERIOD) */
+
+static lv_obj_t *s_fps_label;
+static volatile uint32_t s_fps_frames;
+static lv_timer_t *s_fps_timer;     /* 1 Hz: publishes the count */
+static void (*s_fps_prev_cb)(lv_disp_drv_t *, uint32_t, uint32_t);
+
+static void fps_monitor_cb(lv_disp_drv_t *drv, uint32_t time_ms, uint32_t px)
+{
+    s_fps_frames++;
+    if (s_fps_prev_cb) {
+        s_fps_prev_cb(drv, time_ms, px);   /* chain any pre-existing monitor */
+    }
+}
+
+static void fps_tick(lv_timer_t *t)
+{
+    (void)t;
+    if (s_fps_label && !lv_obj_has_flag(s_fps_label, LV_OBJ_FLAG_HIDDEN)) {
+        lv_label_set_text_fmt(s_fps_label, "FPS %u", (unsigned)s_fps_frames);
+    }
+    s_fps_frames = 0;   /* frames in the last ~1 s == FPS */
+}
+
+/* Enable/disable the high refresh rate. Must hold the LVGL lock. */
+static void fps_apply_drive(bool on)
+{
+    lv_disp_t *d = lv_disp_get_default();
+    if (d && d->refr_timer) {
+        lv_timer_set_period(d->refr_timer, on ? FPS_REFR_FAST_MS : FPS_REFR_IDLE_MS);
+    }
+}
+
+/* Build the HUD + install the frame counter. Call once, under the LVGL lock. */
+static void fps_init(void)
+{
+    lv_disp_t *d = lv_disp_get_default();
+    if (d && d->driver) {
+        s_fps_prev_cb = d->driver->monitor_cb;
+        d->driver->monitor_cb = fps_monitor_cb;
+    }
+    s_fps_label = lv_label_create(lv_scr_act());
+    lv_obj_set_style_text_font(s_fps_label, FONT_BODY, 0);
+    lv_obj_set_style_text_color(s_fps_label, COL_BG, 0);
+    lv_obj_set_style_bg_color(s_fps_label, COL_AMBER, 0);
+    lv_obj_set_style_bg_opa(s_fps_label, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(s_fps_label, 4, 0);
+    lv_label_set_text(s_fps_label, "FPS --");
+    lv_obj_align(s_fps_label, LV_ALIGN_TOP_RIGHT, -6, 6);
+    s_fps_timer = lv_timer_create(fps_tick, 1000, NULL);
+
+    uint32_t on = 0;
+    prop_settings_get_u32("fps_on", &on, 0);
+    if (on) {
+        fps_apply_drive(true);
+    } else {
+        lv_obj_add_flag(s_fps_label, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void prop_ui_set_fps(bool on)
+{
+    if (!lvgl_port_lock(200)) {
+        return;
+    }
+    if (s_fps_label) {
+        if (on) lv_obj_clear_flag(s_fps_label, LV_OBJ_FLAG_HIDDEN);
+        else    lv_obj_add_flag(s_fps_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    fps_apply_drive(on);
+    lvgl_port_unlock();
+    prop_settings_set_u32("fps_on", on ? 1 : 0);
+}
+
 esp_err_t prop_ui_init(void)
 {
     if (!lvgl_port_lock(1000)) {
@@ -2504,6 +2602,7 @@ esp_err_t prop_ui_init(void)
         return ESP_FAIL;
     }
     build_screen();
+    fps_init();
     lvgl_port_unlock();
 
     esp_err_t err = prop_engine_add_observer(ui_observer, NULL);

@@ -4,6 +4,7 @@
 #include "prop_net.h"
 #include "prop_ui.h"
 #include "prop_fx.h"
+#include "prop_settings.h"
 #include "bsp_io.h"
 #include <string.h>
 #include <strings.h>   /* strcasecmp */
@@ -90,6 +91,8 @@ static esp_err_t dispatch_command(const char *json, int len)
             if ((j = cJSON_GetObjectItem(root, "phosphor")) && cJSON_IsNumber(j)) { prop_fx_set_phosphor ((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
             if ((j = cJSON_GetObjectItem(root, "vignette")) && cJSON_IsNumber(j)) { prop_fx_set_vignette ((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
             if ((j = cJSON_GetObjectItem(root, "refresh"))  && cJSON_IsNumber(j)) { prop_fx_set_refresh  ((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
+            if ((j = cJSON_GetObjectItem(root, "trans"))    && cJSON_IsNumber(j)) { prop_settings_set_u32("fx_trans", (uint32_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
+            if ((j = cJSON_GetObjectItem(root, "fps"))      && cJSON_IsBool(j))   { prop_ui_set_fps(cJSON_IsTrue(j)); any = true; }
             err = (cJSON_IsBool(on) || any) ? ESP_OK : ESP_ERR_INVALID_ARG;
         } else if (strcmp(c, "led") == 0) {
             const cJSON *on = cJSON_GetObjectItem(root, "on");
@@ -384,7 +387,14 @@ static esp_err_t screenshot_get_handler(httpd_req_t *req)
                          (unsigned)sz,
                          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
             } else {
+                /* lv_snapshot builds its draw context from the live display driver;
+                 * a custom monitor_cb on this accelerated port breaks that path, so
+                 * disable it for the duration of the capture and restore it after. */
+                lv_disp_t *d = lv_disp_get_default();
+                void (*saved_mon)(lv_disp_drv_t *, uint32_t, uint32_t) = NULL;
+                if (d && d->driver) { saved_mon = d->driver->monitor_cb; d->driver->monitor_cb = NULL; }
                 lv_res_t r = lv_snapshot_take_to_buf(scr, LV_IMG_CF_TRUE_COLOR, &dsc, buf, sz);
+                if (d && d->driver) { d->driver->monitor_cb = saved_mon; }
                 if (r == LV_RES_OK) {
                     ok = true;
                 } else {
