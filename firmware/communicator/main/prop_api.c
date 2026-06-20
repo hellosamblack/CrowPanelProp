@@ -84,10 +84,13 @@ static esp_err_t dispatch_command(const char *json, int len)
             if (cJSON_IsBool(on)) {
                 prop_fx_set_enabled(cJSON_IsTrue(on));
             }
-            if (cJSON_IsNumber(value)) {   /* intensity 0..100 */
-                prop_fx_set_intensity((uint8_t)(value->valueint < 0 ? 0 : value->valueint));
-            }
-            err = (on || cJSON_IsNumber(value)) ? ESP_OK : ESP_ERR_INVALID_ARG;
+            const cJSON *j;
+            bool any = false;
+            if ((j = cJSON_GetObjectItem(root, "scan"))     && cJSON_IsNumber(j)) { prop_fx_set_scanlines((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
+            if ((j = cJSON_GetObjectItem(root, "phosphor")) && cJSON_IsNumber(j)) { prop_fx_set_phosphor ((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
+            if ((j = cJSON_GetObjectItem(root, "vignette")) && cJSON_IsNumber(j)) { prop_fx_set_vignette ((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
+            if ((j = cJSON_GetObjectItem(root, "refresh"))  && cJSON_IsNumber(j)) { prop_fx_set_refresh  ((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
+            err = (cJSON_IsBool(on) || any) ? ESP_OK : ESP_ERR_INVALID_ARG;
         } else if (strcmp(c, "led") == 0) {
             const cJSON *on = cJSON_GetObjectItem(root, "on");
             const cJSON *index = cJSON_GetObjectItem(root, "index");
@@ -110,6 +113,25 @@ static esp_err_t dispatch_command(const char *json, int len)
             const cJSON *screen = cJSON_GetObjectItem(root, "screen");
             if (cJSON_IsString(screen)) {        /* remote nav for testing/screenshots */
                 prop_ui_goto(screen->valuestring);
+                err = ESP_OK;
+            }
+        } else if (strcmp(c, "input") == 0) {
+            /* Simulated physical controls (SELECTOR dial / TAB switch / ACTION).
+             * arg accepts a number, or words: cw/ccw/press for the dial. */
+            const cJSON *control = cJSON_GetObjectItem(root, "control");
+            const cJSON *arg = cJSON_GetObjectItem(root, "arg");
+            if (cJSON_IsString(control)) {
+                int a = 0;
+                if (cJSON_IsNumber(arg)) {
+                    a = arg->valueint;
+                } else if (cJSON_IsString(arg)) {
+                    const char *s = arg->valuestring;
+                    if (strcasecmp(s, "cw") == 0 || strcasecmp(s, "next") == 0) a = 1;
+                    else if (strcasecmp(s, "ccw") == 0 || strcasecmp(s, "prev") == 0) a = -1;
+                    else if (strcasecmp(s, "press") == 0 || strcasecmp(s, "select") == 0) a = 0;
+                    else a = atoi(s);
+                }
+                prop_ui_input(control->valuestring, a);
                 err = ESP_OK;
             }
         } else if (strcmp(c, "wifi") == 0) {
@@ -312,13 +334,19 @@ static const char s_console_html[] =
 "#sens{margin:18px auto;max-width:520px;border:2px solid #e0b000;padding:14px}"
 "#sens label{font-size:18px}#sr{width:100%;accent-color:#e0b000;height:28px}"
 "</style></head><body><h2>PROP CUE BOARD</h2><div id=st>connecting...</div>"
-"<div id=scenes></div>"
+"<div id=nav><b>CONSOLE</b><br></div>"
+"<div id=scenes><b>SCANNER SCENES</b><br></div>"
 "<div id=sens><label>SENSITIVITY <span id=sv>--</span>%</label><br>"
 "<input id=sr type=range min=0 max=100 value=65></div><script>"
 "var ws=new WebSocket('ws://'+location.host+'/ws');"
 "var scenes=['IDLE','SCANNING','SIGNAL_ACQUIRED','COMMS','ALERT'];"
 "var d=document.getElementById('scenes');scenes.forEach(function(s){var b=document.createElement('button');"
 "b.textContent=s;b.onclick=function(){ws.send(JSON.stringify({cmd:'scene',value:s}))};d.appendChild(b)});"
+/* Console nav: SELECTOR dial / PRESS / HOME / archive TAB switches. */
+"var navs=[['\\u25C0 SEL','selector','ccw'],['PRESS','selector','press'],['SEL \\u25B6','selector','cw'],"
+"['HOME','action',2],['TAB1','tab',0],['TAB2','tab',1],['TAB3','tab',2],['TAB4','tab',3]];"
+"var nd=document.getElementById('nav');navs.forEach(function(s){var b=document.createElement('button');"
+"b.textContent=s[0];b.onclick=function(){ws.send(JSON.stringify({cmd:'input',control:s[1],arg:s[2]}))};nd.appendChild(b)});"
 "var sr=document.getElementById('sr'),sv=document.getElementById('sv'),drag=false,st=0;"
 "function sendSens(){ws.send(JSON.stringify({cmd:'sens',value:+sr.value}))}"
 "sr.oninput=function(){sv.textContent=sr.value;drag=true;var n=Date.now();"

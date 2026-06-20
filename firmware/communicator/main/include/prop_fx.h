@@ -23,8 +23,20 @@ esp_err_t prop_fx_init(void);
 void prop_fx_set_enabled(bool on);
 bool prop_fx_enabled(void);
 
-/* Overall overlay strength, 0..100 (maps to layer opacity). */
-void prop_fx_set_intensity(uint8_t pct);
-uint8_t prop_fx_intensity(void);
+/* Per-effect strength, 0..100 (0 = effect off). Each re-bakes / re-opacities the
+ * overlay live and persists to NVS. Safe to call from any task (locks internally). */
+void prop_fx_set_scanlines(uint8_t pct);
+uint8_t prop_fx_scanlines(void);
+void prop_fx_set_phosphor(uint8_t pct);
+uint8_t prop_fx_phosphor(void);
+void prop_fx_set_vignette(uint8_t pct);
+uint8_t prop_fx_vignette(void);
+void prop_fx_set_refresh(uint8_t pct);
+uint8_t prop_fx_refresh(void);
+
+/* Play the configured screen-change transition ("old TV" channel change). Call
+ * right after a panel swap, while holding the LVGL lock. Flavor + on/off come from
+ * the "fx_trans" setting (0 off, 1 snow, 2 roll, 3 collapse, 4 snow+collapse). */
+void prop_fx_transition_play(void);
 
 #endif /* _PROP_FX_H_ */

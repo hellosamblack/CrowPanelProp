@@ -5,12 +5,14 @@
 #include "prop_settings.h"
 #include "prop_fx.h"
 #include "prop_mic.h"
+#include "prop_content.h"
 #include "bsp_io.h"
 #include "bsp_illuminate.h"
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <math.h>
+#include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -45,7 +47,11 @@ LV_FONT_DECLARE(eurostile_56);   /* status punch-in (SIGNAL DETECTED / ALERT) */
  * than COL_DIM so it survives a 7" panel + lens, while staying below COL_AMBER. */
 #define COL_MUTE   lv_color_hex(0xB58A00)
 
-#define SCAN_W 1024
+#define SCREEN_W 1024           /* physical panel width */
+#define RAIL_W   76             /* persistent icon nav rail (left edge, all screens) */
+/* SCAN_W is the CONTENT width (right of the rail). All panels/readouts lay out
+ * relative to this, so redefining it here insets every screen with no per-panel edits. */
+#define SCAN_W (SCREEN_W - RAIL_W)
 #define SCAN_TRACK_Y 330        /* taller, lower trace — the hero waveform */
 #define SCAN_TRACK_H 160
 
@@ -99,17 +105,26 @@ static bool s_pass_shown;
 #define COL_PANEL_ITEM lv_color_hex(0x141008)
 
 typedef enum {
-    PK_NONE = 0, PK_MENU, PK_WIFI, PK_DISPLAY, PK_AUDIO, PK_LEDS, PK_ABOUT, PK_VITALS,
+    PK_NONE = 0,   /* no panel: the bare SCANNER readout on the root screen */
+    PK_HOME,       /* the in-world console (default landing screen) */
+    PK_MENU, PK_WIFI, PK_DISPLAY, PK_AUDIO, PK_LEDS, PK_ABOUT, PK_VITALS,
     PK_SCAN, PK_SPECTRUM,
+    PK_ARCHIVE,    /* data-archive browser (tabs = sections) */
+    PK_ARTICLE,    /* a single archive entry */
+    PK_CASSETTE,   /* cassette deck (stub) */
+    PK_INSIGHTS,   /* insight engine (stub) */
 } panel_kind_t;
 
-static lv_obj_t *s_root;          /* the main screen (panels are built on it) */
+static lv_obj_t *s_root;          /* the CONTENT container (panels are built on it) */
+static lv_obj_t *s_rail_strip;    /* persistent icon nav rail on the real screen (left edge) */
+static bool s_ui_ready;           /* true once boot build is done — gates screen transitions */
 static lv_obj_t *s_cur_panel;     /* the one live setup panel, or NULL (main) */
 static panel_kind_t s_cur_kind;
 
 /* Live value readouts updated by panels / the observer — valid ONLY while the
  * owning panel is the current one (NULLed on teardown). */
-static lv_obj_t *s_disp_bright_val, *s_fx_int_val, *s_audio_vol_val;
+static lv_obj_t *s_disp_bright_val, *s_audio_vol_val;
+static lv_obj_t *s_fx_scan_val, *s_fx_phos_val, *s_fx_vign_val, *s_fx_refr_val;
 static lv_obj_t *s_about_ip, *s_about_uptime;
 
 /* VITALS instrument live readouts (valid only while PK_VITALS is current). */
@@ -126,6 +141,7 @@ static lv_obj_t *s_spec_db, *s_spec_db_bar, *s_spec_status;
 static float s_spec_decay[PROP_MIC_BANDS];   /* peak-hold / slow decay (UI-side) */
 
 /* Builders + lifecycle (defined below). */
+static lv_obj_t *build_home_panel(lv_obj_t *parent);
 static lv_obj_t *build_menu_panel(lv_obj_t *parent);
 static lv_obj_t *build_wifi_panel(lv_obj_t *parent);
 static lv_obj_t *build_display_panel(lv_obj_t *parent);
@@ -135,8 +151,58 @@ static lv_obj_t *build_about_panel(lv_obj_t *parent);
 static lv_obj_t *build_vitals_panel(lv_obj_t *parent);
 static lv_obj_t *build_signal_panel(lv_obj_t *parent);
 static lv_obj_t *build_spectrum_panel(lv_obj_t *parent);
+static lv_obj_t *build_archive_panel(lv_obj_t *parent);
+static lv_obj_t *build_article_panel(lv_obj_t *parent);
+static lv_obj_t *build_cassette_panel(lv_obj_t *parent);
+static lv_obj_t *build_insights_panel(lv_obj_t *parent);
 static void wifi_panel_opened(void);
 static void start_signal_scan(void);
+static void set_rail_highlight(void);   /* persistent rail; defined with the rail code */
+
+/* ---- Function rail + dial/tab navigation ---------------------------------
+ * The author's control model: a SELECTOR dial moves between top-level FUNCTIONS,
+ * a PRESS opens one, switches act as TABS (used inside the ARCHIVE). The physical
+ * knobs aren't wired yet, so these are driven from the web portal (/cmd "input")
+ * today; bsp_io routes the real controls to the same prop_ui_input() later.
+ *
+ * The rail is the console's hero: ARCHIVE first (the device IS a data archive),
+ * the scanner demoted to one entry among the instruments. */
+/* Icon ids for the persistent rail glyphs (drawn from primitives, no font assets). */
+typedef enum {
+    IC_HOME, IC_ARCHIVE, IC_SCANNER, IC_VITALS, IC_SIGNAL,
+    IC_SPECTRUM, IC_CASSETTE, IC_INSIGHTS, IC_SETUP,
+} icon_id_t;
+
+static const struct {
+    const char *label;
+    panel_kind_t kind;
+    icon_id_t    icon;
+} s_rail[] = {
+    { "CONSOLE",     PK_HOME,     IC_HOME     },
+    { "ARCHIVE",     PK_ARCHIVE,  IC_ARCHIVE  },
+    { "SCANNER",     PK_NONE,     IC_SCANNER  },   /* reveals the bare readout on the root screen */
+    { "VITALS",      PK_VITALS,   IC_VITALS   },
+    { "SIGNAL SCAN", PK_SCAN,     IC_SIGNAL   },
+    { "SPECTRUM",    PK_SPECTRUM, IC_SPECTRUM },
+    { "CASSETTE",    PK_CASSETTE, IC_CASSETTE },
+    { "INSIGHTS",    PK_INSIGHTS, IC_INSIGHTS },
+    { "SETUP",       PK_MENU,     IC_SETUP    },
+};
+#define RAIL_COUNT ((int)(sizeof(s_rail) / sizeof(s_rail[0])))
+
+static int s_rail_sel;                 /* highlighted function on the console */
+static int s_archive_section;          /* current ARCHIVE tab (0..prop_section_count-1) */
+static int s_archive_entry;            /* selected entry within the section */
+
+/* Console (PK_HOME) live readouts — valid only while PK_HOME is the live panel. */
+static lv_obj_t *s_home_clock, *s_home_temp, *s_home_link;
+static lv_obj_t *s_rail_btns[RAIL_COUNT];   /* rail rows, for dial highlighting */
+
+/* ARCHIVE browser widgets — valid only while PK_ARCHIVE is live. */
+static lv_obj_t *s_arch_tabs[8];        /* section tab buttons (>= prop_section_count) */
+static lv_obj_t *s_arch_rows[16];       /* entry rows, for dial highlighting */
+static int s_arch_row_count;
+static lv_obj_t *s_article_scroll;      /* PK_ARTICLE body scroll container (dial scrolls it) */
 
 /* Tear down the live panel and invalidate every per-panel widget pointer, so
  * async users (the WiFi scan task, the observer) never touch freed objects. */
@@ -149,20 +215,54 @@ static void close_panel(void)
     s_cur_kind = PK_NONE;
     s_setup_panel = NULL; s_ssid_dd = NULL; s_pass_ta = NULL; s_show_btn = NULL;
     s_remember_cb = NULL; s_forget_btn = NULL; s_keyboard = NULL; s_setup_status = NULL;
-    s_disp_bright_val = NULL; s_fx_int_val = NULL; s_audio_vol_val = NULL;
+    s_disp_bright_val = NULL; s_audio_vol_val = NULL;
+    s_fx_scan_val = s_fx_phos_val = s_fx_vign_val = s_fx_refr_val = NULL;
     s_about_ip = NULL; s_about_uptime = NULL;
     s_vit_temp = NULL; s_vit_ram = NULL; s_vit_uptime = NULL; s_vit_cell = NULL;
     s_vit_temp_bar = NULL; s_vit_ram_bar = NULL; s_vit_cell_bar = NULL;
     s_sig_list = NULL; s_sig_status = NULL;
     s_spec_db = NULL; s_spec_db_bar = NULL; s_spec_status = NULL;
+    s_home_clock = NULL; s_home_temp = NULL; s_home_link = NULL;
+    /* s_rail_btns are the persistent rail cells on the real screen — NOT children
+     * of the torn-down panel, so they survive close_panel and are never nulled. */
+    for (int i = 0; i < (int)(sizeof(s_arch_tabs) / sizeof(s_arch_tabs[0])); i++) s_arch_tabs[i] = NULL;
+    for (int i = 0; i < (int)(sizeof(s_arch_rows) / sizeof(s_arch_rows[0])); i++) s_arch_rows[i] = NULL;
+    s_arch_row_count = 0;
+    s_article_scroll = NULL;
     s_connect_pending = false;
+}
+
+/* Light the rail cell for the function `kind` belongs to. Sub-panels map to their
+ * top-level function (SETUP sub-screens -> SETUP, an article -> ARCHIVE). Runs for
+ * every open including PK_NONE (the SCANNER readout), so it precedes the switch. */
+static void rail_sync(panel_kind_t kind)
+{
+    panel_kind_t want = kind;
+    switch (kind) {
+        case PK_WIFI: case PK_DISPLAY: case PK_AUDIO:
+        case PK_LEDS: case PK_ABOUT: case PK_MENU: want = PK_MENU; break;
+        case PK_ARTICLE: want = PK_ARCHIVE; break;
+        default: break;
+    }
+    for (int i = 0; i < RAIL_COUNT; i++) {
+        if (s_rail[i].kind == want) { s_rail_sel = i; break; }
+    }
+    if (s_rail_strip) {
+        set_rail_highlight();
+        /* Hero instruments (SCANNER readout, SPECTRUM) stay uncluttered on camera:
+         * the rail recedes to a dim spine. Any other screen shows it at full strength. */
+        bool hero = (kind == PK_NONE || kind == PK_SPECTRUM);
+        lv_obj_set_style_opa(s_rail_strip, hero ? 110 : LV_OPA_COVER, 0);
+    }
 }
 
 /* Switch to a panel (or PK_NONE for the main screen). */
 static void open_panel(panel_kind_t kind)
 {
     close_panel();
+    rail_sync(kind);
     switch (kind) {
+        case PK_HOME:    s_cur_panel = build_home_panel(s_root); break;
         case PK_MENU:    s_cur_panel = build_menu_panel(s_root); break;
         case PK_WIFI:    s_cur_panel = build_wifi_panel(s_root); break;
         case PK_DISPLAY: s_cur_panel = build_display_panel(s_root); break;
@@ -172,13 +272,23 @@ static void open_panel(panel_kind_t kind)
         case PK_VITALS:  s_cur_panel = build_vitals_panel(s_root); break;
         case PK_SCAN:    s_cur_panel = build_signal_panel(s_root); break;
         case PK_SPECTRUM: s_cur_panel = build_spectrum_panel(s_root); break;
-        default: return;   /* PK_NONE: just closed to main */
+        case PK_ARCHIVE: s_cur_panel = build_archive_panel(s_root); break;
+        case PK_ARTICLE: s_cur_panel = build_article_panel(s_root); break;
+        case PK_CASSETTE: s_cur_panel = build_cassette_panel(s_root); break;
+        case PK_INSIGHTS: s_cur_panel = build_insights_panel(s_root); break;
+        default: break;    /* PK_NONE: no panel — the SCANNER readout shows through */
     }
     s_cur_kind = kind;
     if (kind == PK_WIFI) {
         wifi_panel_opened();
     } else if (kind == PK_SCAN) {
         start_signal_scan();   /* auto-scan on open */
+    }
+    /* Mask the swap with the configured channel-change transition (skipped during
+     * the initial boot build; the overlay was created above so the next render
+     * shows it over the already-swapped screen). */
+    if (s_ui_ready) {
+        prop_fx_transition_play();
     }
 }
 
@@ -304,7 +414,8 @@ static void wifi_panel_opened(void)
 
 /* Navigation: build-on-enter, tear-down-on-leave (see open_panel/close_panel). */
 static void open_menu_cb(lv_event_t *e)    { (void)e; open_panel(PK_MENU); }
-static void close_setup_cb(lv_event_t *e)  { (void)e; open_panel(PK_NONE); }
+static void back_to_home_cb(lv_event_t *e) { (void)e; open_panel(PK_HOME); }
+static void close_setup_cb(lv_event_t *e)  { (void)e; open_panel(PK_HOME); }
 static void back_to_menu_cb(lv_event_t *e) { (void)e; open_panel(PK_MENU); }
 static void menu_open_cb(lv_event_t *e)    { open_panel((panel_kind_t)(intptr_t)lv_event_get_user_data(e)); }
 static void setup_scan_cb(lv_event_t *e)   { (void)e; start_scan(); }
@@ -563,16 +674,53 @@ static void fx_toggle_cb(lv_event_t *e)
 {
     prop_fx_set_enabled(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
-static void fx_int_cb(lv_event_t *e)
+static void fx_scan_cb(lv_event_t *e)
 {
     int v = lv_slider_get_value(lv_event_get_target(e));
-    prop_fx_set_intensity(v);
-    lv_label_set_text_fmt(s_fx_int_val, "%d%%", v);
+    prop_fx_set_scanlines(v);
+    lv_label_set_text_fmt(s_fx_scan_val, "%d%%", v);
+}
+static void fx_phos_cb(lv_event_t *e)
+{
+    int v = lv_slider_get_value(lv_event_get_target(e));
+    prop_fx_set_phosphor(v);
+    lv_label_set_text_fmt(s_fx_phos_val, "%d%%", v);
+}
+static void fx_vign_cb(lv_event_t *e)
+{
+    int v = lv_slider_get_value(lv_event_get_target(e));
+    prop_fx_set_vignette(v);
+    lv_label_set_text_fmt(s_fx_vign_val, "%d%%", v);
+}
+static void fx_refr_cb(lv_event_t *e)
+{
+    int v = lv_slider_get_value(lv_event_get_target(e));
+    prop_fx_set_refresh(v);
+    lv_label_set_text_fmt(s_fx_refr_val, "%d%%", v);
+}
+static void fx_trans_cb(lv_event_t *e)
+{
+    uint32_t v = lv_dropdown_get_selected(lv_event_get_target(e));
+    prop_settings_set_u32("fx_trans", v);   /* 0 off, 1 snow, 2 roll, 3 collapse, 4 snow+collapse */
+}
+
+/* One labelled FX slider row at vertical position y; returns the value label. */
+static lv_obj_t *fx_row(lv_obj_t *p, const char *name, lv_coord_t y,
+                        uint8_t val, lv_event_cb_t cb)
+{
+    panel_label(p, name, 40, y);
+    lv_obj_t *v = lv_label_create(p);
+    lv_label_set_text_fmt(v, "%u%%", val);
+    lv_obj_set_style_text_color(v, COL_MUTE, 0);
+    lv_obj_align(v, LV_ALIGN_TOP_RIGHT, -40, y);
+    make_slider(p, 0, 100, val, y + 34, cb);
+    return v;
 }
 
 static lv_obj_t *build_display_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "DISPLAY", back_to_menu_cb);
+    lv_obj_set_scroll_dir(p, LV_DIR_VER);   /* rows can exceed panel height */
 
     uint32_t b = 80;
     prop_settings_get_u32("brightness", &b, 80);
@@ -583,20 +731,25 @@ static lv_obj_t *build_display_panel(lv_obj_t *parent)
     lv_obj_align(s_disp_bright_val, LV_ALIGN_TOP_RIGHT, -40, 92);
     make_slider(p, 5, 100, b, 126, disp_bright_cb);
 
-    panel_label(p, "CRT EFFECTS", 40, 196);
-    make_switch(p, prop_fx_enabled(), SCAN_W - 140, 192, fx_toggle_cb, NULL);
+    panel_label(p, "CRT EFFECTS", 40, 188);
+    make_switch(p, prop_fx_enabled(), SCAN_W - 140, 184, fx_toggle_cb, NULL);
 
-    panel_label(p, "FX INTENSITY", 40, 268);
-    s_fx_int_val = lv_label_create(p);
-    lv_label_set_text_fmt(s_fx_int_val, "%u%%", prop_fx_intensity());
-    lv_obj_set_style_text_color(s_fx_int_val, COL_MUTE, 0);
-    lv_obj_align(s_fx_int_val, LV_ALIGN_TOP_RIGHT, -40, 268);
-    make_slider(p, 0, 100, prop_fx_intensity(), 302, fx_int_cb);
+    s_fx_scan_val = fx_row(p, "SCANLINES",     232, prop_fx_scanlines(), fx_scan_cb);
+    s_fx_phos_val = fx_row(p, "PHOSPHOR",      300, prop_fx_phosphor(),  fx_phos_cb);
+    s_fx_vign_val = fx_row(p, "VIGNETTE",      368, prop_fx_vignette(),  fx_vign_cb);
+    s_fx_refr_val = fx_row(p, "REFRESH SWEEP", 436, prop_fx_refresh(),   fx_refr_cb);
 
-    lv_obj_t *note = lv_label_create(p);
-    lv_label_set_text(note, "Effects are a top-layer CRT overlay (panel only).");
-    lv_obj_set_style_text_color(note, COL_MUTE, 0);
-    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 40, 360);
+    /* Screen-change transition flavor (the "old TV channel change"). */
+    panel_label(p, "TRANSITION", 40, 508);
+    lv_obj_t *dd = lv_dropdown_create(p);
+    lv_dropdown_set_options(dd, "OFF\nSNOW\nROLL\nCOLLAPSE\nSNOW+COLLAPSE");
+    uint32_t tr = 1;
+    prop_settings_get_u32("fx_trans", &tr, 1);
+    lv_dropdown_set_selected(dd, tr > 4 ? 1 : tr);
+    lv_obj_set_width(dd, 360);
+    lv_obj_align(dd, LV_ALIGN_TOP_RIGHT, -40, 502);
+    style_field(dd);
+    lv_obj_add_event_cb(dd, fx_trans_cb, LV_EVENT_VALUE_CHANGED, NULL);
     return p;
 }
 
@@ -782,7 +935,7 @@ static lv_obj_t *vitals_row(lv_obj_t *p, const char *cap, lv_coord_t y,
 
 static lv_obj_t *build_vitals_panel(lv_obj_t *parent)
 {
-    lv_obj_t *p = make_panel(parent, "VITALS", back_to_menu_cb);
+    lv_obj_t *p = make_panel(parent, "VITALS", back_to_home_cb);
     vitals_row(p, "CORE TEMP", 92,  &s_vit_temp, &s_vit_temp_bar);
     vitals_row(p, "FREE RAM",  166, &s_vit_ram,  &s_vit_ram_bar);
     vitals_row(p, "CELL",      240, &s_vit_cell, &s_vit_cell_bar);
@@ -871,7 +1024,7 @@ static void signal_rescan_cb(lv_event_t *e) { (void)e; start_signal_scan(); }
 
 static lv_obj_t *build_signal_panel(lv_obj_t *parent)
 {
-    lv_obj_t *p = make_panel(parent, "SIGNAL SCAN", back_to_menu_cb);
+    lv_obj_t *p = make_panel(parent, "SIGNAL SCAN", back_to_home_cb);
 
     s_sig_status = lv_label_create(p);
     lv_label_set_text(s_sig_status, "SCANNING SPECTRUM...");
@@ -900,7 +1053,7 @@ static lv_obj_t *build_signal_panel(lv_obj_t *parent)
 
 static lv_obj_t *build_spectrum_panel(lv_obj_t *parent)
 {
-    lv_obj_t *p = make_panel(parent, "SPECTRUM", back_to_menu_cb);
+    lv_obj_t *p = make_panel(parent, "SPECTRUM", back_to_home_cb);
 
     if (!prop_mic_available()) {
         s_spec_status = lv_label_create(p);
@@ -945,18 +1098,764 @@ static lv_obj_t *build_spectrum_panel(lv_obj_t *parent)
     return p;
 }
 
+/* ---- Console home (PK_HOME): the in-world multi-data interface ------------
+ * The default landing screen. Shows the device identity + a data-sponge status
+ * strip (clock/date/temp/intake) and the function rail the SELECTOR drives. */
+
+/* ---- Persistent icon rail glyphs (drawn from LVGL primitives, no font assets,
+ * mirroring the article-visual approach). Each glyph is a set of small filled/
+ * outlined boxes and polylines parented to a rail cell; recolouring iterates the
+ * cell's children, so highlight is a colour swap with no rebuild. */
+
+#define RAIL_CELL_H (600 / RAIL_COUNT)
+
+/* lv_line keeps a pointer to its points (no copy) — each polyline needs a live
+ * buffer. The rail is built once, so one buffer per glyph is enough. */
+static lv_point_t s_ic_scan[9];
+static lv_point_t s_ic_vit[6];
+static lv_point_t s_ic_sig[3][3];
+static lv_point_t s_ic_ins[2][2];
+
+static lv_obj_t *ic_box(lv_obj_t *cell, int x, int y, int w, int h, lv_color_t col, bool fill, bool circle)
+{
+    lv_obj_t *o = lv_obj_create(cell);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_size(o, w, h);
+    lv_obj_set_pos(o, x, y);
+    lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    if (fill) { lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0); lv_obj_set_style_bg_color(o, col, 0); }
+    else { lv_obj_set_style_border_width(o, 2, 0); lv_obj_set_style_border_color(o, col, 0); }
+    if (circle) lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
+    return o;
+}
+
+static lv_obj_t *ic_poly(lv_obj_t *cell, lv_point_t *pts, int n, lv_color_t col)
+{
+    lv_obj_t *l = lv_line_create(cell);
+    lv_line_set_points(l, pts, n);
+    lv_obj_clear_flag(l, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_line_color(l, col, 0);
+    lv_obj_set_style_line_width(l, 3, 0);
+    lv_obj_set_style_line_rounded(l, true, 0);
+    return l;
+}
+
+/* Draw glyph `id` into `cell` (RAIL_W x RAIL_CELL_H), centred, in colour `col`. */
+static void draw_icon(lv_obj_t *cell, icon_id_t id, lv_color_t col)
+{
+    switch (id) {
+    case IC_HOME: {                                  /* house: roof + body */
+        static lv_point_t roof[3] = {{22,30},{38,16},{54,30}};
+        ic_poly(cell, roof, 3, col);
+        ic_box(cell, 26, 30, 24, 18, col, false, false);
+        break; }
+    case IC_ARCHIVE:                                 /* stacked bars / ledger */
+        ic_box(cell, 24, 22, 28, 5, col, true, false);
+        ic_box(cell, 24, 31, 28, 5, col, true, false);
+        ic_box(cell, 24, 40, 28, 5, col, true, false);
+        break;
+    case IC_SCANNER: {                               /* sine sweep */
+        int xs[9] = {22,26,30,34,38,42,46,50,54};
+        int ys[9] = {33,26,33,40,33,26,33,40,33};
+        for (int k = 0; k < 9; k++) { s_ic_scan[k].x = xs[k]; s_ic_scan[k].y = ys[k]; }
+        ic_poly(cell, s_ic_scan, 9, col);
+        break; }
+    case IC_VITALS: {                                /* heartbeat trace */
+        int xs[6] = {20,30,34,40,46,56};
+        int ys[6] = {33,33,22,44,33,33};
+        for (int k = 0; k < 6; k++) { s_ic_vit[k].x = xs[k]; s_ic_vit[k].y = ys[k]; }
+        ic_poly(cell, s_ic_vit, 6, col);
+        break; }
+    case IC_SIGNAL: {                                /* radiating chevrons + source dot */
+        int rx[3] = {8,14,20};
+        for (int c = 0; c < 3; c++) {
+            int r = rx[c];
+            s_ic_sig[c][0].x = 38 - r; s_ic_sig[c][0].y = 44 + (3 - c) * 0;
+            s_ic_sig[c][1].x = 38;     s_ic_sig[c][1].y = 44 - r;
+            s_ic_sig[c][2].x = 38 + r; s_ic_sig[c][2].y = 44;
+            s_ic_sig[c][0].y = 44; s_ic_sig[c][2].y = 44;
+            ic_poly(cell, s_ic_sig[c], 3, col);
+        }
+        ic_box(cell, 35, 46, 6, 6, col, true, true);
+        break; }
+    case IC_SPECTRUM: {                              /* bar analyzer */
+        int xs[4] = {22,32,42,52};
+        int hs[4] = {14,26,18,28};
+        for (int k = 0; k < 4; k++) ic_box(cell, xs[k], 48 - hs[k], 6, hs[k], col, true, false);
+        break; }
+    case IC_CASSETTE:                                /* shell + two reels */
+        ic_box(cell, 22, 24, 32, 18, col, false, false);
+        ic_box(cell, 28, 30, 6, 6, col, true, true);
+        ic_box(cell, 44, 30, 6, 6, col, true, true);
+        break;
+    case IC_INSIGHTS: {                              /* node graph */
+        s_ic_ins[0][0].x = 31; s_ic_ins[0][0].y = 27; s_ic_ins[0][1].x = 50; s_ic_ins[0][1].y = 31;
+        s_ic_ins[1][0].x = 31; s_ic_ins[1][0].y = 27; s_ic_ins[1][1].x = 37; s_ic_ins[1][1].y = 46;
+        ic_poly(cell, s_ic_ins[0], 2, col);
+        ic_poly(cell, s_ic_ins[1], 2, col);
+        ic_box(cell, 28, 24, 6, 6, col, true, true);
+        ic_box(cell, 47, 28, 6, 6, col, true, true);
+        ic_box(cell, 34, 43, 6, 6, col, true, true);
+        break; }
+    case IC_SETUP:                                   /* sliders */
+        ic_box(cell, 24, 25, 28, 3, col, true, false);
+        ic_box(cell, 24, 34, 28, 3, col, true, false);
+        ic_box(cell, 24, 43, 28, 3, col, true, false);
+        ic_box(cell, 30, 22, 7, 9, col, true, false);
+        ic_box(cell, 44, 31, 7, 9, col, true, false);
+        ic_box(cell, 36, 40, 7, 9, col, true, false);
+        break;
+    }
+}
+
+/* Recolour every primitive in a rail cell (bg/line/border all set, harmlessly). */
+static void recolor_cell(lv_obj_t *cell, lv_color_t col)
+{
+    uint32_t n = lv_obj_get_child_cnt(cell);
+    for (uint32_t k = 0; k < n; k++) {
+        lv_obj_t *ch = lv_obj_get_child(cell, k);
+        lv_obj_set_style_bg_color(ch, col, 0);
+        lv_obj_set_style_line_color(ch, col, 0);
+        lv_obj_set_style_border_color(ch, col, 0);
+    }
+}
+
+/* Light the cursor cell (glyph inverts to dark on an amber fill); others sit as
+ * muted glyphs on transparent — camera-legible, matches the old rail. */
+static void set_rail_highlight(void)
+{
+    for (int i = 0; i < RAIL_COUNT; i++) {
+        if (!s_rail_btns[i]) {
+            continue;
+        }
+        bool sel = (i == s_rail_sel);
+        lv_obj_set_style_bg_opa(s_rail_btns[i], sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_color(s_rail_btns[i], COL_AMBER, 0);
+        recolor_cell(s_rail_btns[i], sel ? COL_BG : COL_MUTE);
+    }
+}
+
+static void rail_click_cb(lv_event_t *e)
+{
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    s_rail_sel = i;
+    open_panel(s_rail[i].kind);
+}
+
+/* Build the persistent rail on the real screen (left of the content container). */
+static void build_rail(lv_obj_t *screen)
+{
+    s_rail_strip = lv_obj_create(screen);
+    lv_obj_remove_style_all(s_rail_strip);
+    lv_obj_set_size(s_rail_strip, RAIL_W, 600);
+    lv_obj_set_pos(s_rail_strip, 0, 0);
+    lv_obj_set_style_bg_opa(s_rail_strip, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(s_rail_strip, lv_color_hex(0x080806), 0);
+    lv_obj_set_style_border_side(s_rail_strip, LV_BORDER_SIDE_RIGHT, 0);
+    lv_obj_set_style_border_color(s_rail_strip, COL_DIM, 0);
+    lv_obj_set_style_border_width(s_rail_strip, 2, 0);
+    lv_obj_clear_flag(s_rail_strip, LV_OBJ_FLAG_SCROLLABLE);
+
+    for (int i = 0; i < RAIL_COUNT; i++) {
+        lv_obj_t *cell = lv_obj_create(s_rail_strip);
+        lv_obj_remove_style_all(cell);
+        lv_obj_set_size(cell, RAIL_W, RAIL_CELL_H);
+        lv_obj_set_pos(cell, 0, i * RAIL_CELL_H);
+        lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(cell, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(cell, rail_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        draw_icon(cell, s_rail[i].icon, COL_MUTE);
+        s_rail_btns[i] = cell;
+    }
+    set_rail_highlight();
+}
+
+/* A top-of-console status cell: caption above an (updatable) value. */
+static lv_obj_t *status_cell(lv_obj_t *p, const char *cap, lv_coord_t x)
+{
+    lv_obj_t *c = lv_label_create(p);
+    lv_label_set_text(c, cap);
+    lv_obj_set_style_text_color(c, COL_MUTE, 0);
+    lv_obj_set_style_text_font(c, FONT_BODY, 0);
+    lv_obj_align(c, LV_ALIGN_TOP_LEFT, x, 96);
+
+    lv_obj_t *v = lv_label_create(p);
+    lv_label_set_text(v, "--");
+    lv_obj_set_style_text_color(v, COL_AMBER, 0);
+    lv_obj_set_style_text_font(v, FONT_HEAD, 0);
+    lv_obj_align(v, LV_ALIGN_TOP_LEFT, x, 116);
+    return v;
+}
+
+static lv_obj_t *build_home_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = lv_obj_create(parent);
+    lv_obj_set_size(p, SCAN_W, 600);
+    lv_obj_align(p, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(p, COL_BG, 0);
+    lv_obj_set_style_border_width(p, 0, 0);
+    lv_obj_set_style_radius(p, 0, 0);
+    lv_obj_set_style_pad_all(p, 0, 0);
+    lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *t = lv_label_create(p);
+    lv_label_set_text(t, "ARMADA MULTI-DATA INTERFACE");
+    lv_obj_set_style_text_color(t, COL_AMBER, 0);
+    lv_obj_set_style_text_font(t, FONT_HEAD, 0);
+    lv_obj_align(t, LV_ALIGN_TOP_LEFT, 24, 16);
+
+    lv_obj_t *sub = lv_label_create(p);
+    lv_label_set_text(sub, "FIELD UNIT 7   //   OPER: ZARRAH");
+    lv_obj_set_style_text_color(sub, COL_MUTE, 0);
+    lv_obj_set_style_text_font(sub, FONT_BODY, 0);
+    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 24, 52);
+
+    lv_obj_t *rule = lv_obj_create(p);
+    lv_obj_set_size(rule, SCAN_W - 48, 3);
+    lv_obj_set_style_bg_color(rule, COL_DIM, 0);
+    lv_obj_set_style_border_width(rule, 0, 0);
+    lv_obj_align(rule, LV_ALIGN_TOP_MID, 0, 84);
+
+    /* Data-sponge status strip (live values filled by the observer). */
+    s_home_clock = status_cell(p, "CLOCK", 24);
+    lv_obj_t *date = status_cell(p, "DATE", 230);
+    lv_label_set_text(date, prop_date_stamp);   /* static placeholder (no RTC yet) */
+    s_home_temp  = status_cell(p, "CORE TEMP", 600);
+    s_home_link  = status_cell(p, "INTAKE", 790);
+
+    /* The function rail now lives in the persistent left strip; the console body
+     * stays an uncluttered identity card. */
+    lv_obj_t *prompt = lv_label_create(p);
+    lv_label_set_text(prompt, "DATA SPONGE LINKED  //  SELECT A FUNCTION FROM THE RAIL");
+    lv_obj_set_style_text_color(prompt, COL_MUTE, 0);
+    lv_obj_set_style_text_font(prompt, FONT_HEAD, 0);
+    lv_obj_align(prompt, LV_ALIGN_LEFT_MID, 24, 0);
+
+    lv_obj_t *hint = lv_label_create(p);
+    lv_label_set_text(hint, "SELECTOR  rotate rail  -  PRESS  open  -  SWITCH  archive tabs");
+    lv_obj_set_style_text_color(hint, COL_MUTE, 0);
+    lv_obj_set_style_text_font(hint, FONT_BODY, 0);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -16);
+    return p;
+}
+
+/* ---- ARCHIVE browser (PK_ARCHIVE): tabbed sections of entries ------------- */
+
+static int clamp_section(int n)
+{
+    if (n < 0) return 0;
+    if (n >= prop_section_count) return prop_section_count - 1;
+    return n;
+}
+
+static void set_arch_row_highlight(void)
+{
+    for (int i = 0; i < s_arch_row_count; i++) {
+        if (!s_arch_rows[i]) {
+            continue;
+        }
+        bool sel = (i == s_archive_entry);
+        lv_obj_set_style_bg_color(s_arch_rows[i], sel ? COL_AMBER : COL_PANEL_ITEM, 0);
+        lv_obj_set_style_border_color(s_arch_rows[i], sel ? COL_AMBER : COL_DIM, 0);
+        lv_obj_t *lbl = lv_obj_get_child(s_arch_rows[i], 0);
+        if (lbl) {
+            lv_obj_set_style_text_color(lbl, sel ? COL_BG : COL_AMBER, 0);
+        }
+    }
+}
+
+static void arch_tab_cb(lv_event_t *e)
+{
+    s_archive_section = clamp_section((int)(intptr_t)lv_event_get_user_data(e));
+    s_archive_entry = 0;
+    open_panel(PK_ARCHIVE);   /* rebuild for the new section (one panel alive) */
+}
+
+static void arch_row_cb(lv_event_t *e)
+{
+    s_archive_entry = (int)(intptr_t)lv_event_get_user_data(e);
+    open_panel(PK_ARTICLE);
+}
+
+static lv_obj_t *build_archive_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "ARCHIVE", back_to_home_cb);
+    s_archive_section = clamp_section(s_archive_section);
+
+    /* Section tabs (the author's "switches = tabs"), below the header row. */
+    for (int i = 0; i < prop_section_count && i < (int)(sizeof(s_arch_tabs) / sizeof(s_arch_tabs[0])); i++) {
+        bool sel = (i == s_archive_section);
+        lv_obj_t *b = lv_btn_create(p);
+        lv_obj_set_size(b, 150, 40);
+        lv_obj_align(b, LV_ALIGN_TOP_LEFT, 40 + i * 160, 70);
+        style_btn(b);
+        lv_obj_set_style_bg_color(b, sel ? COL_AMBER : COL_PANEL_ITEM, 0);
+        lv_obj_add_event_cb(b, arch_tab_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, prop_sections[i].name);
+        lv_obj_set_style_text_color(l, sel ? COL_BG : COL_AMBER, 0);
+        lv_obj_center(l);
+        s_arch_tabs[i] = b;
+    }
+
+    /* Entry rows for the active section. */
+    const prop_section_t *sec = &prop_sections[s_archive_section];
+    s_arch_row_count = sec->count;
+    if (s_arch_row_count > (int)(sizeof(s_arch_rows) / sizeof(s_arch_rows[0]))) {
+        s_arch_row_count = (int)(sizeof(s_arch_rows) / sizeof(s_arch_rows[0]));
+    }
+    if (s_archive_entry >= s_arch_row_count) {
+        s_archive_entry = 0;
+    }
+    for (int i = 0; i < s_arch_row_count; i++) {
+        lv_obj_t *b = lv_btn_create(p);
+        lv_obj_set_size(b, SCAN_W - 80, 52);
+        lv_obj_align(b, LV_ALIGN_TOP_LEFT, 40, 128 + i * 60);
+        style_btn(b);
+        lv_obj_add_event_cb(b, arch_row_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, sec->entries[i].title);
+        lv_obj_set_style_text_font(l, FONT_HEAD, 0);
+        lv_obj_align(l, LV_ALIGN_LEFT_MID, 18, 0);
+        s_arch_rows[i] = b;
+    }
+    set_arch_row_highlight();
+    return p;
+}
+
+static void back_to_archive_cb(lv_event_t *e) { (void)e; open_panel(PK_ARCHIVE); }
+
+/* ---- Article visuals: one distinct, asset-free motif per section type -------
+ * Every visual is drawn from LVGL primitives in the amber-on-black style kit, so
+ * each section reads as its own kind of page (thermal trace / nav chart / bio-scan
+ * dossier / field plate) without shipping any image data. Pseudo-values come from
+ * the entry title so each page looks individual; the author edits text only and
+ * the visuals follow. The visual band sits at y116..284; the body starts at y312. */
+
+#define VIS_Y      116
+#define VIS_H      168
+#define VIS_BODY_Y 312
+
+static lv_point_t s_vis_curve[64];   /* climate trace (lv_line needs a live buffer) */
+static lv_point_t s_vis_route[5];    /* map: survey trail through region markers */
+static lv_point_t s_vis_dune[3][20]; /* map: dune-field contour texture */
+static lv_point_t s_vis_ridge[12];   /* map: escarpment ridge line */
+
+static uint32_t title_hash(const char *s)
+{
+    uint32_t h = 2166136261u;
+    while (s && *s) {
+        h = (h ^ (uint8_t)*s++) * 16777619u;
+    }
+    return h;
+}
+
+/* A framed inset box — the common visual container. */
+static lv_obj_t *visual_frame(lv_obj_t *p, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h)
+{
+    lv_obj_t *b = lv_obj_create(p);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, w, h);
+    lv_obj_align(b, LV_ALIGN_TOP_LEFT, x, y);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(b, COL_PANEL_ITEM, 0);
+    lv_obj_set_style_border_color(b, COL_DIM, 0);
+    lv_obj_set_style_border_width(b, 2, 0);
+    lv_obj_set_style_radius(b, 0, 0);
+    lv_obj_set_style_pad_all(b, 0, 0);
+    lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    return b;
+}
+
+/* A thin filled bar: grid lines, crosshairs, cactus segments. */
+static lv_obj_t *vbar(lv_obj_t *parent, lv_coord_t x, lv_coord_t y,
+                      lv_coord_t w, lv_coord_t h, lv_color_t col)
+{
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_size(o, w, h);
+    lv_obj_align(o, LV_ALIGN_TOP_LEFT, x, y);
+    lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(o, col, 0);
+    return o;
+}
+
+/* A circle (outline or filled), centred at (cx,cy). */
+static lv_obj_t *vcircle(lv_obj_t *parent, lv_coord_t cx, lv_coord_t cy,
+                         lv_coord_t r, lv_color_t col, bool fill)
+{
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_size(o, 2 * r, 2 * r);
+    lv_obj_align(o, LV_ALIGN_TOP_LEFT, cx - r, cy - r);
+    lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
+    if (fill) {
+        lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(o, col, 0);
+    } else {
+        lv_obj_set_style_bg_opa(o, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_color(o, col, 0);
+        lv_obj_set_style_border_width(o, 2, 0);
+    }
+    return o;
+}
+
+static lv_obj_t *vis_caption(lv_obj_t *p, const char *txt)
+{
+    lv_obj_t *l = lv_label_create(p);
+    lv_label_set_text(l, txt);
+    lv_obj_set_style_text_color(l, COL_MUTE, 0);
+    lv_obj_set_style_text_font(l, FONT_BODY, 0);
+    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 30, 94);
+    return l;
+}
+
+/* CLIMATE — a diurnal thermal trace (oscilloscope/recorder character). */
+static void vis_climate(lv_obj_t *p, const prop_entry_t *en)
+{
+    vis_caption(p, "THERMAL CYCLE  //  24H DIURNAL");
+    lv_obj_t *box = visual_frame(p, 30, VIS_Y, SCAN_W - 60, VIS_H);
+    int iw = SCAN_W - 60 - 4, ih = VIS_H - 4;
+
+    for (int i = 1; i < 8; i++) vbar(box, i * iw / 8, 0, 1, ih, COL_DIM);
+    for (int i = 1; i < 4; i++) vbar(box, 0, i * ih / 4, iw, 1, COL_DIM);
+
+    uint32_t h = title_hash(en->title);
+    float amp = 0.62f + (h % 26) / 100.0f;
+    int lo = 2 + (int)(h % 7);
+    int hi = 42 + (int)((h >> 3) % 9);
+    int n = (int)(sizeof(s_vis_curve) / sizeof(s_vis_curve[0]));
+    for (int i = 0; i < n; i++) {
+        float u = (float)i / (n - 1);                       /* 0..1 across the day */
+        float t = -cosf((u - 0.22f) * 6.2831853f);          /* min ~dawn, peak ~afternoon */
+        t = t * 0.5f + 0.5f;
+        t = t * amp + (1.0f - amp) * 0.15f;
+        s_vis_curve[i].x = (lv_coord_t)(2 + u * (iw - 1));
+        s_vis_curve[i].y = (lv_coord_t)(2 + (1.0f - t) * (ih - 1));
+    }
+    lv_obj_t *line = lv_line_create(box);
+    lv_obj_set_style_line_color(line, COL_AMBER, 0);
+    lv_obj_set_style_line_width(line, 2, 0);
+    lv_line_set_points(line, s_vis_curve, n);
+
+    lv_obj_t *hl = lv_label_create(p);
+    lv_label_set_text_fmt(hl, "HI %d C   LO %02d C", hi, lo);
+    lv_obj_set_style_text_color(hl, COL_MUTE, 0);
+    lv_obj_set_style_text_font(hl, FONT_BODY, 0);
+    lv_obj_align(hl, LV_ALIGN_TOP_RIGHT, -34, 94);
+
+    const char *ax[3] = { "NIGHT", "NOON", "NIGHT" };
+    lv_align_t aa[3] = { LV_ALIGN_TOP_LEFT, LV_ALIGN_TOP_MID, LV_ALIGN_TOP_RIGHT };
+    lv_coord_t ax_x[3] = { 34, 0, -34 };
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *l = lv_label_create(p);
+        lv_label_set_text(l, ax[i]);
+        lv_obj_set_style_text_color(l, COL_DIM, 0);
+        lv_obj_set_style_text_font(l, FONT_BODY, 0);
+        lv_obj_align(l, aa[i], ax_x[i], VIS_Y + VIS_H + 2);
+    }
+}
+
+/* MAP — a survey map of the territory: a faint graticule, dune-field contours, the
+ * escarpment ridge, labelled region markers linked by a trail, a compass rose and
+ * a scale bar, with the current region marked. Drawn from primitives, no assets. */
+static void vis_map(lv_obj_t *p, int entry, const prop_entry_t *en)
+{
+    vis_caption(p, "SECTOR CHART  //  SURVEY MAP");
+    lv_obj_t *box = visual_frame(p, 30, VIS_Y, SCAN_W - 60, VIS_H);
+    int iw = SCAN_W - 60 - 4, ih = VIS_H - 4;
+
+    /* Lat/long graticule (faint). */
+    for (int i = 1; i < 8; i++) vbar(box, i * iw / 8, 0, 1, ih, COL_DIM);
+    for (int i = 1; i < 4; i++) vbar(box, 0, i * ih / 4, iw, 1, COL_DIM);
+
+    /* Dune fields: stacked wavy contour lines (terrain texture) in the west. */
+    int dn = (int)(sizeof(s_vis_dune[0]) / sizeof(s_vis_dune[0][0]));
+    for (int d = 0; d < 3; d++) {
+        int baseY = (int)((0.30f + d * 0.16f) * ih);
+        for (int i = 0; i < dn; i++) {
+            s_vis_dune[d][i].x = (lv_coord_t)(iw * 0.04f + (float)i / (dn - 1) * iw * 0.50f);
+            s_vis_dune[d][i].y = (lv_coord_t)(baseY + sinf(i * 0.7f + d * 1.3f) * 5.0f);
+        }
+        lv_obj_t *du = lv_line_create(box);
+        lv_obj_set_style_line_color(du, COL_DIM, 0);
+        lv_obj_set_style_line_width(du, 2, 0);
+        lv_line_set_points(du, s_vis_dune[d], dn);
+    }
+
+    /* The escarpment: a bold ridge line down the eastern edge. */
+    int rn = (int)(sizeof(s_vis_ridge) / sizeof(s_vis_ridge[0]));
+    for (int i = 0; i < rn; i++) {
+        s_vis_ridge[i].x = (lv_coord_t)(iw * 0.74f + sinf(i * 1.1f) * 12.0f + (i & 1 ? 5 : -5));
+        s_vis_ridge[i].y = (lv_coord_t)((float)i / (rn - 1) * (ih - 6) + 3);
+    }
+    lv_obj_t *ridge = lv_line_create(box);
+    lv_obj_set_style_line_color(ridge, COL_MUTE, 0);
+    lv_obj_set_style_line_width(ridge, 3, 0);
+    lv_line_set_points(ridge, s_vis_ridge, rn);
+
+    /* Region markers (one per MAP entry), linked by a dim survey trail. */
+    static const float mx[4] = { 0.16f, 0.42f, 0.80f, 0.30f };
+    static const float my[4] = { 0.42f, 0.72f, 0.45f, 0.80f };
+    int nmark = prop_sections[1].count;
+    if (nmark > 4) nmark = 4;
+    for (int i = 0; i < nmark; i++) {
+        s_vis_route[i].x = (lv_coord_t)(mx[i] * (iw - 1));
+        s_vis_route[i].y = (lv_coord_t)(my[i] * (ih - 1));
+    }
+    if (nmark > 1) {
+        lv_obj_t *trail = lv_line_create(box);
+        lv_obj_set_style_line_color(trail, COL_DIM, 0);
+        lv_obj_set_style_line_width(trail, 1, 0);
+        lv_line_set_points(trail, s_vis_route, nmark);
+    }
+
+    int here = nmark ? (((entry % nmark) + nmark) % nmark) : 0;
+    for (int i = 0; i < nmark; i++) {
+        lv_coord_t cx = s_vis_route[i].x, cy = s_vis_route[i].y;
+        bool act = (i == here);
+        vbar(box, cx - (act ? 5 : 4), cy - (act ? 5 : 4),
+             act ? 10 : 8, act ? 10 : 8, act ? COL_AMBER : COL_MUTE);
+        lv_obj_t *nb = lv_label_create(box);
+        lv_label_set_text_fmt(nb, "%d", i + 1);
+        lv_obj_set_style_text_color(nb, act ? COL_AMBER : COL_MUTE, 0);
+        lv_obj_set_style_text_font(nb, FONT_BODY, 0);
+        lv_obj_align(nb, LV_ALIGN_TOP_LEFT, cx + 8, cy - 8);
+        if (act) {
+            vbar(box, cx, 0, 1, ih, COL_AMBER);     /* you-are-here crosshair */
+            vbar(box, 0, cy, iw, 1, COL_AMBER);
+        }
+    }
+
+    /* Compass rose (top-right inside the frame). */
+    int compx = iw - 42, compy = 32;
+    vbar(box, compx, compy - 16, 2, 32, COL_MUTE);
+    vbar(box, compx - 16, compy, 32, 2, COL_MUTE);
+    vbar(box, compx - 1, compy - 22, 2, 8, COL_AMBER);   /* north tip */
+    lv_obj_t *nlbl = lv_label_create(box);
+    lv_label_set_text(nlbl, "N");
+    lv_obj_set_style_text_color(nlbl, COL_AMBER, 0);
+    lv_obj_set_style_text_font(nlbl, FONT_BODY, 0);
+    lv_obj_align(nlbl, LV_ALIGN_TOP_LEFT, compx - 5, compy - 42);
+
+    /* Scale bar (bottom-left inside the frame). */
+    vbar(box, 16, ih - 18, 96, 2, COL_MUTE);
+    vbar(box, 16, ih - 22, 2, 8, COL_MUTE);
+    vbar(box, 64, ih - 21, 2, 6, COL_MUTE);
+    vbar(box, 112, ih - 22, 2, 8, COL_MUTE);
+    lv_obj_t *sclbl = lv_label_create(box);
+    lv_label_set_text(sclbl, "0       100 KM");
+    lv_obj_set_style_text_color(sclbl, COL_DIM, 0);
+    lv_obj_set_style_text_font(sclbl, FONT_BODY, 0);
+    lv_obj_align(sclbl, LV_ALIGN_TOP_LEFT, 14, ih - 36);
+
+    /* Active region name + grid reference. */
+    lv_obj_t *co = lv_label_create(p);
+    lv_label_set_text_fmt(co, "%s   //   GRID %02d.%d / %02d.%d", en->title,
+                          (int)(mx[here] * 40), (here * 7) % 10,
+                          (int)(my[here] * 40), (here * 3) % 10);
+    lv_obj_set_style_text_color(co, COL_MUTE, 0);
+    lv_obj_set_style_text_font(co, FONT_BODY, 0);
+    lv_obj_align(co, LV_ALIGN_TOP_RIGHT, -34, 94);
+}
+
+/* WILDLIFE — a bio-scan dossier: a reticle portrait + a stat block. */
+static void vis_wildlife(lv_obj_t *p, const prop_entry_t *en)
+{
+    vis_caption(p, "SPECIMEN DOSSIER  //  BIO-SCAN");
+    lv_obj_t *pf = visual_frame(p, 30, VIS_Y, VIS_H, VIS_H);   /* square portrait */
+    int c = VIS_H / 2 - 2;
+    vbar(pf, c, 6, 1, VIS_H - 16, COL_DIM);                    /* reticle crosshair */
+    vbar(pf, 6, c, VIS_H - 16, 1, COL_DIM);
+    vcircle(pf, c, c, 58, COL_DIM, false);
+    vcircle(pf, c, c, 40, COL_DIM, false);
+    vcircle(pf, c - 16, c - 6, 9, COL_AMBER, true);            /* nocturnal "eyes" */
+    vcircle(pf, c + 16, c - 6, 9, COL_AMBER, true);
+
+    uint32_t h = title_hash(en->title);
+    const char *labels[4] = { "SIZE", "THREAT", "ACTIVITY", "WATER NEED" };
+    int vals[4] = {
+        10 + (int)(h % 80),
+        (int)((h >> 3) % 95),
+        30 + (int)((h >> 6) % 70),
+        5 + (int)((h >> 9) % 45),
+    };
+    int x0 = 30 + VIS_H + 30;
+    for (int i = 0; i < 4; i++) {
+        lv_coord_t y = VIS_Y + 6 + i * 40;
+        lv_obj_t *l = lv_label_create(p);
+        lv_label_set_text(l, labels[i]);
+        lv_obj_set_style_text_color(l, COL_AMBER, 0);
+        lv_obj_set_style_text_font(l, FONT_BODY, 0);
+        lv_obj_align(l, LV_ALIGN_TOP_LEFT, x0, y);
+        lv_obj_t *bar = make_meter_bar(p, x0 + 150, y, SCAN_W - 30 - (x0 + 150));
+        set_meter(bar, vals[i], vals[i] > 75 ? COL_ALERT : COL_AMBER);
+    }
+}
+
+/* PLANTS — a field-guide plate: a drawn cactus + spec tags. */
+static void vis_plants(lv_obj_t *p, const prop_entry_t *en)
+{
+    vis_caption(p, "FIELD PLATE  //  FLORA SPECIMEN");
+    lv_obj_t *pl = visual_frame(p, 30, VIS_Y, VIS_H, VIS_H);
+
+    uint32_t h = title_hash(en->title);
+    vbar(pl, 14, VIS_H - 22, VIS_H - 32, 2, COL_DIM);          /* ground line */
+    vbar(pl, 74, 46, 14, VIS_H - 70, COL_AMBER);              /* trunk */
+    if (h & 1) {                                              /* left arm */
+        vbar(pl, 48, 92, 28, 12, COL_AMBER);
+        vbar(pl, 48, 64, 12, 40, COL_AMBER);
+    }
+    if (h & 2) {                                             /* right arm */
+        vbar(pl, 86, 78, 26, 12, COL_AMBER);
+        vbar(pl, 100, 50, 12, 40, COL_AMBER);
+    }
+    if (h & 4) {
+        vcircle(pl, 81, 44, 7, COL_AMBER, true);             /* bloom / fruit */
+    }
+
+    const char *tags[3] = { "HEIGHT", "WATER", "BLOOM" };
+    char vbuf[3][20];
+    snprintf(vbuf[0], sizeof(vbuf[0]), "%d - %d m", 1 + (int)(h % 4), 6 + (int)((h >> 2) % 10));
+    snprintf(vbuf[1], sizeof(vbuf[1]), "%s", (h & 8) ? "VERY LOW" : "LOW");
+    snprintf(vbuf[2], sizeof(vbuf[2]), "%s", (h & 4) ? "NIGHT" : "SEASONAL");
+    int x0 = 30 + VIS_H + 30;
+    for (int i = 0; i < 3; i++) {
+        lv_coord_t y = VIS_Y + 8 + i * 50;
+        lv_obj_t *chip = lv_obj_create(p);
+        lv_obj_remove_style_all(chip);
+        lv_obj_set_size(chip, SCAN_W - 30 - x0, 38);
+        lv_obj_align(chip, LV_ALIGN_TOP_LEFT, x0, y);
+        lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(chip, COL_PANEL_ITEM, 0);
+        lv_obj_set_style_border_color(chip, COL_DIM, 0);
+        lv_obj_set_style_border_width(chip, 1, 0);
+        lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *lt = lv_label_create(chip);
+        lv_label_set_text(lt, tags[i]);
+        lv_obj_set_style_text_color(lt, COL_MUTE, 0);
+        lv_obj_align(lt, LV_ALIGN_LEFT_MID, 12, 0);
+        lv_obj_t *lv = lv_label_create(chip);
+        lv_label_set_text(lv, vbuf[i]);
+        lv_obj_set_style_text_color(lv, COL_AMBER, 0);
+        lv_obj_align(lv, LV_ALIGN_RIGHT_MID, -12, 0);
+    }
+}
+
+static lv_obj_t *build_article_panel(lv_obj_t *parent)
+{
+    int section = clamp_section(s_archive_section);
+    const prop_section_t *sec = &prop_sections[section];
+    int idx = s_archive_entry;
+    if (idx < 0 || idx >= sec->count) {
+        idx = 0;
+    }
+    const prop_entry_t *en = &sec->entries[idx];
+
+    lv_obj_t *p = make_panel(parent, sec->name, back_to_archive_cb);
+
+    lv_obj_t *t = lv_label_create(p);
+    lv_label_set_text(t, en->title);
+    lv_obj_set_style_text_color(t, COL_AMBER, 0);
+    lv_obj_set_style_text_font(t, FONT_HEAD, 0);
+    lv_obj_align(t, LV_ALIGN_TOP_LEFT, 30, 64);
+
+    /* Distinct visual per section type (index order matches prop_sections). */
+    switch (section) {
+        case 0: vis_climate(p, en); break;
+        case 1: vis_map(p, idx, en); break;
+        case 2: vis_wildlife(p, en); break;
+        case 3: vis_plants(p, en); break;
+        default: break;
+    }
+
+    /* Scrollable body container so long entries page under the SELECTOR dial. */
+    s_article_scroll = lv_obj_create(p);
+    lv_obj_set_size(s_article_scroll, SCAN_W - 60, 600 - VIS_BODY_Y - 16);
+    lv_obj_align(s_article_scroll, LV_ALIGN_TOP_LEFT, 30, VIS_BODY_Y);
+    lv_obj_set_style_bg_opa(s_article_scroll, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_article_scroll, 0, 0);
+    lv_obj_set_style_pad_all(s_article_scroll, 0, 0);
+    lv_obj_set_scroll_dir(s_article_scroll, LV_DIR_VER);
+
+    lv_obj_t *body = lv_label_create(s_article_scroll);
+    lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(body, SCAN_W - 100);
+    lv_label_set_text(body, en->body);
+    lv_obj_set_style_text_color(body, COL_AMBER, 0);
+    lv_obj_set_style_text_font(body, FONT_BODY, 0);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, 0);
+    return p;
+}
+
+/* ---- CASSETTE deck (PK_CASSETTE): stubbed transport ----------------------- */
+static lv_obj_t *build_cassette_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "CASSETTE", back_to_home_cb);
+
+    /* Two reels + a counter, purely decorative for now. */
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *reel = lv_obj_create(p);
+        lv_obj_set_size(reel, 120, 120);
+        lv_obj_align(reel, LV_ALIGN_TOP_MID, i ? 170 : -170, 120);
+        lv_obj_set_style_radius(reel, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(reel, COL_PANEL_ITEM, 0);
+        lv_obj_set_style_border_color(reel, COL_AMBER, 0);
+        lv_obj_set_style_border_width(reel, 3, 0);
+    }
+    lv_obj_t *ctr = lv_label_create(p);
+    lv_label_set_text(ctr, "0 0 0 0");
+    lv_obj_set_style_text_color(ctr, COL_AMBER, 0);
+    lv_obj_set_style_text_font(ctr, FONT_HEAD, 0);
+    lv_obj_align(ctr, LV_ALIGN_TOP_MID, 0, 150);
+
+    const char *xport[] = { LV_SYMBOL_PREV, LV_SYMBOL_PLAY, LV_SYMBOL_STOP, LV_SYMBOL_NEXT };
+    for (int i = 0; i < 4; i++) {
+        make_btn(p, xport[i], 90, LV_ALIGN_TOP_MID, (i - 2) * 100 + 50, 300, back_to_home_cb);
+    }
+
+    lv_obj_t *st = lv_label_create(p);
+    lv_label_set_text(st, "NO CASSETTE LOADED");
+    lv_obj_set_style_text_color(st, COL_MUTE, 0);
+    lv_obj_set_style_text_font(st, FONT_HEAD, 0);
+    lv_obj_align(st, LV_ALIGN_BOTTOM_MID, 0, -70);
+
+    lv_obj_t *note = lv_label_create(p);
+    lv_label_set_text(note, "Transport idle - playback not yet wired to the audio stage.");
+    lv_obj_set_style_text_color(note, COL_MUTE, 0);
+    lv_obj_align(note, LV_ALIGN_BOTTOM_MID, 0, -34);
+    return p;
+}
+
+/* ---- INSIGHTS engine (PK_INSIGHTS): stub ---------------------------------- */
+static lv_obj_t *build_insights_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "INSIGHTS", back_to_home_cb);
+
+    lv_obj_t *hd = lv_label_create(p);
+    lv_label_set_text(hd, "INSIGHT ENGINE  //  IDLE");
+    lv_obj_set_style_text_color(hd, COL_AMBER, 0);
+    lv_obj_set_style_text_font(hd, FONT_HEAD, 0);
+    lv_obj_align(hd, LV_ALIGN_CENTER, 0, -20);
+
+    lv_obj_t *note = lv_label_create(p);
+    lv_label_set_text(note, "Programmed correlations across the archive will surface here.");
+    lv_obj_set_style_text_color(note, COL_MUTE, 0);
+    lv_obj_align(note, LV_ALIGN_CENTER, 0, 24);
+    return p;
+}
+
 /* Global SETUP menu (its own lazily-built panel). Rows open sub-panels by kind. */
 static lv_obj_t *build_menu_panel(lv_obj_t *parent)
 {
-    lv_obj_t *m = make_panel(parent, "SETUP", close_setup_cb);   /* BACK exits to main */
+    /* SETUP holds CONFIGURATION only; instruments (VITALS/SCAN/SPECTRUM) live on
+     * the console rail. BACK returns to the console. */
+    lv_obj_t *m = make_panel(parent, "SETUP", close_setup_cb);
     menu_item(m, "WI-FI",   0, menu_open_cb, (void *)(intptr_t)PK_WIFI);
     menu_item(m, "DISPLAY", 1, menu_open_cb, (void *)(intptr_t)PK_DISPLAY);
     menu_item(m, "AUDIO",   2, menu_open_cb, (void *)(intptr_t)PK_AUDIO);
-    menu_item(m, "LEDS",        3, menu_open_cb, (void *)(intptr_t)PK_LEDS);
-    menu_item(m, "VITALS",      4, menu_open_cb, (void *)(intptr_t)PK_VITALS);
-    menu_item(m, "SIGNAL SCAN", 5, menu_open_cb, (void *)(intptr_t)PK_SCAN);
-    menu_item(m, "SPECTRUM",    6, menu_open_cb, (void *)(intptr_t)PK_SPECTRUM);
-    menu_item(m, "ABOUT",       7, menu_open_cb, (void *)(intptr_t)PK_ABOUT);
+    menu_item(m, "LEDS",    3, menu_open_cb, (void *)(intptr_t)PK_LEDS);
+    menu_item(m, "ABOUT",   4, menu_open_cb, (void *)(intptr_t)PK_ABOUT);
     return m;
 }
 
@@ -1143,14 +2042,30 @@ static void build_sens_meter(lv_obj_t *parent, lv_coord_t x, lv_coord_t y)
 
 static void build_screen(void)
 {
-    lv_obj_t *scr = lv_scr_act();
-    s_root = scr;   /* lazily-built panels are created on this screen */
-    lv_obj_set_style_bg_color(scr, COL_BG, LV_PART_MAIN);
-    lv_obj_set_style_text_font(scr, FONT_BODY, 0);   /* Eurostile everywhere (inherited) */
+    lv_obj_t *screen = lv_scr_act();
+    lv_obj_set_style_bg_color(screen, COL_BG, LV_PART_MAIN);
+    lv_obj_set_style_text_font(screen, FONT_BODY, 0);   /* Eurostile everywhere (inherited) */
 
-    /* Title bar */
+    /* Persistent icon nav rail down the left edge of every screen. */
+    build_rail(screen);
+
+    /* Content container to the rail's right: the SCANNER readout builds here and
+     * every lazily-built panel is created on it (s_root), so all of them inset
+     * past the rail with no per-panel geometry changes. */
+    lv_obj_t *scr = lv_obj_create(screen);
+    lv_obj_remove_style_all(scr);
+    lv_obj_set_size(scr, SCAN_W, 600);
+    lv_obj_set_pos(scr, RAIL_W, 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(scr, COL_BG, 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    s_root = scr;   /* lazily-built panels are created on this content container */
+
+    /* Title bar (this root screen is the SCANNER instrument; the console home is
+     * an overlay panel shown on top of it by default — see the open_panel(PK_HOME)
+     * at the end of this function). */
     lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "COMM // SCANNER  UNIT-7");
+    lv_label_set_text(title, "SCANNER  //  UNIT-7");
     lv_obj_set_style_text_color(title, COL_AMBER, 0);
     lv_obj_set_style_text_font(title, FONT_HEAD, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 24, 20);
@@ -1248,7 +2163,24 @@ static void build_screen(void)
     lv_obj_set_style_text_color(setup_lbl, COL_MUTE, 0);
     lv_obj_center(setup_lbl);
 
-    /* SETUP menu + sub-screens are built lazily on navigation (open_panel). */
+    /* HOME button (bottom-left) returns this instrument to the console. */
+    lv_obj_t *home_btn = lv_btn_create(scr);
+    lv_obj_set_size(home_btn, 130, 44);
+    lv_obj_align(home_btn, LV_ALIGN_BOTTOM_LEFT, 16, -12);
+    lv_obj_set_style_bg_color(home_btn, lv_color_hex(0x141008), 0);
+    lv_obj_set_style_border_color(home_btn, COL_MUTE, 0);
+    lv_obj_set_style_border_width(home_btn, 1, 0);
+    lv_obj_set_style_radius(home_btn, 0, 0);
+    lv_obj_add_event_cb(home_btn, back_to_home_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *home_lbl = lv_label_create(home_btn);
+    lv_label_set_text(home_lbl, LV_SYMBOL_LEFT " CONSOLE");
+    lv_obj_set_style_text_color(home_lbl, COL_MUTE, 0);
+    lv_obj_center(home_lbl);
+
+    /* SETUP menu + sub-screens are built lazily on navigation (open_panel). The
+     * console home is shown on top as the default landing screen. */
+    open_panel(PK_HOME);
+    s_ui_ready = true;   /* subsequent navigations get the channel-change transition */
 }
 
 static const char *link_text(prop_link_t link)
@@ -1260,6 +2192,17 @@ static const char *link_text(prop_link_t link)
     }
 }
 
+/* lv_label_set_text has no dedupe in LVGL v8: it reallocs + invalidates the label
+ * on every call, even with identical text. At 20 Hz that's a needless redraw per
+ * label per frame. Skip the write when the text hasn't actually changed. */
+static void label_set_text_cached(lv_obj_t *label, const char *txt)
+{
+    const char *cur = lv_label_get_text(label);
+    if (!cur || strcmp(cur, txt) != 0) {
+        lv_label_set_text(label, txt);
+    }
+}
+
 /* Observer: runs in engine task context -> must take the LVGL lock. */
 static void ui_observer(const prop_state_t *st, void *ctx)
 {
@@ -1268,82 +2211,112 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         return;  /* skip this frame rather than block the engine */
     }
 
-    lv_label_set_text(s_status_label, st->status);
-    lv_label_set_text(s_channel_label, st->channel);
-    lv_label_set_text(s_link_label, link_text(st->link));
-    lv_obj_set_style_text_color(s_link_label, st->link == LINK_DOWN ? COL_DIM : COL_AMBER, 0);
-    /* Keep the meter pinned to the (variable-width) LINK label. */
-    lv_obj_align_to(s_sig_box, s_link_label, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+    /* The whole SCANNER readout below lives on the root screen. Every other screen
+     * is a full-screen OPAQUE panel built on top of it (PK_HOME is the default
+     * landing screen), so when one is up this readout is completely obscured.
+     * Repainting it at 20 Hz then is pure waste — worse, each invisible
+     * lv_line_set_points() invalidation forces LVGL to recomposite that stripe, and
+     * with the CRT overlay on, to software-alpha-blend the overlay over it. Skip the
+     * entire block unless the bare scanner is the visible screen. */
+    if (s_cur_kind == PK_NONE) {
+        label_set_text_cached(s_status_label, st->status);
+        label_set_text_cached(s_channel_label, st->channel);
+        label_set_text_cached(s_link_label, link_text(st->link));
+        lv_obj_set_style_text_color(s_link_label, st->link == LINK_DOWN ? COL_DIM : COL_AMBER, 0);
+        /* Keep the meter pinned to the (variable-width) LINK label. */
+        lv_obj_align_to(s_sig_box, s_link_label, LV_ALIGN_OUT_LEFT_MID, -12, 0);
 
-    /* IP + signal strength alongside the LINK indicator. prop_net_get_rssi() is a
-     * cheap cached read (a background task does the SDIO poll), so this stays off
-     * the critical path and never stalls the display. */
-    if (st->link == LINK_STA) {
-        char ip[16];
-        prop_net_get_ip(ip, sizeof(ip));
-        lv_label_set_text(s_ip_label, ip);
-        set_signal_bars(rssi_to_quarters(prop_net_get_rssi()), COL_AMBER);
-    } else if (st->link == LINK_AP) {
-        lv_label_set_text(s_ip_label, "AP 192.168.4.1");
-        set_signal_bars(0, COL_AMBER);
-    } else {
-        lv_label_set_text(s_ip_label, "");
-        set_signal_bars(0, COL_AMBER);
-    }
-
-    /* ALERT tints the readout red; everything else is amber phosphor. */
-    bool alert = (st->scene == SCENE_ALERT);
-    lv_color_t status_col = alert ? COL_ALERT : COL_AMBER;
-
-    /* Plot the engine's recorder trail across the scanner track. The UI owns no
-     * waveform logic — it just maps the signed columns to screen coordinates. */
-    lv_coord_t cw = lv_obj_get_content_width(s_scan_track);
-    lv_coord_t ch = lv_obj_get_content_height(s_scan_track);
-    if (cw <= 1) cw = SCAN_W - 52;
-    if (ch <= 1) ch = SCAN_TRACK_H - 4;
-    int mid = ch / 2;
-    int half = ch / 2 - 1;
-    for (int i = 0; i < PROP_WAVE_SAMPLES; i++) {
-        s_wave_pts[i].x = (lv_coord_t)((int)i * (cw - 1) / (PROP_WAVE_SAMPLES - 1));
-        s_wave_pts[i].y = (lv_coord_t)(mid - (st->wave[i] * half) / 100);
-    }
-    lv_line_set_points(s_wave_line, s_wave_pts, PROP_WAVE_SAMPLES);
-    lv_obj_set_style_line_color(s_wave_line, status_col, 0);
-
-    /* The bright blip rides the write head (the "now" edge of the recorder); when
-     * SIGNAL_ACQUIRED freezes the sweep it parks on the eruption as a peak marker. */
-    int head_x = (int)st->wave_head * (cw - 1) / (PROP_WAVE_SAMPLES - 1);
-    lv_obj_align(s_scan_blip, LV_ALIGN_LEFT_MID, head_x, 0);
-    lv_obj_set_style_bg_color(s_scan_blip, status_col, 0);
-
-    /* Status punch-in: entering SIGNAL_ACQUIRED / ALERT slams the headline in big
-     * (FONT_PUNCH) and bright, then drops to the normal heading and settles. v8
-     * labels don't upscale via transform, so the punch is a font swap + flash. */
-    bool punching = st->scene_tick < 6 && (st->scene == SCENE_SIGNAL_ACQUIRED || alert);
-    lv_color_t headline_col = status_col;
-    if (punching) {
-        lv_obj_set_style_text_font(s_status_label, FONT_PUNCH, 0);
-        if (st->scene_tick & 1) {   /* flash a brighter tint while it lands */
-            headline_col = alert ? lv_color_hex(0xFF9090) : lv_color_hex(0xFFE060);
+        /* IP + signal strength alongside the LINK indicator. prop_net_get_rssi() is a
+         * cheap cached read (a background task does the SDIO poll), so this stays off
+         * the critical path and never stalls the display. */
+        if (st->link == LINK_STA) {
+            char ip[16];
+            prop_net_get_ip(ip, sizeof(ip));
+            label_set_text_cached(s_ip_label, ip);
+            set_signal_bars(rssi_to_quarters(prop_net_get_rssi()), COL_AMBER);
+        } else if (st->link == LINK_AP) {
+            label_set_text_cached(s_ip_label, "AP 192.168.4.1");
+            set_signal_bars(0, COL_AMBER);
+        } else {
+            label_set_text_cached(s_ip_label, "");
+            set_signal_bars(0, COL_AMBER);
         }
-    } else {
-        lv_obj_set_style_text_font(s_status_label, FONT_STATUS, 0);
+
+        /* ALERT tints the readout red; everything else is amber phosphor. */
+        bool alert = (st->scene == SCENE_ALERT);
+        lv_color_t status_col = alert ? COL_ALERT : COL_AMBER;
+
+        /* Plot the engine's recorder trail across the scanner track. The UI owns no
+         * waveform logic — it just maps the signed columns to screen coordinates. */
+        lv_coord_t cw = lv_obj_get_content_width(s_scan_track);
+        lv_coord_t ch = lv_obj_get_content_height(s_scan_track);
+        if (cw <= 1) cw = SCAN_W - 52;
+        if (ch <= 1) ch = SCAN_TRACK_H - 4;
+        int mid = ch / 2;
+        int half = ch / 2 - 1;
+        for (int i = 0; i < PROP_WAVE_SAMPLES; i++) {
+            s_wave_pts[i].x = (lv_coord_t)((int)i * (cw - 1) / (PROP_WAVE_SAMPLES - 1));
+            s_wave_pts[i].y = (lv_coord_t)(mid - (st->wave[i] * half) / 100);
+        }
+        lv_line_set_points(s_wave_line, s_wave_pts, PROP_WAVE_SAMPLES);
+        lv_obj_set_style_line_color(s_wave_line, status_col, 0);
+
+        /* The bright blip rides the write head (the "now" edge of the recorder); when
+         * SIGNAL_ACQUIRED freezes the sweep it parks on the eruption as a peak marker. */
+        int head_x = (int)st->wave_head * (cw - 1) / (PROP_WAVE_SAMPLES - 1);
+        lv_obj_align(s_scan_blip, LV_ALIGN_LEFT_MID, head_x, 0);
+        lv_obj_set_style_bg_color(s_scan_blip, status_col, 0);
+
+        /* Status punch-in: entering SIGNAL_ACQUIRED / ALERT slams the headline in big
+         * (FONT_PUNCH) and bright, then drops to the normal heading and settles. v8
+         * labels don't upscale via transform, so the punch is a font swap + flash. */
+        bool punching = st->scene_tick < 6 && (st->scene == SCENE_SIGNAL_ACQUIRED || alert);
+        lv_color_t headline_col = status_col;
+        if (punching) {
+            lv_obj_set_style_text_font(s_status_label, FONT_PUNCH, 0);
+            if (st->scene_tick & 1) {   /* flash a brighter tint while it lands */
+                headline_col = alert ? lv_color_hex(0xFF9090) : lv_color_hex(0xFFE060);
+            }
+        } else {
+            lv_obj_set_style_text_font(s_status_label, FONT_STATUS, 0);
+        }
+        lv_obj_set_style_text_color(s_status_label, headline_col, 0);
+
+        /* Channel gauge marker tracks the tuned position (scrambles while SCANNING,
+         * parks on lock). The waveform below is the noise at this channel. */
+        lv_coord_t band_w = lv_obj_get_content_width(s_chan_band);
+        if (band_w <= 1) band_w = CHAN_BAND_W - 4;
+        int marker_x = (int)st->chan_pos * (band_w - 4) / 100;
+        lv_obj_align(s_chan_marker, LV_ALIGN_LEFT_MID, marker_x, 0);
+        lv_obj_set_style_bg_color(s_chan_marker, alert ? COL_ALERT : COL_AMBER, 0);
+
+        /* SENS meter reflects the receiver gain the web slider drives. */
+        lv_coord_t sens_w = lv_obj_get_content_width(lv_obj_get_parent(s_sens_fill));
+        if (sens_w <= 1) sens_w = SENS_W - 4;
+        lv_obj_set_width(s_sens_fill, (int)st->sensitivity * sens_w / 100);
+        lv_label_set_text_fmt(s_sens_val, "%d%%", st->sensitivity);
     }
-    lv_obj_set_style_text_color(s_status_label, headline_col, 0);
 
-    /* Channel gauge marker tracks the tuned position (scrambles while SCANNING,
-     * parks on lock). The waveform below is the noise at this channel. */
-    lv_coord_t band_w = lv_obj_get_content_width(s_chan_band);
-    if (band_w <= 1) band_w = CHAN_BAND_W - 4;
-    int marker_x = (int)st->chan_pos * (band_w - 4) / 100;
-    lv_obj_align(s_chan_marker, LV_ALIGN_LEFT_MID, marker_x, 0);
-    lv_obj_set_style_bg_color(s_chan_marker, alert ? COL_ALERT : COL_AMBER, 0);
-
-    /* SENS meter reflects the receiver gain the web slider drives. */
-    lv_coord_t sens_w = lv_obj_get_content_width(lv_obj_get_parent(s_sens_fill));
-    if (sens_w <= 1) sens_w = SENS_W - 4;
-    lv_obj_set_width(s_sens_fill, (int)st->sensitivity * sens_w / 100);
-    lv_label_set_text_fmt(s_sens_val, "%d%%", st->sensitivity);
+    /* Refresh the console's data-sponge status strip (~2 Hz) while it's live.
+     * No RTC/SNTP yet, so CLOCK shows uptime; DATE is the static placeholder. */
+    if (s_cur_kind == PK_HOME && s_home_clock && (st->tick % 10 == 0)) {
+        uint32_t up = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+        lv_label_set_text_fmt(s_home_clock, "%02u:%02u:%02u",
+                              (unsigned)(up / 3600), (unsigned)((up / 60) % 60),
+                              (unsigned)(up % 60));
+        float t = read_core_temp();
+        if (t > -500.0f) {
+            char fbuf[24];
+            snprintf(fbuf, sizeof(fbuf), "%.1f C", t);
+            lv_label_set_text(s_home_temp, fbuf);
+        } else {
+            lv_label_set_text(s_home_temp, "-- C");
+        }
+        lv_label_set_text(s_home_link, st->link == LINK_STA ? "LINKED" :
+                                       (st->link == LINK_AP ? "LOCAL" : "SEEKING"));
+        lv_obj_set_style_text_color(s_home_link,
+                                    st->link == LINK_DOWN ? COL_MUTE : COL_AMBER, 0);
+    }
 
     /* Refresh the VITALS instrument (~2 Hz) only while it's the live panel. */
     if (s_cur_kind == PK_VITALS && s_vit_temp && (st->tick % 10 == 0)) {
@@ -1432,7 +2405,8 @@ void prop_ui_goto(const char *screen)
     if (!screen || !lvgl_port_lock(500)) {
         return;
     }
-    if (strcmp(screen, "home") == 0)         open_panel(PK_NONE);
+    if (strcmp(screen, "home") == 0)         open_panel(PK_HOME);
+    else if (strcmp(screen, "scanner") == 0) open_panel(PK_NONE);
     else if (strcmp(screen, "menu") == 0)    open_panel(PK_MENU);
     else if (strcmp(screen, "wifi") == 0)    open_panel(PK_WIFI);
     else if (strcmp(screen, "display") == 0) open_panel(PK_DISPLAY);
@@ -1442,8 +2416,85 @@ void prop_ui_goto(const char *screen)
     else if (strcmp(screen, "vitals") == 0)  open_panel(PK_VITALS);
     else if (strcmp(screen, "scan") == 0)    open_panel(PK_SCAN);
     else if (strcmp(screen, "spectrum") == 0) open_panel(PK_SPECTRUM);
+    else if (strcmp(screen, "archive") == 0) open_panel(PK_ARCHIVE);
+    else if (strcmp(screen, "cassette") == 0) open_panel(PK_CASSETTE);
+    else if (strcmp(screen, "insights") == 0) open_panel(PK_INSIGHTS);
     lvgl_port_unlock();
     ESP_LOGI(UI_TAG, "goto screen: %s", screen);
+}
+
+/* ---- Physical-control input (SELECTOR dial / TAB switches / ACTION buttons)
+ * The author's nav model, decoupled from hardware: the web portal drives this
+ * today via /cmd {"cmd":"input",...}; bsp_io will route the real knobs/switches
+ * here once they're wired. Navigation lives in the view (this module), mirroring
+ * prop_ui_goto — the engine stays a pure behavior model. */
+
+/* SELECTOR rotation: context-dependent. */
+static void nav_select_move(int dir)
+{
+    switch (s_cur_kind) {
+        case PK_HOME:
+            s_rail_sel = (s_rail_sel + dir + RAIL_COUNT) % RAIL_COUNT;
+            set_rail_highlight();
+            break;
+        case PK_ARCHIVE:
+            if (s_arch_row_count > 0) {
+                s_archive_entry = (s_archive_entry + dir + s_arch_row_count) % s_arch_row_count;
+                set_arch_row_highlight();
+            }
+            break;
+        case PK_ARTICLE:
+            if (s_article_scroll) {
+                lv_obj_scroll_by(s_article_scroll, 0, dir > 0 ? -80 : 80, LV_ANIM_ON);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+/* SELECTOR press / ACTION primary: open the highlighted thing, or step back. */
+static void nav_select_press(void)
+{
+    switch (s_cur_kind) {
+        case PK_HOME:    open_panel(s_rail[s_rail_sel].kind); break;
+        case PK_ARCHIVE: open_panel(PK_ARTICLE); break;
+        case PK_ARTICLE: open_panel(PK_ARCHIVE); break;
+        case PK_NONE:    open_panel(PK_HOME); break;   /* from the SCANNER readout */
+        default:         open_panel(PK_HOME); break;
+    }
+}
+
+/* TAB switch: archive section selection (opens/switches the ARCHIVE). */
+static void nav_tab(int n)
+{
+    s_archive_section = clamp_section(n);
+    s_archive_entry = 0;
+    open_panel(PK_ARCHIVE);
+}
+
+void prop_ui_input(const char *control, int arg)
+{
+    if (!control || !lvgl_port_lock(300)) {
+        return;
+    }
+    if (strcmp(control, "selector") == 0) {
+        if (arg == 0) {
+            nav_select_press();
+        } else {
+            nav_select_move(arg > 0 ? 1 : -1);
+        }
+    } else if (strcmp(control, "tab") == 0) {
+        nav_tab(arg);
+    } else if (strcmp(control, "action") == 0) {
+        if (arg == 2) {
+            open_panel(PK_HOME);      /* universal back-to-console */
+        } else {
+            nav_select_press();        /* action 1 = primary / select */
+        }
+    }
+    lvgl_port_unlock();
+    ESP_LOGI(UI_TAG, "input %s %d", control, arg);
 }
 
 esp_err_t prop_ui_init(void)
