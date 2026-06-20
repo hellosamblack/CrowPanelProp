@@ -61,8 +61,30 @@ static lv_obj_t *s_link_label;
 static lv_obj_t *s_ip_label;        /* STA IP, dim, under the LINK line */
 static lv_obj_t *s_scan_track;
 static lv_obj_t *s_scan_blip;
-static lv_obj_t *s_wave_line;                       /* recorder trail across the track */
+/* The recorder trail is split into segments, each an lv_line indexing into the
+ * shared point buffer. Only one new sample lands per tick, so re-rendering just
+ * the segment(s) whose slice changed cuts per-frame redraw area ~WAVE_SEGS-fold
+ * (the whole 950x160 track redraw was the 72 ms/frame bottleneck). */
+#define WAVE_SEGS    10
+#define WAVE_SEG_LEN (PROP_WAVE_SAMPLES / WAVE_SEGS)   /* 16 samples per segment */
+static lv_obj_t  *s_wave_seg[WAVE_SEGS];            /* segment lines across the track */
 static lv_point_t s_wave_pts[PROP_WAVE_SAMPLES];    /* persistent points buffer for lv_line */
+static lv_coord_t s_wave_shadow[PROP_WAVE_SAMPLES]; /* last-rendered y, to detect changed segments */
+static lv_color_t s_wave_color;                     /* current trace tint (recolor only on change) */
+
+/* Change-trackers so the scanner readout only invalidates widgets that actually
+ * change each frame (the big headline re-rasterizing every tick was the cost). */
+static lv_coord_t s_last_blip_x = -9999, s_last_marker_x = -9999;
+static uint16_t s_last_blip_col = 0xFFFF, s_last_headline_col = 0xFFFF, s_last_marker_col = 0xFFFF;
+static int s_last_punch = -1, s_last_sens = -1;
+
+/* Sample count for segment k (segments share a boundary sample so they join). */
+static int wave_seg_count(int k)
+{
+    int start = k * WAVE_SEG_LEN;
+    int end = (k == WAVE_SEGS - 1) ? (PROP_WAVE_SAMPLES - 1) : (start + WAVE_SEG_LEN);
+    return end - start + 1;
+}
 
 /* Channel tuning gauge: a frequency band with a marker at the tuned position. */
 static lv_obj_t *s_chan_band;       /* the band rectangle (for inner width) */
@@ -2138,12 +2160,25 @@ static void build_screen(void)
     lv_obj_set_style_pad_all(s_scan_track, 0, 0);   /* line/blip use the full inner box */
 
     /* Recorder trail: an oscilloscope/seismograph line the engine fills column by
-     * column. Built before the blip so the bright write-head draws on top of it. */
-    s_wave_line = lv_line_create(s_scan_track);
-    lv_obj_set_style_line_color(s_wave_line, COL_AMBER, 0);
-    lv_obj_set_style_line_width(s_wave_line, 2, 0);
-    lv_obj_set_style_line_rounded(s_wave_line, false, 0);
-    lv_obj_align(s_wave_line, LV_ALIGN_TOP_LEFT, 0, 0);
+     * column, split into segments so each tick re-renders only the changed slice.
+     * Built before the blip so the bright write-head draws on top. The shared point
+     * buffer starts as a flat midline; the observer fills real values. */
+    int mid0 = (SCAN_TRACK_H - 4) / 2;
+    for (int i = 0; i < PROP_WAVE_SAMPLES; i++) {
+        s_wave_pts[i].x = (lv_coord_t)((int)i * (SCAN_W - 48 - 1) / (PROP_WAVE_SAMPLES - 1));
+        s_wave_pts[i].y = (lv_coord_t)mid0;
+        s_wave_shadow[i] = (lv_coord_t)mid0;
+    }
+    s_wave_color = COL_AMBER;
+    for (int k = 0; k < WAVE_SEGS; k++) {
+        lv_obj_t *seg = lv_line_create(s_scan_track);
+        lv_obj_set_style_line_color(seg, COL_AMBER, 0);
+        lv_obj_set_style_line_width(seg, 2, 0);
+        lv_obj_set_style_line_rounded(seg, false, 0);
+        lv_obj_align(seg, LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_line_set_points(seg, &s_wave_pts[k * WAVE_SEG_LEN], wave_seg_count(k));
+        s_wave_seg[k] = seg;
+    }
 
     s_scan_blip = lv_obj_create(s_scan_track);
     lv_obj_set_size(s_scan_blip, 4, SCAN_TRACK_H - 8);   /* thin write-head marker */
@@ -2268,43 +2303,82 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             s_wave_pts[i].x = (lv_coord_t)((int)i * (cw - 1) / (PROP_WAVE_SAMPLES - 1));
             s_wave_pts[i].y = (lv_coord_t)(mid - (st->wave[i] * half) / 100);
         }
-        lv_line_set_points(s_wave_line, s_wave_pts, PROP_WAVE_SAMPLES);
-        lv_obj_set_style_line_color(s_wave_line, status_col, 0);
+        /* Re-render only the segments whose slice actually changed (steady state =
+         * one segment; spikes = a few; SENS change = all). This is the optimisation
+         * that takes the trace from ~14 fps (full-track redraw) toward 60. */
+        bool recolor = (s_wave_color.full != status_col.full);
+        for (int k = 0; k < WAVE_SEGS; k++) {
+            int start = k * WAVE_SEG_LEN;
+            int cnt = wave_seg_count(k);
+            bool changed = false;
+            for (int i = start; i < start + cnt; i++) {
+                if (s_wave_pts[i].y != s_wave_shadow[i]) { changed = true; break; }
+            }
+            if (changed) {
+                lv_line_set_points(s_wave_seg[k], &s_wave_pts[start], cnt);
+                for (int i = start; i < start + cnt; i++) s_wave_shadow[i] = s_wave_pts[i].y;
+            }
+            if (recolor) {
+                lv_obj_set_style_line_color(s_wave_seg[k], status_col, 0);
+            }
+        }
+        s_wave_color = status_col;
 
-        /* The bright blip rides the write head (the "now" edge of the recorder); when
-         * SIGNAL_ACQUIRED freezes the sweep it parks on the eruption as a peak marker. */
+        /* Every per-frame style/text write below is gated on an actual change. The
+         * big STANDBY headline re-rasterizing each tick (it's large AA text) was the
+         * real cost behind the ~73 ms frames — far more than the waveform. In steady
+         * state only the blip (4 px) and one wave segment now invalidate. */
+
+        /* The bright blip rides the write head; when SIGNAL_ACQUIRED freezes the
+         * sweep it parks on the eruption as a peak marker. */
         int head_x = (int)st->wave_head * (cw - 1) / (PROP_WAVE_SAMPLES - 1);
-        lv_obj_align(s_scan_blip, LV_ALIGN_LEFT_MID, head_x, 0);
-        lv_obj_set_style_bg_color(s_scan_blip, status_col, 0);
+        if (head_x != s_last_blip_x) {
+            lv_obj_align(s_scan_blip, LV_ALIGN_LEFT_MID, head_x, 0);
+            s_last_blip_x = head_x;
+        }
+        if (status_col.full != s_last_blip_col) {
+            lv_obj_set_style_bg_color(s_scan_blip, status_col, 0);
+            s_last_blip_col = status_col.full;
+        }
 
-        /* Status punch-in: entering SIGNAL_ACQUIRED / ALERT slams the headline in big
-         * (FONT_PUNCH) and bright, then drops to the normal heading and settles. v8
-         * labels don't upscale via transform, so the punch is a font swap + flash. */
+        /* Status punch-in: SIGNAL_ACQUIRED / ALERT slam the headline in big + bright,
+         * then settle. The font swap + flash only fire while punching (brief). */
         bool punching = st->scene_tick < 6 && (st->scene == SCENE_SIGNAL_ACQUIRED || alert);
         lv_color_t headline_col = status_col;
-        if (punching) {
-            lv_obj_set_style_text_font(s_status_label, FONT_PUNCH, 0);
-            if (st->scene_tick & 1) {   /* flash a brighter tint while it lands */
-                headline_col = alert ? lv_color_hex(0xFF9090) : lv_color_hex(0xFFE060);
-            }
-        } else {
-            lv_obj_set_style_text_font(s_status_label, FONT_STATUS, 0);
+        if (punching && (st->scene_tick & 1)) {
+            headline_col = alert ? lv_color_hex(0xFF9090) : lv_color_hex(0xFFE060);
         }
-        lv_obj_set_style_text_color(s_status_label, headline_col, 0);
+        if ((int)punching != s_last_punch) {
+            lv_obj_set_style_text_font(s_status_label, punching ? FONT_PUNCH : FONT_STATUS, 0);
+            s_last_punch = punching;
+        }
+        if (headline_col.full != s_last_headline_col) {
+            lv_obj_set_style_text_color(s_status_label, headline_col, 0);
+            s_last_headline_col = headline_col.full;
+        }
 
-        /* Channel gauge marker tracks the tuned position (scrambles while SCANNING,
-         * parks on lock). The waveform below is the noise at this channel. */
+        /* Channel gauge marker tracks the tuned position (scrambles while SCANNING). */
         lv_coord_t band_w = lv_obj_get_content_width(s_chan_band);
         if (band_w <= 1) band_w = CHAN_BAND_W - 4;
         int marker_x = (int)st->chan_pos * (band_w - 4) / 100;
-        lv_obj_align(s_chan_marker, LV_ALIGN_LEFT_MID, marker_x, 0);
-        lv_obj_set_style_bg_color(s_chan_marker, alert ? COL_ALERT : COL_AMBER, 0);
+        if (marker_x != s_last_marker_x) {
+            lv_obj_align(s_chan_marker, LV_ALIGN_LEFT_MID, marker_x, 0);
+            s_last_marker_x = marker_x;
+        }
+        uint16_t marker_col = (alert ? COL_ALERT : COL_AMBER).full;
+        if (marker_col != s_last_marker_col) {
+            lv_obj_set_style_bg_color(s_chan_marker, alert ? COL_ALERT : COL_AMBER, 0);
+            s_last_marker_col = marker_col;
+        }
 
         /* SENS meter reflects the receiver gain the web slider drives. */
-        lv_coord_t sens_w = lv_obj_get_content_width(lv_obj_get_parent(s_sens_fill));
-        if (sens_w <= 1) sens_w = SENS_W - 4;
-        lv_obj_set_width(s_sens_fill, (int)st->sensitivity * sens_w / 100);
-        lv_label_set_text_fmt(s_sens_val, "%d%%", st->sensitivity);
+        if ((int)st->sensitivity != s_last_sens) {
+            lv_coord_t sens_w = lv_obj_get_content_width(lv_obj_get_parent(s_sens_fill));
+            if (sens_w <= 1) sens_w = SENS_W - 4;
+            lv_obj_set_width(s_sens_fill, (int)st->sensitivity * sens_w / 100);
+            lv_label_set_text_fmt(s_sens_val, "%d%%", st->sensitivity);
+            s_last_sens = st->sensitivity;
+        }
     }
 
     /* Refresh the console's data-sponge status strip (~2 Hz) while it's live.
@@ -2518,11 +2592,13 @@ void prop_ui_input(const char *control, int arg)
  *
  * The HUD is an OPAQUE child of the active screen, NOT lv_layer_top — a
  * translucent top-layer object made LVGL recomposite the whole layer each frame
- * and thrashed lv_mem_buf_get into a watchdog hang. The esp_lvgl_port task keeps
- * a >=5 ms vTaskDelay every loop, so faster refresh can't starve the WDT. */
-#define FPS_REFR_FAST_MS 8     /* refresh-timer period while FPS active (~120 fps ceiling) */
-#define FPS_REFR_IDLE_MS 30    /* LVGL default (LV_DISP_DEF_REFR_PERIOD) */
-
+ * and thrashed lv_mem_buf_get into a watchdog hang.
+ *
+ * It is a PASSIVE counter: it does not force a faster refresh. Dropping the
+ * refresh period was tried and lifted nothing (the framerate is bound by the
+ * full-screen double-buffered pipeline + Wi-Fi CPU contention, not the refresh
+ * cap) while making the device network-sluggish. See
+ * docs/superpowers/specs/2026-06-20-framerate-investigation-findings.md. */
 static lv_obj_t *s_fps_label;
 static volatile uint32_t s_fps_frames;
 static lv_timer_t *s_fps_timer;     /* 1 Hz: publishes the count */
@@ -2542,16 +2618,7 @@ static void fps_tick(lv_timer_t *t)
     if (s_fps_label && !lv_obj_has_flag(s_fps_label, LV_OBJ_FLAG_HIDDEN)) {
         lv_label_set_text_fmt(s_fps_label, "FPS %u", (unsigned)s_fps_frames);
     }
-    s_fps_frames = 0;   /* frames in the last ~1 s == FPS */
-}
-
-/* Enable/disable the high refresh rate. Must hold the LVGL lock. */
-static void fps_apply_drive(bool on)
-{
-    lv_disp_t *d = lv_disp_get_default();
-    if (d && d->refr_timer) {
-        lv_timer_set_period(d->refr_timer, on ? FPS_REFR_FAST_MS : FPS_REFR_IDLE_MS);
-    }
+    s_fps_frames = 0;   /* refreshes counted in the last ~1 s */
 }
 
 /* Build the HUD + install the frame counter. Call once, under the LVGL lock. */
@@ -2574,9 +2641,7 @@ static void fps_init(void)
 
     uint32_t on = 0;
     prop_settings_get_u32("fps_on", &on, 0);
-    if (on) {
-        fps_apply_drive(true);
-    } else {
+    if (!on) {
         lv_obj_add_flag(s_fps_label, LV_OBJ_FLAG_HIDDEN);
     }
 }
@@ -2590,7 +2655,6 @@ void prop_ui_set_fps(bool on)
         if (on) lv_obj_clear_flag(s_fps_label, LV_OBJ_FLAG_HIDDEN);
         else    lv_obj_add_flag(s_fps_label, LV_OBJ_FLAG_HIDDEN);
     }
-    fps_apply_drive(on);
     lvgl_port_unlock();
     prop_settings_set_u32("fps_on", on ? 1 : 0);
 }
