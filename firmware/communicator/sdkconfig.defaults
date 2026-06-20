@@ -44,6 +44,12 @@ CONFIG_ESP_HOSTED_SDIO_PIN_CLK=18
 CONFIG_ESP_HOSTED_SDIO_PIN_D0=14
 CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
 
+# Build with -O2 (performance), not the IDF default -Og (debug). The UI is
+# software-rendered by LVGL (no GPU/PPA blend on this rev v1.3 board), so the CRT
+# overlay's full-screen ARGB8888 alpha blends from PSRAM are CPU-bound — -O2 speeds
+# those pixel loops 2-4x and is the single biggest frame-rate lever here.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
 # Log level
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 

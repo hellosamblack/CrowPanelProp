@@ -186,12 +186,13 @@ static void scramble_channel(void)
     s_state.chan_pos = freq_to_pos(mhz);
 }
 
-/* Boot self-test status line for the given ticks-remaining. */
+/* Boot self-test status line for the given ticks-remaining. In-world: the unit
+ * waking, handshaking the Armada data hub, and verifying its archive. */
 static const char *boot_status(uint32_t remaining)
 {
-    if (remaining > 18) return "SYSTEM SELF-TEST";
-    if (remaining > 10) return "CALIBRATING SENSORS";
-    if (remaining > 3)  return "DIAGNOSTIC // OK";
+    if (remaining > 18) return "INTERFACE WAKE // SELF-TEST";
+    if (remaining > 10) return "ARMADA LINK // HANDSHAKE";
+    if (remaining > 3)  return "ARCHIVE INTEGRITY // OK";
     return "STANDBY";
 }
 

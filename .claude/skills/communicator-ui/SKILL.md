@@ -13,27 +13,47 @@ deeper architecture; this skill is the *how to iterate* checklist.
 ## 1. Build + flash (ESP-IDF 6.0.1, not on PATH)
 
 ```powershell
+pwsh firmware/communicator/tools/dev.ps1 bf -Port COM7    # build + flash (one shot)
+```
+
+Or raw (activates IDF + forces UTF-8 to dodge the component-manager emoji crash):
+
+```powershell
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
 idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
 idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
 ```
 
-## 2. See the screen (no IP hunting — the prop advertises mDNS)
+**Added a new `main/*.c`?** run `dev.ps1 reconfigure` (or `idf.py reconfigure`) once —
+`CMakeLists.txt` GLOBs sources and won't see the new file until you re-glob (you'll get
+an `undefined reference` link error otherwise). New driver header → add its component to
+`REQUIRES` in `main/CMakeLists.txt` (e.g. `esp_driver_tsens`, `esp_driver_i2s`).
 
-The firmware sets hostname `comm-unit-7` and runs mDNS, so it's reachable at
-**`comm-unit-7.local`** without scraping the serial log for an IP.
+## 2. See + drive the screen — use `tools/prop.py` (the fast loop)
+
+`prop.py` collapses wait → drive UI → screenshot (and crash decoding) into one command.
+Reaches the prop at its mDNS name `comm-unit-7.local` (no IP hunting). Run it from
+`firmware/communicator/`:
 
 ```bash
-# drive to a screen:  home | menu | wifi | display | audio | leds | about
-curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"ui","screen":"wifi"}'
-# capture full screen, or zoom a detail (x,y,w,h) so small text is readable:
-python tools/screenshot.py comm-unit-7.local shot.png
-python tools/screenshot.py comm-unit-7.local corner.png --crop 764,8,260,86 --zoom 3
+python tools/prop.py shot out.png --screen spectrum --wait   # wait ready, navigate, settle, capture
+python tools/prop.py shot out.png --scene SIGNAL_ACQUIRED     # set a scene then capture
+python tools/prop.py shot corner.png --crop 764,8,260,90 --zoom 3   # zoom a detail
+python tools/prop.py state                                    # GET /state (pretty JSON)
+python tools/prop.py scene ALERT      # screens: home menu wifi display audio leds
+python tools/prop.py screen vitals    #          vitals scan spectrum about
+python tools/prop.py sens 80          # receiver sensitivity (scales the waveform)
+python tools/prop.py fx on 70         # CRT overlay on @ intensity; `fx off` to disable
 ```
 
-Then `Read` the PNG and judge it. The board may be idle (boot logs already
-scrolled) — poll readiness with `until curl -s -o /dev/null --max-time 4
-http://comm-unit-7.local/state; do sleep 2; done` before screenshotting.
+Then `Read` the PNG and judge it yourself. (`tools/screenshot.py` is still the bare
+RGB565→PNG converter that `prop.py shot` builds on.)
+
+**Caveat:** `/screenshot` snapshots **only `lv_scr_act()`** — it does NOT include
+`lv_layer_top()` (where the CRT `prop_fx` overlay lives) and `lv_snapshot` even *fails*
+("snapshot failed" 500) if a `LV_IMG_CF_TRUE_COLOR_ALPHA` canvas is in the captured tree.
+So the CRT scanlines never appear in captures — judge those on the panel/camera; the clean
+capture is for checking the underlying UI legibility.
 
 ## 3. Keep the house style (see top of `main/prop_ui.c`)
 
@@ -48,15 +68,48 @@ http://comm-unit-7.local/state; do sleep 2; done` before screenshotting.
 
 ## 4. Hard-won gotchas (don't relearn these)
 
-- **Don't call WiFi/SDIO APIs under the LVGL lock.** `esp_wifi_sta_get_rssi()` is
-  a slow round-trip to the C6; calling it in the `ui_observer` (which holds
-  `lvgl_port_lock`) caused ~30 s of display flicker on boot. Poll such values in a
-  background task and have the UI read a cached int (`prop_net_get_rssi()`).
-- **Prefer absolute `lv_obj_align` / `lv_obj_align_to` over nested flex** for small
-  HUD clusters. A flex row holding a custom meter container silently failed to lay
-  out / clipped; explicit alignment is what the rest of this UI uses and it works.
-- The signal meter is plain `lv_obj` rectangles (same vocabulary as the scan blip),
-  re-anchored to the LINK label each frame so it tracks the label's width.
+- **LVGL heap (`LV_MEM`) is HARD-CAPPED at 32 KB — do NOT raise it.** It boot-loops
+  with `HS_MP: mempool create failed: no mem` / `assert ... sdio_mempool_create`:
+  esp_hosted's SDIO DMA mempool needs internal RAM and can't move to PSRAM, so
+  `SPIRAM_TRY_ALLOCATE_WIFI_LWIP` does **not** rescue it. When LVGL runs out you get a
+  boot hang in `lv_mem_realloc`/`LV_ASSERT_MALLOC` (a `while(1)` → task WDT). Fix the
+  *object count*, not the heap — see the lazy-panel rule below.
+- **SETUP/instrument panels are lazily built, ONE alive at a time** (`open_panel` /
+  `close_panel` in `prop_ui.c`). Peak LVGL usage = "main screen + one panel", so adding
+  new screens is free. To add one: add a `PK_*` enum, a `build_*_panel()` builder, a
+  case in `open_panel`, a `menu_item` row, a `prop_ui_goto` name, and NULL its widget
+  pointers in `close_panel`. Async users (scan tasks, the observer) must guard on
+  `s_cur_kind == PK_x && s_widget != NULL` since the panel can be torn down underneath.
+- **LVGL v8 labels can't scale via `transform_zoom`** (text vanishes on upscale). For a
+  punch-in/headline, **swap to a bigger pre-generated font** (`FONT_STATUS`/`FONT_PUNCH`
+  = `eurostile_40`/`eurostile_56`), not a transform.
+- **LVGL's `lv_label_set_text_fmt` has NO `%f`** (prints a literal `f`). Format floats
+  with stdio `snprintf` into a buffer, then `lv_label_set_text`.
+- **Don't render synchronously on a command flood.** A dragged web slider fires many
+  `{"cmd":"sens"}`/s; rendering each (full observer pass + I2C LED write) saturated LVGL
+  and froze the panel. Setter just updates a cached value; the ~20 fps animate loop
+  repaints. LED I2C writes are gated to *changes* only (`publish_locked`). The web slider
+  is also throttled (~20/s) in the console JS.
+- **Don't call WiFi/SDIO APIs under the LVGL lock.** `esp_wifi_sta_get_rssi()` is a slow
+  C6 round-trip; in `ui_observer` (holds `lvgl_port_lock`) it caused ~30 s of boot
+  flicker. Poll in a background task; the UI reads a cached int (`prop_net_get_rssi()`).
+- **Prefer absolute `lv_obj_align`/`lv_obj_align_to` over nested flex** for HUD clusters
+  and meters. Bottom-anchored bars (spectrum/SENS) need a re-`align` *after* `set_height`
+  each frame so the bottom stays put while the top grows.
+
+## 4b. Decode a crash / boot hang
+
+`MCAUSE 0xdeadc0de` = task watchdog (a task stuck, often a `while(1)` from
+`LV_ASSERT_*`); a real exception shows `Guru Meditation`. Either way, resolve the PC:
+
+```bash
+python tools/prop.py trace --seconds 12      # capture serial, auto-flag + addr2line decode
+python tools/prop.py decode 0x40034286 0x40034206   # decode specific PCs vs build/communicator.elf
+```
+
+`trace` opens the serial port (which **resets the board** via DTR/RTS → you capture a fresh
+boot), prints lines matching mempool/assert/WDT/Guru, and addr2line-decodes the code
+addresses. Note PCs are only meaningful against the **current** ELF (they shift every build).
 
 ## 5. Eurostile / custom font pipeline
 
@@ -77,7 +130,14 @@ lv_font_conv --no-compress --no-prefilter --bpp 4 --size 16 \
 Then fix the generated include (this project includes `lvgl.h` directly, not
 `lvgl/lvgl.h`): replace the `#ifdef LV_LVGL_H_INCLUDE_SIMPLE … #endif` block with a
 plain `#include "lvgl.h"`. The output symbol name == the output filename stem
-(`eurostile_14`); `main/CMakeLists.txt` GLOB-includes `main/*.c` automatically.
+(`eurostile_14`); `main/CMakeLists.txt` GLOB-includes `main/*.c` automatically (but run
+`idf.py reconfigure` so a brand-new `.c` is picked up).
+
+**Headline fonts** (`eurostile_40` resting status, `eurostile_56` punch-in) are
+**ASCII-only** — they render plain text, so skip the FontAwesome merge and just use
+`-r "0x20-0x7F"`. Sizes in use: `FONT_BODY` 14/16, `FONT_HEAD` 24, `FONT_STATUS` 40,
+`FONT_PUNCH` 56. The TTFs live at the **repo root** `resources/` (`../../resources/...`
+from the project dir), not under `firmware/communicator/`.
 
 ## 6. Housekeeping
 

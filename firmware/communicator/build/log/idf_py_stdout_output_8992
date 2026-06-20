@@ -1,18 +1,0 @@
-Command: ninja all
-[1/9] Performing build step for 'bootloader'
-[1/1] C:\WINDOWS\system32\cmd.exe /C "cd /D F:\git\personal\CrowPanelProp\firmware\communicator\build\bootloader && C:\Espressif\tools\python\v6.0.1\venv\Scripts\python.exe C:/esp/v6.0.1/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x2000 F:/git/personal/CrowPanelProp/firmware/communicator/build/bootloader/bootloader.bin"
-Bootloader binary size 0x5a20 bytes. 0x5e0 bytes (6%) free.
-[2/9] No install step for 'bootloader'
-[3/9] Completed 'bootloader'
-[4/9] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/prop_fx.c.obj
-[5/9] Linking C static library esp-idf\main\libmain.a
-[6/9] Generating esp-idf/esp_system/ld/sections.ld
-[7/9] Linking CXX executable communicator.elf
-[8/9] Generating binary image from built executable
-esptool v5.3.0
-Creating ESP32-P4 image...
-Merged 4 ELF sections.
-Successfully created ESP32-P4 image.
-Generated F:/git/personal/CrowPanelProp/firmware/communicator/build/communicator.bin
-[9/9] C:\WINDOWS\system32\cmd.exe /C "cd /D F:\git\personal\CrowPanelProp\firmware\communicator\build && C:\Espressif\tools\python\v6.0.1\venv\Scripts\python.exe C:/esp/v6.0.1/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app F:/git/personal/CrowPanelProp/firmware/communicator/build/partition_table/partition-table.bin F:/git/personal/CrowPanelProp/firmware/communicator/build/communicator.bin"
-communicator.bin binary size 0x12b220 bytes. Smallest app partition is 0x3f0000 bytes. 0x2c4de0 bytes (70%) free.

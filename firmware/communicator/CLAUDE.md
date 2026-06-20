@@ -26,30 +26,31 @@ The firmware serves a live screen capture. The board advertises **mDNS**, so rea
 **`comm-unit-7.local`** (hostname `PROP_HOSTNAME`) instead of hunting the IP — no serial grep
 needed. (STA IP still shows in the log, e.g. `172.17.2.167`; AP fallback is `192.168.4.1`.)
 
-```powershell
-# 1) drive the UI to any screen:  home | menu | wifi | display | audio | leds | about
-Invoke-RestMethod -Uri "http://comm-unit-7.local/cmd" -Method Post -Body '{"cmd":"ui","screen":"wifi"}'
-# 2) capture it to a PNG you can open/Read (add --crop X,Y,W,H --zoom N for small details):
-python tools/screenshot.py comm-unit-7.local wifi_page.png
-python tools/screenshot.py comm-unit-7.local corner.png --crop 764,8,260,86 --zoom 3
+```bash
+# tools/prop.py is the fast loop: wait-ready -> navigate -> settle -> capture, in one go.
+python tools/prop.py shot wifi.png --screen wifi --wait      # screens: home menu wifi
+python tools/prop.py shot sig.png  --scene SIGNAL_ACQUIRED   #   display audio leds vitals
+python tools/prop.py shot c.png    --crop 764,8,260,86 --zoom 3   #   scan spectrum about
 ```
 
-`/screenshot` returns raw RGB565LE + `X-Width`/`X-Height`; `tools/screenshot.py` converts to PNG
-with the stdlib (no Pillow) and can crop/zoom a region. **Prefer this over asking the user to
-eyeball the screen.** For the full iteration loop see the project skill `communicator-ui`.
+`/screenshot` returns raw RGB565LE + `X-Width`/`X-Height` for the **active screen only** (the
+`prop_fx` CRT overlay on `lv_layer_top()` is NOT captured — judge that on the panel).
+`tools/screenshot.py` is the stdlib (no-Pillow) RGB565→PNG converter `prop.py shot` builds on.
+**Prefer this over asking the user to eyeball the screen.** Full loop: skill `communicator-ui`.
 
 ## UI architecture (where to make graphics changes)
 
 - **All UI lives in `main/prop_ui.c`.** It is a *pure view*: it never owns logic. `prop_engine`
-  pushes state via an observer (`ui_observer`, ~10 Hz) and the UI just renders it.
-- Everything is built on `lv_scr_act()` in `build_screen()`. The main readout is built inline;
-  the SETUP flow is built by `build_setup_screens()`.
-- **Navigation** = full-screen overlay panels, one shown at a time via `show_only(panel)`.
-  Panels are registered (`register_panel`) so `show_only` can hide the rest. `prop_ui_goto(name)`
-  is the thread-safe entry the API uses.
-- **Add a screen**: `make_panel(parent, "TITLE", back_cb)` gives you a themed, registered panel
-  with a BACK button + centered title; add your widgets; add a `menu_item(...)` row in
-  `build_setup_screens()`. Replace a `build_stub(...)` call to make a stub real.
+  pushes state via an observer (`ui_observer`, ~20 Hz) and the UI just renders it.
+- The **main readout** is built once on `lv_scr_act()` in `build_screen()` (always present).
+- **Navigation = lazily-built panels, exactly ONE alive at a time** (`open_panel(kind)` builds
+  it, `close_panel()` tears it down — `lv_obj_del` frees the panel + children). This caps LVGL
+  heap usage (see the LV_MEM trap below). `prop_ui_goto(name)` is the thread-safe API entry.
+- **Add a screen**: (1) add a `PK_*` value to `panel_kind_t`; (2) write `build_<x>_panel(parent)`
+  using `make_panel(parent,"TITLE",back_to_menu_cb)` + your widgets, returning the panel; (3) add
+  a `case PK_<X>` in `open_panel`; (4) add a `menu_item(...)` row in `build_menu_panel`; (5) add a
+  `prop_ui_goto` name; (6) **NULL its widget pointers in `close_panel`** and guard any async/observer
+  use with `s_cur_kind == PK_<X> && s_widget`. Live readouts update in `ui_observer` under that guard.
 - **LVGL is 8.4** (`lv_*` v8 API; note v9-only fields are `#if LVGL_VERSION_MAJOR>=9` guarded in
   `bsp_illuminate.c`). LVGL calls from any non-LVGL task MUST hold `lvgl_port_lock()/unlock()`.
   Display registration is also locked (esp_lvgl_port 2.8 doesn't lock internally — see the comment
@@ -95,7 +96,8 @@ Palette + helpers are at the top of `prop_ui.c`:
 
 | File | Role |
 |------|------|
-| `main/prop_ui.c` | **All LVGL UI** (main readout + SETUP menu + sub-screens) |
+| `main/prop_ui.c` | **All LVGL UI** (console home + function rail + SETUP + instruments + ARCHIVE). `prop_ui_input()` is the dial/tab/action nav entry — nav lives in the view |
+| `main/prop_content.c` | **Author-editable archive content** (sections → entries; real-Earth desert placeholders). Edit here to change the ARCHIVE — no UI change |
 | `main/prop_engine.c` | Scene state machine + 10 Hz animation; single source of truth |
 | `main/prop_net.c` | WiFi AP+STA via C6, scan, STA state, NVS creds |
 | `main/prop_api.c` | HTTP: `/`, `/state`, `/cmd`, `/ws`, `/ota`, `/screenshot` |
@@ -117,7 +119,16 @@ Palette + helpers are at the top of `prop_ui.c`:
 
 ## API quick reference (for scripting/tests)
 
-`POST /cmd` (JSON): `{"cmd":"scene","value":"SCANNING"}`, `{"cmd":"ui","screen":"wifi"}`,
+`POST /cmd` (JSON): `{"cmd":"scene","value":"SCANNING"}`, `{"cmd":"ui","screen":"<name>"}`
+(screens: `home`=console, `scanner archive cassette insights menu wifi display audio leds
+vitals scan spectrum about`), `{"cmd":"input","control":"selector|tab|action","arg":"cw|ccw|press"|N}`
+(simulated dial/tab/action nav; boots to `home`),
+`{"cmd":"sens","value":0-100}`, `{"cmd":"fx","on":true,"value":0-100}`,
 `{"cmd":"led","name":"alert","on":true}`, `{"cmd":"status","value":"..."}`,
 `{"cmd":"channel","value":"..."}`, `{"cmd":"wifi","ssid":"..","pass":"..","remember":true}`.
-`GET /state` JSON; `GET /screenshot` RGB565; `WS /ws` same commands + state broadcasts.
+`GET /state` JSON (scene/status/channel/link/sensitivity/channel_pos/ip/leds);
+`GET /screenshot` RGB565 (active screen only — not the fx top-layer); `WS /ws` same.
+
+**Dev CLI:** `python tools/prop.py shot out.png --screen spectrum --wait` (wait→drive→
+capture), plus `state/scene/screen/sens/fx/trace/decode`. `trace`/`decode` resolve a crash
+or boot-hang PC against `build/communicator.elf`. See the `communicator-ui` skill.

@@ -1,0 +1,10 @@
+# ESP-IDF build output — huge and machine-specific. NOTE: build/ is currently
+# tracked from an earlier commit; run `git rm -r --cached build` once to untrack it.
+/build/
+
+# Scratch screenshots from the dev loop (tools/prop.py, tools/screenshot.py).
+# Firmware images are C arrays in main/*.c, never .png — so every .png here is scratch.
+*.png
+
+# Python bytecode cache from the dev tools.
+__pycache__/

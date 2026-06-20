@@ -1,0 +1,19 @@
+So basically in the lore of the book, this device is essentially a multi-data interface that Zarrah uses.
+
+So they would plug it into an Armada data hub and could use it to download and upload info. It should tell them the temp, time and date, it would have a plant history on it (download of Wikipedia essentially)
+
+It would allow them to store and playback cassettes.
+It's basically like a big sponge of data that is pulling in any signals or info.
+
+And then they could program it to make insights.
+Now as far as the prop goes, it will be sitting at conventions and be something people could pick up and play with.
+
+So I think I want a UI that is themed to their world and then a bunch of options to see the "Traxian Climate"
+"A map of the desert"
+"Traxian wildlife bios"
+"Plant guide"
+So essentially we could just program an interface and make the buttons move and effect it
+
+So the click dials would get us around the interface, the switches might be tabs.
+
+Or maybe we do a dial that moves between functions and the other buttons change based on functionality.

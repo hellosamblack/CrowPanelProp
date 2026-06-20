@@ -1,7 +1,10 @@
 # Communicator Prop — Feature Roadmap
 
 **Date:** 2026-06-19
-**Status:** Approved design / roadmap
+**Status:** Approved design / roadmap — **scanner-instrument phases below largely built.**
+**See also:** `2026-06-19-communicator-archive-addendum.md`, which reframes the *top level*
+of the device around the author's brief (the data **archive** is now primary; this scanner
+is one instrument on the console rail).
 **Scope:** `firmware/communicator/` (ESP-IDF 6.0.1, ESP32-P4, LVGL 8.4)
 
 ## Context

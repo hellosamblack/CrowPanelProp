@@ -9,7 +9,10 @@
 static esp_ldo_channel_handle_t ldo3;
 static esp_ldo_channel_handle_t ldo4;
 
-/* Physical buttons funnel straight into the engine (the single input hub). */
+/* Physical buttons drive the console navigation (the author's dial/button model).
+ * Only two GPIO buttons are wired today, so they stand in for the SELECTOR dial:
+ * MODE rotates the function rail, ACTION presses (opens / steps in). The full
+ * knob+switch set routes through prop_ui_input() the same way once wired. */
 static void on_button(prop_button_t button, prop_button_event_t event, void *ctx)
 {
     (void)ctx;
@@ -18,10 +21,10 @@ static void on_button(prop_button_t button, prop_button_event_t event, void *ctx
     }
     switch (button) {
         case BTN_MODE:
-            prop_engine_next_scene();
+            prop_ui_input("selector", 1);    /* rotate the rail */
             break;
         case BTN_ACTION:
-            prop_engine_set_scene(SCENE_SCANNING);
+            prop_ui_input("selector", 0);    /* press: open the highlighted function */
             break;
         default:
             break;

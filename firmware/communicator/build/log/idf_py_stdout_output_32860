@@ -1,18 +1,0 @@
-Command: ninja all
-[1/10] Performing build step for 'bootloader'
-[1/1] C:\WINDOWS\system32\cmd.exe /C "cd /D F:\git\personal\CrowPanelProp\firmware\communicator\build\bootloader && C:\Espressif\tools\python\v6.0.1\venv\Scripts\python.exe C:/esp/v6.0.1/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x2000 F:/git/personal/CrowPanelProp/firmware/communicator/build/bootloader/bootloader.bin"
-Bootloader binary size 0x5a20 bytes. 0x5e0 bytes (6%) free.
-[2/10] No install step for 'bootloader'
-[3/10] Completed 'bootloader'
-[4/10] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/prop_engine.c.obj
-[5/10] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/prop_ui.c.obj
-[6/10] Linking C static library esp-idf\main\libmain.a
-[7/10] Generating esp-idf/esp_system/ld/sections.ld
-[8/10] Linking CXX executable communicator.elf
-FAILED: communicator.elf 
-C:\WINDOWS\system32\cmd.exe /C "cd . && C:\Espressif\tools\riscv32-esp-elf\esp-15.2.0_20251204\riscv32-esp-elf\bin\riscv32-esp-elf-g++.exe @"F:/git/personal/CrowPanelProp/firmware/communicator/build/toolchain/cxxflags" @"F:/git/personal/CrowPanelProp/firmware/communicator/build/toolchain/ldflags" -Wl,--cref -Wl,--defsym=IDF_TARGET_ESP32P4=0 -Wl,--Map=F:/git/personal/CrowPanelProp/firmware/communicator/build/communicator.map -Wl,--no-warn-rwx-segments -Wl,--orphan-handling=error -fno-lto -Wl,--gc-sections -Wl,--warn-common -T rom.api.ld -T esp32p4.peripherals.ld -T esp32p4.rom.ld -T esp32p4.rom.api.ld -T esp32p4.rom.rvfp.ld -T esp32p4.rom.systimer.ld -T esp32p4.rom.version.ld -T esp32p4.rom.libc.ld -T memory.ld -T sections.ld -Wl,--enable-non-contiguous-regions -T rom.wdt.ld @CMakeFiles\communicator.elf.rsp -o communicator.elf && cd ."
-C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/../lib/gcc/riscv32-esp-elf/15.2.0/../../../../riscv32-esp-elf/bin/ld.exe: esp-idf/main/libmain.a(prop_ui.c.obj): in function `ui_observer':
-F:/git/personal/CrowPanelProp/firmware/communicator/main/prop_ui.c:692:(.text.ui_observer+0x252): undefined reference to `eurostile_40'
-C:/Espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/../lib/gcc/riscv32-esp-elf/15.2.0/../../../../riscv32-esp-elf/bin/ld.exe: F:/git/personal/CrowPanelProp/firmware/communicator/main/prop_ui.c:692:(.text.ui_observer+0x256): undefined reference to `eurostile_40'
-collect2.exe: error: ld returned 1 exit status
-ninja: build stopped: subcommand failed.
