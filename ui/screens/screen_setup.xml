@@ -48,14 +48,7 @@
     <view style_bg_color="#col_bg">
 
         <!-- Nav rail placeholder (left 76 px) -->
-        <lv_obj
-            width="76" height="600"
-            align="top_left"
-            style_bg_color="#col_panel_item"
-            style_border_width="0"
-            style_radius="0"
-            style_pad_all="0"
-        />
+        <nav_rail/>
 
         <!-- Panel content (right 948 px = SCAN_W) -->
         <lv_obj width="948" height="600" align="top_right">
@@ -65,6 +58,7 @@
             <lv_button width="130" height="40" align="top_left" x="20" y="12">
                 <style name="btn_back" />
                 <lv_label text="&lt; BACK" />
+            <screen_create_event screen="screen_home" trigger="clicked" />
             </lv_button>
 
             <!-- Title centred in header -->
@@ -84,12 +78,12 @@
                 style_bg_opa="0"
                 style_border_width="0"
             >
-                <lv_button><style name="list_row" /><lv_label text="WI-FI" /></lv_button>
-                <lv_button><style name="list_row" /><lv_label text="DISPLAY" /></lv_button>
-                <lv_button><style name="list_row" /><lv_label text="AUDIO" /></lv_button>
-                <lv_button><style name="list_row" /><lv_label text="LEDS" /></lv_button>
-                <lv_button><style name="list_row" /><lv_label text="I/O BENCH" /></lv_button>
-                <lv_button><style name="list_row" /><lv_label text="ABOUT" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="WI-FI" /><screen_create_event screen="screen_wifi" trigger="clicked" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="DISPLAY" /><screen_create_event screen="screen_display" trigger="clicked" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="AUDIO" /><screen_create_event screen="screen_audio" trigger="clicked" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="LEDS" /><screen_create_event screen="screen_leds" trigger="clicked" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="I/O BENCH" /><screen_create_event screen="screen_io" trigger="clicked" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="ABOUT" /><screen_create_event screen="screen_about" trigger="clicked" /></lv_button>
             </column>
         </lv_obj>
 

@@ -31,8 +31,7 @@
 
     <view style_bg_color="#col_bg">
 
-        <lv_obj width="76" height="600" align="top_left"
-                style_bg_color="#col_panel_item" style_border_width="0" style_radius="0" style_pad_all="0" />
+        <nav_rail/>
 
         <lv_obj width="948" height="600" align="top_right">
             <style name="panel" />
@@ -40,6 +39,7 @@
             <lv_button width="130" height="40" align="top_left" x="20" y="12">
                 <style name="btn_back" />
                 <lv_label text="&lt; BACK" />
+            <screen_create_event screen="screen_setup" trigger="clicked" />
             </lv_button>
 
             <lv_label text="I/O BENCH" align="top_mid" y="18">
@@ -52,79 +52,79 @@
                     style_bg_opa="0" style_border_width="0" style_pad_all="0">
 
                 <!-- Row 1 -->
-                <lv_obj width="143" height="150"><style name="box_in" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_in" />
                     <lv_label text="01" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_hi" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_hi" />
                     <lv_label text="02" align="center" y="-10"><style name="num_dark" /></lv_label>
                     <lv_label text="HI" align="bottom_mid" y="-8"><style name="sub_dark" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_out" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_out" />
                     <lv_label text="03" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_in" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_in" />
                     <lv_label text="04" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
                 <!-- Analog-in box with partial fill -->
-                <lv_obj width="143" height="150"><style name="box_in" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_in" />
                     <lv_obj width="100%" height="90" align="bottom_mid"><style name="afill" /></lv_obj>
                     <lv_label text="05" align="center" y="-10"><style name="num_amber" /></lv_label>
                     <lv_label text="61%" align="bottom_mid" y="-8"><style name="sub_amber" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_in" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_in" />
                     <lv_label text="06" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
 
                 <!-- Row 2 -->
-                <lv_obj width="143" height="150"><style name="box_out" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_out" />
                     <lv_label text="07" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_hi" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_hi" />
                     <lv_label text="08" align="center" y="-10"><style name="num_dark" /></lv_label>
                     <lv_label text="HI" align="bottom_mid" y="-8"><style name="sub_dark" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_in" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_in" />
                     <lv_label text="09" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
                 <!-- Analog-out box with partial fill -->
-                <lv_obj width="143" height="150"><style name="box_out" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_out" />
                     <lv_obj width="100%" height="50" align="bottom_mid"><style name="afill" /></lv_obj>
                     <lv_label text="10" align="center" y="-10"><style name="num_amber" /></lv_label>
                     <lv_label text="34%" align="bottom_mid" y="-8"><style name="sub_amber" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_in" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_in" />
                     <lv_label text="11" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_in" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_in" />
                     <lv_label text="12" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
 
                 <!-- Row 3 -->
-                <lv_obj width="143" height="150"><style name="box_in" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_in" />
                     <lv_label text="13" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_out" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_out" />
                     <lv_label text="14" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_hi" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_hi" />
                     <lv_label text="15" align="center" y="-10"><style name="num_dark" /></lv_label>
                     <lv_label text="HI" align="bottom_mid" y="-8"><style name="sub_dark" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_in" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_in" />
                     <lv_label text="16" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>
-                <lv_obj width="143" height="150"><style name="box_in" />
+                <lv_obj width="143" height="150" clickable="true"><screen_create_event screen="screen_io_pin" trigger="clicked" /><style name="box_in" />
                     <lv_label text="17" align="center" y="-10"><style name="num_mute" /></lv_label>
                     <lv_label text="LO" align="bottom_mid" y="-8"><style name="sub_mute" /></lv_label>
                 </lv_obj>

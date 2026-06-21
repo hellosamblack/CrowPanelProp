@@ -25,8 +25,7 @@
 
     <view style_bg_color="#col_bg">
 
-        <lv_obj width="76" height="600" align="top_left"
-                style_bg_color="#col_panel_item" style_border_width="0" style_radius="0" style_pad_all="0" />
+        <nav_rail/>
 
         <lv_obj width="948" height="600" align="top_right">
             <style name="panel" />
@@ -34,6 +33,7 @@
             <lv_button width="130" height="40" align="top_left" x="20" y="12">
                 <style name="btn_back" />
                 <lv_label text="&lt; BACK" />
+            <screen_create_event screen="screen_archive" trigger="clicked" />
             </lv_button>
 
             <!-- Header shows the section name -->

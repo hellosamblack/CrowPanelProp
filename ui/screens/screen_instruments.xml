@@ -14,8 +14,7 @@
 
     <view style_bg_color="#col_bg">
 
-        <lv_obj width="76" height="600" align="top_left"
-                style_bg_color="#col_panel_item" style_border_width="0" style_radius="0" style_pad_all="0" />
+        <nav_rail/>
 
         <lv_obj width="948" height="600" align="top_right">
             <style name="panel" />
@@ -23,6 +22,7 @@
             <lv_button width="130" height="40" align="top_left" x="20" y="12">
                 <style name="btn_back" />
                 <lv_label text="&lt; BACK" />
+            <screen_create_event screen="screen_home" trigger="clicked" />
             </lv_button>
 
             <lv_label text="INSTRUMENTS" align="top_mid" y="18">
@@ -33,10 +33,10 @@
                     style_pad_row="4" style_pad_hor="12"
                     style_pad_top="0" style_pad_bottom="0"
                     style_bg_opa="0" style_border_width="0">
-                <lv_button><style name="list_row" /><lv_label text="SCANNER" /></lv_button>
-                <lv_button><style name="list_row" /><lv_label text="SIGNAL SCAN" /></lv_button>
-                <lv_button><style name="list_row" /><lv_label text="SPECTRUM" /></lv_button>
-                <lv_button><style name="list_row" /><lv_label text="VITALS" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="SCANNER" /><screen_create_event screen="screen_scanner" trigger="clicked" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="SIGNAL SCAN" /><screen_create_event screen="screen_scan" trigger="clicked" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="SPECTRUM" /><screen_create_event screen="screen_spectrum" trigger="clicked" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="VITALS" /><screen_create_event screen="screen_vitals" trigger="clicked" /></lv_button>
             </column>
 
         </lv_obj>

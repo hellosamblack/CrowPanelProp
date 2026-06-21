@@ -26,12 +26,7 @@
     <view style_bg_color="#col_bg">
 
         <!-- Nav rail placeholder (left 76 px) -->
-        <lv_obj width="76" height="600" align="top_left"
-                style_bg_color="#col_panel_item"
-                style_border_side="right"
-                style_border_color="#col_dim"
-                style_border_width="2"
-                style_radius="0" style_pad_all="0" />
+        <nav_rail/>
 
         <!-- Scanner content (right 948 px) — no panel frame (it's the root screen) -->
         <lv_obj width="948" height="600" align="top_right"
@@ -118,12 +113,12 @@
             <!-- HOME button (bottom left) -->
             <lv_button width="130" height="44" align="bottom_left" x="16" y="-12">
                 <style name="foot_btn" /><lv_label text="&lt; CONSOLE" />
-            </lv_button>
+            <screen_create_event screen="screen_home" trigger="clicked" /></lv_button>
 
             <!-- SETUP button (bottom right) -->
             <lv_button width="110" height="44" align="bottom_right" x="-16" y="-12">
                 <style name="foot_btn" /><lv_label text="SETUP" />
-            </lv_button>
+            <screen_create_event screen="screen_setup" trigger="clicked" /></lv_button>
 
         </lv_obj>
     </view>

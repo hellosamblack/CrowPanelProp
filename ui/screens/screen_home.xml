@@ -18,16 +18,7 @@
     <view style_bg_color="#col_bg">
 
         <!-- Nav rail placeholder (left 76 px) -->
-        <lv_obj
-            width="76" height="600"
-            align="top_left"
-            style_bg_color="#col_panel_item"
-            style_border_side="right"
-            style_border_color="#col_dim"
-            style_border_width="2"
-            style_radius="0"
-            style_pad_all="0"
-        />
+        <nav_rail/>
 
         <!-- Console content (right 948 px) — no amber frame -->
         <lv_obj width="948" height="600" align="top_right"
