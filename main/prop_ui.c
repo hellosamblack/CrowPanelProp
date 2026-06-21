@@ -164,8 +164,11 @@ static float s_rf_decay[RF_CHANNELS];          /* UI-side rise/decay ballistics 
 static volatile bool s_rf_scanning;
 
 /* BLE CONTACT SIGNATURES instrument (valid only while PK_BLE is current). */
-static lv_obj_t *s_ble_summary;   /* header: N CONTACTS / strongest dBm */
-static lv_obj_t *s_ble_list;      /* scrolling contact rows */
+static lv_obj_t *s_ble_summary;
+static lv_obj_t *s_ble_list;
+
+typedef struct { lv_obj_t *tag, *dbm, *dist, *sl, *fill; } ble_row_t;
+static ble_row_t s_ble_rows[PROP_BLE_MAX];
 
 /* SIGNAL ENVIRONMENT (CSI) instrument (valid only while PK_CSI is current). */
 static lv_obj_t *s_csi_bars[PROP_CSI_BINS];
@@ -295,6 +298,7 @@ static void close_panel(void)
     s_rf_status = NULL;
     for (int i = 0; i < RF_CHANNELS; i++) s_rf_bars[i] = NULL;
     s_ble_summary = NULL; s_ble_list = NULL;
+    memset(s_ble_rows, 0, sizeof(s_ble_rows));
     s_csi_status = NULL;
     for (int i = 0; i < PROP_CSI_BINS; i++) s_csi_bars[i] = NULL;
     s_home_clock = NULL; s_home_temp = NULL; s_home_link = NULL;
@@ -496,7 +500,7 @@ static void start_scan(void)
     s_scanning = true;
     lv_dropdown_set_options(s_ssid_dd, "(scanning...)");
     lv_label_set_text(s_setup_status, "SCANNING...");
-    if (xTaskCreate(scan_task, "wifi_scan", 4096, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(scan_task, "wifi_scan", 4096, NULL, 4, NULL, 0) != pdPASS) {
         s_scanning = false;
         lv_label_set_text(s_setup_status, "scan busy");
     }
@@ -1032,7 +1036,7 @@ static void start_signal_scan(void)
     }
     s_sig_scanning = true;
     lv_label_set_text(s_sig_status, "SCANNING SPECTRUM...");
-    if (xTaskCreate(signal_scan_task, "sig_scan", 4096, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(signal_scan_task, "sig_scan", 4096, NULL, 4, NULL, 0) != pdPASS) {
         s_sig_scanning = false;
         lv_label_set_text(s_sig_status, "scan busy");
     }
@@ -1267,7 +1271,7 @@ static void start_rfband_scan(void)
     }
     s_rf_scanning = true;
     lv_label_set_text(s_rf_status, "SCANNING 2.4 GHz...");
-    if (xTaskCreate(rfband_scan_task, "rf_scan", 4096, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(rfband_scan_task, "rf_scan", 4096, NULL, 4, NULL, 0) != pdPASS) {
         s_rf_scanning = false;
         lv_label_set_text(s_rf_status, "scan busy");
     }
@@ -1347,13 +1351,39 @@ static lv_obj_t *build_ble_panel(lv_obj_t *parent)
     lv_obj_set_style_text_font(s_ble_summary, FONT_HEAD, 0);
     lv_obj_align(s_ble_summary, LV_ALIGN_TOP_LEFT, 30, 84);
 
-    /* Scrolling contact list (rows added by the observer). */
+    /* Scrolling contact list — rows are pre-built and reused (no teardown per tick). */
     s_ble_list = lv_obj_create(p);
     lv_obj_remove_style_all(s_ble_list);
     lv_obj_set_size(s_ble_list, SCAN_W - 60, 600 - 140);
     lv_obj_align(s_ble_list, LV_ALIGN_TOP_LEFT, 30, 132);
     lv_obj_set_style_pad_all(s_ble_list, 0, 0);
     lv_obj_set_scroll_dir(s_ble_list, LV_DIR_VER);
+
+    for (int i = 0; i < PROP_BLE_MAX; i++) {
+        int y = i * BLE_ROW_H;
+        ble_row_t *r = &s_ble_rows[i];
+        r->tag  = lv_label_create(s_ble_list);
+        lv_obj_set_style_text_color(r->tag, COL_AMBER, 0);
+        lv_obj_align(r->tag, LV_ALIGN_TOP_LEFT, 6, y);
+        r->dbm  = lv_label_create(s_ble_list);
+        lv_obj_set_style_text_color(r->dbm, COL_MUTE, 0);
+        lv_obj_align(r->dbm, LV_ALIGN_TOP_RIGHT, -6, y);
+        r->dist = lv_label_create(s_ble_list);
+        lv_obj_set_style_text_color(r->dist, COL_AMBER, 0);
+        lv_obj_set_style_text_font(r->dist, FONT_BODY, 0);
+        lv_obj_align(r->dist, LV_ALIGN_TOP_RIGHT, -6, y + 22);
+        r->sl   = lv_label_create(s_ble_list);
+        lv_obj_set_style_text_color(r->sl, COL_MUTE, 0);
+        lv_obj_set_style_text_font(r->sl, FONT_BODY, 0);
+        lv_obj_align(r->sl, LV_ALIGN_TOP_LEFT, 6, y + 22);
+        r->fill = make_meter_bar(s_ble_list, 6, y + 46, SCAN_W - 60 - 150);
+        /* Start all rows hidden; observer reveals them as contacts arrive. */
+        lv_obj_add_flag(r->tag,  LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(r->dbm,  LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(r->dist, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(r->sl,   LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(r->fill, LV_OBJ_FLAG_HIDDEN);
+    }
     return p;
 }
 
@@ -1375,10 +1405,10 @@ static void ble_fmt_dist(char *out, size_t n, float d)
     else           snprintf(out, n, "%d m", (int)(d + 0.5f));
 }
 
-/* Render one BLE contact row into the list at vertical slot `i`. */
-static void ble_add_row(int i, const prop_ble_dev_t *d)
+/* Update the content of pre-built row slot `i` in-place. */
+static void ble_update_row(int i, const prop_ble_dev_t *d)
 {
-    int y = i * BLE_ROW_H;
+    ble_row_t *r = &s_ble_rows[i];
     const char *brand = prop_ble_company_label(d->company_id);
     const char *klass = prop_ble_appearance_label(d->appearance);
 
@@ -1393,43 +1423,24 @@ static void ble_add_row(int i, const prop_ble_dev_t *d)
         snprintf(idbuf, sizeof(idbuf), "%02d  %02X:%02X:%02X",
                  i + 1, d->mac[3], d->mac[4], d->mac[5]);
     }
-    lv_obj_t *tag = lv_label_create(s_ble_list);
-    lv_label_set_text(tag, idbuf);
-    lv_obj_set_style_text_color(tag, COL_AMBER, 0);
-    lv_obj_align(tag, LV_ALIGN_TOP_LEFT, 6, y);
+    lv_label_set_text(r->tag, idbuf);
+    lv_label_set_text_fmt(r->dbm, "%d dBm", d->rssi);
 
-    lv_obj_t *dbm = lv_label_create(s_ble_list);
-    lv_label_set_text_fmt(dbm, "%d dBm", d->rssi);
-    lv_obj_set_style_text_color(dbm, COL_MUTE, 0);
-    lv_obj_align(dbm, LV_ALIGN_TOP_RIGHT, -6, y);
-
-    /* Distance estimate, bright on the right under the dBm. */
     char dbuf[16];
     ble_fmt_dist(dbuf, sizeof(dbuf), prop_ble_distance_m(d->rssi, d->tx_power));
-    lv_obj_t *dist = lv_label_create(s_ble_list);
-    lv_label_set_text_fmt(dist, "~ %s", dbuf);
-    lv_obj_set_style_text_color(dist, COL_AMBER, 0);
-    lv_obj_set_style_text_font(dist, FONT_BODY, 0);
-    lv_obj_align(dist, LV_ALIGN_TOP_RIGHT, -6, y + 22);
+    lv_label_set_text_fmt(r->dist, "~ %s", dbuf);
 
-    /* Classification line: device class (if known) + civilian/unknown/anonymous. */
     char sb[56];
-    const char *cls = brand ? "CIVILIAN UNIT"
-                    : (d->company_id != PROP_BLE_NONE ? "UNKNOWN EMITTER" : "ANONYMOUS BEACON");
     if (brand) {
         snprintf(sb, sizeof(sb), "CIVILIAN UNIT  //  %s", brand);
     } else {
+        const char *cls = (d->company_id != PROP_BLE_NONE) ? "UNKNOWN EMITTER" : "ANONYMOUS BEACON";
         snprintf(sb, sizeof(sb), "%s", cls);
     }
-    lv_obj_t *sl = lv_label_create(s_ble_list);
-    lv_label_set_text(sl, sb);
-    lv_obj_set_style_text_color(sl, COL_MUTE, 0);
-    lv_obj_set_style_text_font(sl, FONT_BODY, 0);
-    lv_obj_align(sl, LV_ALIGN_TOP_LEFT, 6, y + 22);
+    lv_label_set_text(r->sl, sb);
 
     int pct = ble_rssi_to_bar(d->rssi);
-    lv_obj_t *fill = make_meter_bar(s_ble_list, 6, y + 46, SCAN_W - 60 - 150);
-    set_meter(fill, pct, pct < 25 ? COL_DIM : COL_AMBER);
+    set_meter(r->fill, pct, pct < 25 ? COL_DIM : COL_AMBER);
 }
 
 /* ---- SIGNAL ENVIRONMENT instrument (WiFi CSI, or synthetic fallback) -------
@@ -3375,8 +3386,8 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
-    /* Rebuild the BLE contact list (throttled ~2.5 Hz - the device set changes
-     * slowly and a full rebuild churns widgets). */
+    /* Update the BLE contact list in-place (throttled ~2.5 Hz). Pre-built row slots
+     * are shown/hidden rather than destroyed and recreated each tick. */
     if (s_cur_kind == PK_BLE && s_ble_list && (st->tick % 8 == 0)) {
         int cnt = 0, named = 0, known = 0;
         int8_t best = 0;
@@ -3393,9 +3404,23 @@ static void ui_observer(const prop_state_t *st, void *ctx)
 
         prop_ble_dev_t devs[PROP_BLE_MAX];
         int n = prop_ble_get_devices(devs, PROP_BLE_MAX);
-        lv_obj_clean(s_ble_list);   /* drop the previous rows */
-        for (int i = 0; i < n; i++) {
-            ble_add_row(i, &devs[i]);
+        for (int i = 0; i < PROP_BLE_MAX; i++) {
+            ble_row_t *r = &s_ble_rows[i];
+            if (!r->tag) break;   /* pool not built (BLE offline path) */
+            if (i < n) {
+                ble_update_row(i, &devs[i]);
+                lv_obj_clear_flag(r->tag,  LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(r->dbm,  LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(r->dist, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(r->sl,   LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(r->fill, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(r->tag,  LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(r->dbm,  LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(r->dist, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(r->sl,   LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(r->fill, LV_OBJ_FLAG_HIDDEN);
+            }
         }
     }
 

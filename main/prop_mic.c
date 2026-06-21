@@ -235,7 +235,7 @@ esp_err_t prop_mic_init(void)
         s_rx = NULL;
     }
 
-    if (xTaskCreate(mic_task, "prop_mic", 4096, NULL, 5, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(mic_task, "prop_mic", 4096, NULL, 5, NULL, 0) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     s_task_up = true;

@@ -156,7 +156,7 @@ static esp_err_t lvgl_init()  // Initialize LVGL
     const lvgl_port_cfg_t lvgl_cfg = {  // LVGL port configuration
         .task_priority = configMAX_PRIORITIES - 4, /* LVGL task priority */
         .task_stack = 8192*2,                      /* LVGL task stack size */
-        .task_affinity = -1,                       /* Task pinned to core (-1 = no affinity) */
+        .task_affinity = 1,                        /* LVGL on core 1; app tasks on core 0 */
         .task_max_sleep_ms = 10,                   /* Max sleep in LVGL task */
         .timer_period_ms = 5,                      /* LVGL timer tick period in ms */
     };

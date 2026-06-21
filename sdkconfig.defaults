@@ -101,3 +101,8 @@ CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y
 # raised (esp_hosted needs that RAM) and exhausts on instrument screens -> NULL ->
 # Store-fault in draw_line_skew. PSRAM (32 MB) removes the ceiling, internal RAM untouched.
 CONFIG_LV_USE_CUSTOM_MALLOC=y
+
+# Second SW draw unit experiment: tested with DRAW_UNIT_CNT=2 + LV_OS_FREERTOS=y
+# but the inter-unit FreeRTOS semaphore overhead outweighed the parallelism gain on
+# spectrum (7-8 fps vs 12-20 fps with DRAW_UNIT_CNT=1). Keeping at 1.
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1

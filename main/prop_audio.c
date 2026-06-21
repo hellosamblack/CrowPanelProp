@@ -181,7 +181,7 @@ esp_err_t prop_audio_init(void)
     if (!s_queue) {
         return ESP_ERR_NO_MEM;
     }
-    if (xTaskCreate(audio_task, "prop_audio", 4096, NULL, 5, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(audio_task, "prop_audio", 4096, NULL, 5, NULL, 0) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     s_available = true;

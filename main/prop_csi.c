@@ -148,7 +148,7 @@ esp_err_t prop_csi_init(void)
         ESP_LOGI(CSI_TAG, "CSI requested from C6 (falls back to synthetic if no frames)");
     }
 
-    if (xTaskCreate(csi_task, "prop_csi", 4096, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(csi_task, "prop_csi", 4096, NULL, 4, NULL, 0) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     s_available = true;

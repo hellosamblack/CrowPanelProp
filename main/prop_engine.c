@@ -300,7 +300,7 @@ esp_err_t prop_engine_init(void)
     s_state.booting = true;       /* run the power-on self-test choreography */
     s_boot_remaining = BOOT_TICKS;
 
-    BaseType_t ok = xTaskCreate(animate_task, "prop_anim", 4096, NULL, 5, NULL);
+    BaseType_t ok = xTaskCreatePinnedToCore(animate_task, "prop_anim", 4096, NULL, 5, NULL, 0);
     if (ok != pdPASS) {
         return ESP_ERR_NO_MEM;
     }

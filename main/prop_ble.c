@@ -328,7 +328,7 @@ esp_err_t prop_ble_init(void)
     ble_hs_cfg.sync_cb  = on_sync;     /* fires once the host/controller sync — starts the scan */
 
     nimble_port_freertos_init(host_task);
-    xTaskCreate(prune_task, "ble_prune", 2560, NULL, 3, NULL);
+    xTaskCreatePinnedToCore(prune_task, "ble_prune", 2560, NULL, 3, NULL, 0);
 
     s_available = true;
     ESP_LOGI(BLE_TAG, "BLE up (NimBLE host, controller on C6)");

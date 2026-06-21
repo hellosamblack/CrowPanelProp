@@ -241,7 +241,7 @@ esp_err_t prop_net_init(void)
         /* STA-only for now; hotspot held back until the fallback timer (or a hard
          * STA failure) decides we need it. */
         prop_engine_set_link(LINK_DOWN);   /* "seeking" until STA gets an IP */
-        xTaskCreate(ap_fallback_task, "ap_fallback", 3072, NULL, 3, NULL);
+        xTaskCreatePinnedToCore(ap_fallback_task, "ap_fallback", 3072, NULL, 3, NULL, 0);
     } else {
         if ((err = enable_ap()) != ESP_OK) {
             ESP_LOGE(NET_TAG, "hotspot bring-up failed: %s. Running without WiFi.",
@@ -252,7 +252,7 @@ esp_err_t prop_net_init(void)
     }
 
     start_mdns();                     /* advertise <PROP_HOSTNAME>.local */
-    xTaskCreate(rssi_task, "rssi", 4096, NULL, 3, NULL);   /* background RSSI poll */
+    xTaskCreatePinnedToCore(rssi_task, "rssi", 4096, NULL, 3, NULL, 0);   /* background RSSI poll */
     ESP_LOGI(NET_TAG, "WiFi started (sta ssid='%s', mode=%s)", ssid,
              have_creds ? "STA, AP deferred" : "APSTA");
     return ESP_OK;

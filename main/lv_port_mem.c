@@ -22,7 +22,14 @@
 #include "esp_heap_caps.h"
 #include <stddef.h>
 
-#define LV_PSRAM_CAPS (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+#define LV_PSRAM_CAPS (MALLOC_CAP_SPIRAM  | MALLOC_CAP_8BIT)
+#define LV_SRAM_CAPS  (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+
+/* Small allocations (transient draw-mask buffers LVGL 9 allocates per-line during
+ * software rendering, typically ≤ 512 B) go to internal SRAM first for lower latency.
+ * Larger allocations (widget trees, image caches) go straight to PSRAM.
+ * PSRAM fallback keeps us safe if internal RAM runs low. */
+#define LV_SRAM_THRESHOLD 512
 
 void lv_mem_init(void) { }
 void lv_mem_deinit(void) { }
@@ -36,7 +43,14 @@ lv_mem_pool_t lv_mem_add_pool(void *mem, size_t bytes)
 
 void lv_mem_remove_pool(lv_mem_pool_t pool) { LV_UNUSED(pool); }
 
-void *lv_malloc_core(size_t size) { return heap_caps_malloc(size, LV_PSRAM_CAPS); }
+void *lv_malloc_core(size_t size)
+{
+    if (size <= LV_SRAM_THRESHOLD) {
+        void *p = heap_caps_malloc(size, LV_SRAM_CAPS);
+        if (p) return p;
+    }
+    return heap_caps_malloc(size, LV_PSRAM_CAPS);
+}
 
 void *lv_realloc_core(void *p, size_t new_size) { return heap_caps_realloc(p, new_size, LV_PSRAM_CAPS); }
 
