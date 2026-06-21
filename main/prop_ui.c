@@ -150,6 +150,8 @@ static volatile bool s_sig_scanning;
 /* SPECTRUM instrument (valid only while PK_SPECTRUM is current). */
 static lv_obj_t *s_spec_bars[PROP_MIC_BANDS];
 static lv_obj_t *s_spec_db, *s_spec_db_bar, *s_spec_status;
+static lv_obj_t *s_spec_src_label;
+static lv_obj_t *s_spec_axis[5];    /* x-axis frequency labels */
 static float s_spec_decay[PROP_MIC_BANDS];   /* peak-hold / slow decay (UI-side) */
 
 /* RF BAND instrument (2.4 GHz channel occupancy; valid only while PK_RFBAND is current). */
@@ -287,6 +289,8 @@ static void close_panel(void)
     s_vit_up_net = NULL; s_vit_up_ap = NULL; s_vit_up_link = NULL;
     s_sig_list = NULL; s_sig_status = NULL;
     s_spec_db = NULL; s_spec_db_bar = NULL; s_spec_status = NULL;
+    s_spec_src_label = NULL;
+    for (int i = 0; i < 5; i++) s_spec_axis[i] = NULL;
     s_rf_status = NULL;
     for (int i = 0; i < RF_CHANNELS; i++) s_rf_bars[i] = NULL;
     s_ble_summary = NULL; s_ble_list = NULL;
@@ -1018,7 +1022,7 @@ static lv_obj_t *build_signal_panel(lv_obj_t *parent)
     return p;
 }
 
-/* ---- SPECTRUM instrument (live mic FFT bars + dB meter) ------------------- */
+/* ---- SPECTRUM instrument (live FFT bars + dB meter) ----------------------- */
 
 #define SPEC_BW      30     /* bar width */
 #define SPEC_GAP     8      /* gap between bars */
@@ -1026,20 +1030,104 @@ static lv_obj_t *build_signal_panel(lv_obj_t *parent)
 #define SPEC_BASE    118    /* baseline offset from panel bottom */
 #define SPEC_MAXH    312    /* full-scale bar height */
 
+/* X-axis ticks: a target frequency (snapped to the nearest bar) plus an
+ * optional note name shown on a second line. The bars are log-spaced, so we
+ * pick round/musical targets and label whichever bar lands closest. */
+typedef struct { int hz; const char *note; } spec_tick_t;
+
+/* MIC (16 kHz / 8 kHz Nyquist): octaves of concert A — even one-octave log
+ * spacing, with the note on a second line. */
+static const spec_tick_t s_ticks_mic[5] = {
+    {110, "A2"}, {220, "A3"}, {440, "A4"}, {880, "A5"}, {1760, "A6"},
+};
+/* IO/ADC sources (1 kHz / 500 Hz Nyquist): round numbers. */
+static const spec_tick_t s_ticks_adc[5] = {
+    {10, NULL}, {50, NULL}, {100, NULL}, {200, NULL}, {400, NULL},
+};
+
+static void spec_fmt_freq(char *buf, int n, int hz)
+{
+    if (hz >= 1000) snprintf(buf, n, "%dk", (hz + 500) / 1000);
+    else            snprintf(buf, n, "%d", hz);
+}
+
+/* Bar (0..PROP_MIC_BANDS-1) whose center frequency is closest to target_hz,
+ * measured in log space to match the log-spaced axis. Uses the current source's
+ * sample rate via prop_mic_band_hz(), so call after prop_mic_set_source(). */
+static int spec_nearest_band(int target_hz)
+{
+    int best = 0;
+    float bestd = 1e9f;
+    float lt = logf((float)target_hz);
+    for (int b = 0; b < PROP_MIC_BANDS; b++) {
+        int f = prop_mic_band_hz(b);
+        if (f <= 0) continue;
+        float d = fabsf(logf((float)f) - lt);
+        if (d < bestd) { bestd = d; best = b; }
+    }
+    return best;
+}
+
+static void spec_update_axis(spec_src_t src)
+{
+    static const char *src_names[SPEC_SRC_COUNT] =
+        {"MIC", "IO49", "IO50", "IO51", "IO52", "IO53", "IO54"};
+    if (s_spec_src_label) {
+        lv_label_set_text(s_spec_src_label,
+            (src == SPEC_SRC_MIC && !prop_mic_pdm_up())
+                ? "MIC (offline)" : src_names[src]);
+    }
+    if (!s_spec_axis[0]) return;
+
+    const spec_tick_t *ticks = (src == SPEC_SRC_MIC) ? s_ticks_mic : s_ticks_adc;
+    for (int i = 0; i < 5; i++) {
+        int band = spec_nearest_band(ticks[i].hz);
+        char buf[20];
+        if (ticks[i].note) {
+            /* Mic: exact note frequency on line 1, note name on line 2. */
+            snprintf(buf, sizeof(buf), "%d\n%s", ticks[i].hz, ticks[i].note);
+        } else {
+            spec_fmt_freq(buf, sizeof(buf), ticks[i].hz);
+        }
+        lv_label_set_text(s_spec_axis[i], buf);
+        int bx = SPEC_X0 + band * (SPEC_BW + SPEC_GAP) + SPEC_BW / 2 - 26;
+        lv_obj_align(s_spec_axis[i], LV_ALIGN_BOTTOM_LEFT, bx, -SPEC_BASE + 54);
+    }
+}
+
+static void spec_src_prev_cb(lv_event_t *e)
+{
+    (void)e;
+    spec_src_t src = prop_mic_get_source();
+    src = (src == 0) ? (spec_src_t)(SPEC_SRC_COUNT - 1) : (spec_src_t)(src - 1);
+    prop_mic_set_source(src);
+    spec_update_axis(src);
+    for (int i = 0; i < PROP_MIC_BANDS; i++) s_spec_decay[i] = 0.0f;
+}
+
+static void spec_src_next_cb(lv_event_t *e)
+{
+    (void)e;
+    spec_src_t src = (spec_src_t)((prop_mic_get_source() + 1) % SPEC_SRC_COUNT);
+    prop_mic_set_source(src);
+    spec_update_axis(src);
+    for (int i = 0; i < PROP_MIC_BANDS; i++) s_spec_decay[i] = 0.0f;
+}
+
 static lv_obj_t *build_spectrum_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "SPECTRUM", back_to_instruments_cb);
 
     if (!prop_mic_available()) {
         s_spec_status = lv_label_create(p);
-        lv_label_set_text(s_spec_status, "-- MIC OFFLINE --");
+        lv_label_set_text(s_spec_status, "-- SPECTRUM OFFLINE --");
         lv_obj_set_style_text_color(s_spec_status, COL_DIM, 0);
         lv_obj_set_style_text_font(s_spec_status, FONT_HEAD, 0);
         lv_obj_center(s_spec_status);
         return p;
     }
 
-    /* dB level meter (top). */
+    /* dB level meter (original position). */
     panel_label(p, "LEVEL", 40, 84);
     s_spec_db = lv_label_create(p);
     lv_label_set_text(s_spec_db, "-- dB");
@@ -1066,10 +1154,26 @@ static lv_obj_t *build_spectrum_panel(lv_obj_t *parent)
         s_spec_decay[i] = 0.0f;
     }
 
-    lv_obj_t *note = lv_label_create(p);
-    lv_label_set_text(note, "Live acoustic spectrum  -  0 to 8 kHz");
-    lv_obj_set_style_text_color(note, COL_MUTE, 0);
-    lv_obj_align(note, LV_ALIGN_BOTTOM_LEFT, SPEC_X0, -30);
+    /* X-axis frequency labels (just below baseline). Fixed two-line height so a
+     * single-line (IO) and two-line (mic note) label share the same top edge;
+     * spec_update_axis() snaps each to its bar and fills the text. */
+    for (int i = 0; i < 5; i++) {
+        lv_obj_t *al = lv_label_create(p);
+        lv_obj_set_style_text_color(al, COL_DIM, 0);
+        lv_obj_set_size(al, 52, 44);
+        lv_obj_set_style_text_align(al, LV_TEXT_ALIGN_CENTER, 0);
+        s_spec_axis[i] = al;
+    }
+
+    /* Source selector row at bottom: [<]  SOURCE NAME  [>] in large type. */
+    make_btn(p, "<", 80, LV_ALIGN_BOTTOM_LEFT,  SPEC_X0,       -14, spec_src_prev_cb);
+    make_btn(p, ">", 80, LV_ALIGN_BOTTOM_RIGHT, -SPEC_X0,      -14, spec_src_next_cb);
+    s_spec_src_label = lv_label_create(p);
+    lv_obj_set_style_text_color(s_spec_src_label, COL_AMBER, 0);
+    lv_obj_set_style_text_font(s_spec_src_label, FONT_HEAD, 0);
+    lv_obj_align(s_spec_src_label, LV_ALIGN_BOTTOM_MID, 0, -22);
+
+    spec_update_axis(prop_mic_get_source());
     return p;
 }
 

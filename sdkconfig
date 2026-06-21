@@ -5182,7 +5182,7 @@ CONFIG_LV_TXT_ENC_UTF8=y
 # default:
 # CONFIG_LV_TXT_ENC_ASCII is not set
 # default:
-CONFIG_LV_TXT_BREAK_CHARS=" ,.;:-_"
+CONFIG_LV_TXT_BREAK_CHARS=" ,.;:-_)}"
 # default:
 CONFIG_LV_TXT_LINE_BREAK_LONG_LEN=0
 # default:

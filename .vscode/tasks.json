@@ -1,0 +1,61 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    //
+    // These delegate to firmware/communicator/tools/dev.{sh,ps1}, which activate
+    // ESP-IDF, force UTF-8, and auto-detect the CH340/CH341 serial port.
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build",
+            "detail": "idf.py build the communicator prop firmware",
+            "type": "shell",
+            "linux": {
+                "command": "${workspaceFolder}/tools/dev.sh",
+                "args": ["build"]
+            },
+            "osx": {
+                "command": "${workspaceFolder}/tools/dev.sh",
+                "args": ["build"]
+            },
+            "windows": {
+                "command": "pwsh",
+                "args": ["-NoProfile", "-File", "${workspaceFolder}\\tools\\dev.ps1", "build"]
+            },
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            }
+        },
+        {
+            "label": "Send to Device",
+            "detail": "Build, then flash over USB serial (auto-detected port)",
+            "type": "shell",
+            "linux": {
+                "command": "${workspaceFolder}/tools/dev.sh",
+                "args": ["bf"]
+            },
+            "osx": {
+                "command": "${workspaceFolder}/tools/dev.sh",
+                "args": ["bf"]
+            },
+            "windows": {
+                "command": "pwsh",
+                "args": ["-NoProfile", "-File", "${workspaceFolder}\\tools\\dev.ps1", "bf"]
+            },
+            "problemMatcher": [],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            }
+        }
+    ]
+}
