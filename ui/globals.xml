@@ -4,7 +4,13 @@
     </api>
 
     <consts>
-        <!-- Add <px>, <int>, <color> etc here -->
+        <!-- Cassette-futurism amber palette — mirrors prop_kit.h COL_* -->
+        <color name="col_bg"         value="0x0A0A06" />
+        <color name="col_amber"      value="0xE0B000" />
+        <color name="col_mute"       value="0xB58A00" />
+        <color name="col_dim"        value="0x6B5300" />
+        <color name="col_alert"      value="0xFF3030" />
+        <color name="col_panel_item" value="0x141008" />
     </consts>
 
     <styles>
@@ -20,6 +26,10 @@
     </images>
 
     <fonts>
-        <!-- Add <bin> , <tiny_ttf>, <freetype> tags here -->
+        <!-- Eurostile Bold — matches FONT_BODY/HEAD/STATUS/PUNCH in prop_kit.h -->
+        <bin name="font_body"   src_path="../resources/Eurostile-Bold.ttf" size="14" bpp="4" as_file="false" />
+        <bin name="font_head"   src_path="../resources/Eurostile-Bold.ttf" size="24" bpp="4" as_file="false" />
+        <bin name="font_status" src_path="../resources/Eurostile-Bold.ttf" size="40" bpp="4" as_file="false" />
+        <bin name="font_punch"  src_path="../resources/Eurostile-Bold.ttf" size="56" bpp="4" as_file="false" />
     </fonts>
 </globals>
