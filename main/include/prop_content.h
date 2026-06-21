@@ -12,7 +12,7 @@
  * the prop reads as a believable field archive until the Traxian canon drops in.
  * To add/edit content, just edit the tables in prop_content.c — no UI changes
  * needed. To add an image to a section later, see the LVGL image pipeline in
- * firmware/communicator/CLAUDE.md (PNG -> C array, PSRAM-resident) and extend
+ * CLAUDE.md (PNG -> C array, PSRAM-resident) and extend
  * prop_entry_t with an image source.
  */
 

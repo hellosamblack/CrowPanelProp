@@ -195,14 +195,14 @@ A/B with the on-device FPS HUD (counts real renders via `LV_EVENT_RENDER_READY`,
 `prop_ui.c:2931`):
 
 ```bash
-python firmware/communicator/tools/prop.py state    # confirm reachable (comm-unit-7.local)
+python tools/prop.py state    # confirm reachable (comm-unit-7.local)
 
 # enable FPS HUD (setting key fps_on / DISPLAY panel switch), walk heavy screens ~10s each,
 # noting the SWING not just the average:
-python firmware/communicator/tools/prop.py shot scanner.png  --screen scanner  --wait
-python firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait
-python firmware/communicator/tools/prop.py shot csi.png      --screen csi      --wait
-python firmware/communicator/tools/prop.py shot rfband.png   --screen rfband   --wait
+python tools/prop.py shot scanner.png  --screen scanner  --wait
+python tools/prop.py shot spectrum.png --screen spectrum --wait
+python tools/prop.py shot csi.png      --screen csi      --wait
+python tools/prop.py shot rfband.png   --screen rfband   --wait
 
 # isolate the P1 recomposite cost: toggle the CRT overlay and re-walk the same screens
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":false}'

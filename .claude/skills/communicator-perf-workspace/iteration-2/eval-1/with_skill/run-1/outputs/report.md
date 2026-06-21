@@ -24,7 +24,7 @@ PSRAM allocations for every draw mask.
 
 ### [P1] PSRAM allocator for every draw mask — affects: throughput (and contributes to jitter)
 
-- **Where:** `firmware/communicator/main/lv_port_mem.c:39` (`lv_malloc_core`)
+- **Where:** `main/lv_port_mem.c:39` (`lv_malloc_core`)
 - **Cost:** LVGL 9 allocates line/shape anti-alias masks via `lv_malloc` *during* the software
   render pass. `lv_malloc_core` routes 100% of allocations to PSRAM via `heap_caps_malloc(...,
   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)`. PSRAM latency is significantly higher than internal SRAM
@@ -59,7 +59,7 @@ PSRAM allocations for every draw mask.
 
 ### [P1] Unconditional `lv_obj_align` every frame on all 24 spectrum bars — affects: throughput
 
-- **Where:** `firmware/communicator/main/prop_ui.c:3043-3045` (spectrum); also CSI at `3108-3110`
+- **Where:** `main/prop_ui.c:3043-3045` (spectrum); also CSI at `3108-3110`
 - **Cost:** Inside the spectrum observer loop (24 bars, every ~50 ms / 20 Hz), three LVGL calls
   are made unconditionally per bar every frame: `lv_obj_set_height`, `lv_obj_align`, and
   `lv_obj_set_style_bg_color` — 72 LVGL calls per frame total. `lv_obj_align` is not a no-op in
@@ -144,7 +144,7 @@ PSRAM allocations for every draw mask.
 
 ### [P2] CRT overlay alpha-composite on every dirty region — affects: throughput (when FX is on)
 
-- **Where:** `firmware/communicator/main/prop_fx.c:187-188` (static canvas), `prop_fx.c:199-207`
+- **Where:** `main/prop_fx.c:187-188` (static canvas), `prop_fx.c:199-207`
   (refresh band)
 - **Cost:** `s_canvas` is a full-screen 1024x600 ARGB8888 canvas on `lv_layer_top()`. Because it
   has per-pixel alpha (scanlines are partially transparent, vignette edges vary), LVGL must
@@ -170,7 +170,7 @@ PSRAM allocations for every draw mask.
 
 ### [P2] Spectrum update cadence at 20 Hz with mic data at ~10 Hz — affects: throughput
 
-- **Where:** `firmware/communicator/main/prop_ui.c:3034` (no `tick %` guard on spectrum block)
+- **Where:** `main/prop_ui.c:3034` (no `tick %` guard on spectrum block)
 - **Cost:** The observer fires at 20 Hz. The mic FFT (`prop_mic.c`, I2S-driven) produces new data
   at ~10 Hz. Half the observer calls re-render already-decayed values with no actual data change.
   Without the shadow-compare fix (P1), all 72 LVGL calls still fire on those no-change frames. The
@@ -187,7 +187,7 @@ PSRAM allocations for every draw mask.
 
 ### [P3] Second SW draw unit — affects: throughput (experiment, pairs with core affinity)
 
-- **Where:** `firmware/communicator/sdkconfig:4925` (`CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1`)
+- **Where:** `sdkconfig:4925` (`CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1`)
 - **Cost/opportunity:** One draw unit today. With LVGL pinned to core 1 (after P1 affinity fix),
   core 0 handles radio tasks and may have idle headroom. A second draw unit would let LVGL dispatch
   render jobs to core 0 in parallel. Pay-off depends on core 0 saturation.
@@ -245,38 +245,38 @@ PSRAM allocations for every draw mask.
 
 ```bash
 # Confirm device is reachable
-python firmware/communicator/tools/prop.py state
+python tools/prop.py state
 
 # Enable the FPS HUD (amber readout, top-right)
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","fps":true}'
 
 # --- Baseline capture: spectrum (watch HUD for ~10 s, note range and swing) ---
-python firmware/communicator/tools/prop.py shot spec_baseline.png --screen spectrum --wait
+python tools/prop.py shot spec_baseline.png --screen spectrum --wait
 
 # --- Home screen baseline (should be ~18 fps and stable throughout) ---
-python firmware/communicator/tools/prop.py shot home_baseline.png --screen home --wait
+python tools/prop.py shot home_baseline.png --screen home --wait
 
 # --- CRT overlay A/B (only if user has FX enabled) ---
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":false}'
-python firmware/communicator/tools/prop.py shot spec_nofx.png --screen spectrum --wait
+python tools/prop.py shot spec_nofx.png --screen spectrum --wait
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":true}'
-python firmware/communicator/tools/prop.py shot spec_withfx.png --screen spectrum --wait
+python tools/prop.py shot spec_withfx.png --screen spectrum --wait
 
 # --- After core affinity fix (flash, then): ---
-python firmware/communicator/tools/prop.py shot spec_affinity.png --screen spectrum --wait
+python tools/prop.py shot spec_affinity.png --screen spectrum --wait
 # Observe HUD stability over 10 s -- look for consistent vs swinging number
 
 # --- After shadow-compare fix: ---
-python firmware/communicator/tools/prop.py shot spec_shadow.png --screen spectrum --wait
+python tools/prop.py shot spec_shadow.png --screen spectrum --wait
 
 # --- After hybrid allocator: ---
 # Check internal RAM headroom via Vitals first
-python firmware/communicator/tools/prop.py shot vitals_alloc.png --screen vitals --wait
-python firmware/communicator/tools/prop.py shot spec_alloc.png --screen spectrum --wait
+python tools/prop.py shot vitals_alloc.png --screen vitals --wait
+python tools/prop.py shot spec_alloc.png --screen spectrum --wait
 
 # --- Second draw unit experiment (if pursuing P3, after affinity fix): ---
 # sdkconfig.defaults: CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2, fullclean + rebuild + flash
-python firmware/communicator/tools/prop.py shot spec_2du.png --screen spectrum --wait
+python tools/prop.py shot spec_2du.png --screen spectrum --wait
 # Check consistency as well as average fps -- if it swings more, revert
 ```
 

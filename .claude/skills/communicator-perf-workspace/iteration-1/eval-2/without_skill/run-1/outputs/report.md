@@ -176,13 +176,13 @@ Hardware was not reachable here; run on the device (mDNS `comm-unit-7.local`). E
 capture each heavy screen and watch the FPS readout over ~10 s for the SWING, not just the average.
 
 ```bash
-python firmware/communicator/tools/prop.py state
+python tools/prop.py state
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":true}'
 
-python firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait
-python firmware/communicator/tools/prop.py shot rfband.png   --screen rfband   --wait
-python firmware/communicator/tools/prop.py shot csi.png      --screen csi      --wait
-python firmware/communicator/tools/prop.py shot ble.png      --screen ble      --wait
+python tools/prop.py shot spectrum.png --screen spectrum --wait
+python tools/prop.py shot rfband.png   --screen rfband   --wait
+python tools/prop.py shot csi.png      --screen csi      --wait
+python tools/prop.py shot ble.png      --screen ble      --wait
 
 # A/B the CRT overlay cost
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":false}'

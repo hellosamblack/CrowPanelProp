@@ -1,37 +1,37 @@
 ---
 name: communicator-ui
-description: Iterate on the CrowPanel communicator prop firmware UI (firmware/communicator) — build/flash, see the live screen via mDNS + /screenshot, and keep the cassette-futurism look (Eurostile font, amber palette, camera-legible text). Use for any graphics/LVGL change in firmware/communicator/main/prop_ui.c.
+description: Iterate on the CrowPanel communicator prop firmware UI (repo root) — build/flash, see the live screen via mDNS + /screenshot, and keep the cassette-futurism look (Eurostile font, amber palette, camera-legible text). Use for any graphics/LVGL change in main/prop_ui.c.
 ---
 
 # Communicator prop — UI iteration loop
 
-Visual development workflow for `firmware/communicator`. The goal is a tight
+Visual development workflow for the repo root. The goal is a tight
 build → flash → **look at the screen yourself** → adjust loop, so you never ask a
-human to eyeball the panel. Read `firmware/communicator/CLAUDE.md` first for the
+human to eyeball the panel. Read `CLAUDE.md` first for the
 deeper architecture; this skill is the *how to iterate* checklist.
 
 ## 1. Build + flash (ESP-IDF 6.0.1, not on PATH)
 
 **Windows (PowerShell):**
 ```powershell
-pwsh firmware/communicator/tools/dev.ps1 bf -Port COM7    # build + flash (one shot)
+pwsh tools/dev.ps1 bf -Port COM7    # build + flash (one shot)
 ```
 Or raw (activates IDF + forces UTF-8 to dodge the component-manager emoji crash):
 ```powershell
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
+idf.py -C "f:\git\personal\CrowPanelProp" build
+idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 flash
 ```
 
 **Linux / Debian (Bash):**
 ```bash
-./firmware/communicator/tools/dev.sh bf -Port /dev/ttyUSB0   # build + flash (one shot)
+./tools/dev.sh bf -Port /dev/ttyUSB0   # build + flash (one shot)
 ```
 Or raw:
 ```bash
 . ~/.local/esp/esp-idf/export.sh
-idf.py -C firmware/communicator build
-idf.py -C firmware/communicator -p /dev/ttyUSB0 flash
+idf.py -C . build
+idf.py -C . -p /dev/ttyUSB0 flash
 ```
 
 **Added a new `main/*.c`?** run `dev.ps1 reconfigure` / `dev.sh reconfigure` (or `idf.py reconfigure`) once —
@@ -43,7 +43,7 @@ an `undefined reference` link error otherwise). New driver header → add its co
 
 `prop.py` collapses wait → drive UI → screenshot (and crash decoding) into one command.
 Reaches the prop at its mDNS name `comm-unit-7.local` (no IP hunting). Run it from
-`firmware/communicator/`:
+``:
 
 ```bash
 python tools/prop.py shot out.png --screen spectrum --wait   # wait ready, navigate, settle, capture
@@ -159,10 +159,10 @@ plain `#include "lvgl.h"`. The output symbol name == the output filename stem
 **ASCII-only** — they render plain text, so skip the FontAwesome merge and just use
 `-r "0x20-0x7F"`. Sizes in use: `FONT_BODY` 14/16, `FONT_HEAD` 24, `FONT_STATUS` 40,
 `FONT_PUNCH` 56. The TTFs live at the **repo root** `resources/` (`../../resources/...`
-from the project dir), not under `firmware/communicator/`.
+from the project dir), not under ``.
 
 ## 6. Housekeeping
 
-Screenshot PNGs are scratch — write them inside `firmware/communicator/` and delete
+Screenshot PNGs are scratch — write them inside `` and delete
 them when done (or keep them out of commits). Don't commit `*_verify.png`,
 `crop*.png`, `full*.png`, etc.

@@ -159,12 +159,12 @@ Group **1 + 5** in one measurement pass (they interact). Measure **2, 3, 4** ind
 
 ```bash
 # Confirm device reachable, then turn on the on-device FPS HUD (top-right amber readout)
-python firmware/communicator/tools/prop.py state
+python tools/prop.py state
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":true}'   # toggles FPS HUD
 
 # Baseline each screen BEFORE any change
-python firmware/communicator/tools/prop.py shot spectrum_base.png --screen spectrum --wait
-python firmware/communicator/tools/prop.py shot home_base.png     --screen home     --wait
+python tools/prop.py shot spectrum_base.png --screen spectrum --wait
+python tools/prop.py shot home_base.png     --screen home     --wait
 # Watch the HUD on spectrum for ~10 s: record steady FPS AND the swing (e.g. 18->6->18).
 ```
 

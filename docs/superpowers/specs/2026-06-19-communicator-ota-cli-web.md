@@ -4,7 +4,7 @@
 
 We want to update the communicator firmware over WiFi instead of plugging in USB
 each time. **The firmware already supports OTA**: `POST /ota?token=…` in
-`firmware/communicator/main/prop_api.c` streams a `.bin` into the inactive A/B slot,
+`main/prop_api.c` streams a `.bin` into the inactive A/B slot,
 finalizes it, sets the boot partition, and reboots; `partitions.csv` already defines
 `ota_0`/`ota_1`. It's even documented in `README.md` as a raw `curl`.
 
@@ -21,7 +21,7 @@ confirmed.
 
 ## Changes
 
-### 1. CLI: `ota` action in `firmware/communicator/tools/dev.ps1`
+### 1. CLI: `ota` action in `tools/dev.ps1`
 - Add `"ota"` to the `[ValidateSet(...)]` for `$Action`.
 - Add params: `[string]$DeviceHost = "comm-unit-7.local"` (the mDNS name from
   `PROP_HOSTNAME` in `prop_net.c`) and `[string]$Token = "prop-ota-2024"` (matches
@@ -63,27 +63,27 @@ confirmed.
   `LINK:/IP:` line in `s_console_html`.
 
 ### 5. Docs
-- `firmware/communicator/README.md` "WiFi OTA" section: replace/augment the raw curl
+- `README.md` "WiFi OTA" section: replace/augment the raw curl
   with `pwsh tools/dev.ps1 ota -DeviceHost <ip>` and mention the web-console upload
   button and the rollback behavior.
-- `firmware/communicator/CLAUDE.md` module map / dev-helper notes: mention `dev.ps1 ota`.
+- `CLAUDE.md` module map / dev-helper notes: mention `dev.ps1 ota`.
 
 ## Files
-- `firmware/communicator/tools/dev.ps1` — new `ota` action (+ params, usage).
-- `firmware/communicator/main/prop_api.c` — web upload UI in `s_console_html`;
+- `tools/dev.ps1` — new `ota` action (+ params, usage).
+- `main/prop_api.c` — web upload UI in `s_console_html`;
   `"version"` in `state_to_json()`.
-- `firmware/communicator/main/main.c` — `esp_ota_mark_app_valid_cancel_rollback()`.
-- `firmware/communicator/sdkconfig.defaults` — `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`.
-- `firmware/communicator/README.md`, `firmware/communicator/CLAUDE.md` — docs.
+- `main/main.c` — `esp_ota_mark_app_valid_cancel_rollback()`.
+- `sdkconfig.defaults` — `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`.
+- `README.md`, `CLAUDE.md` — docs.
 
 ## Verification (end-to-end)
-1. Build: `pwsh firmware/communicator/tools/dev.ps1 build` — compiles clean.
+1. Build: `pwsh tools/dev.ps1 build` — compiles clean.
 2. Flash the rollback-enabled base once over USB:
-   `pwsh firmware/communicator/tools/dev.ps1 flash -Port COM7`, monitor and confirm
+   `pwsh tools/dev.ps1 flash -Port COM7`, monitor and confirm
    `esp_ota_mark_app_valid` runs (no rollback on the next manual reset).
 3. Note current version: `curl http://comm-unit-7.local/state` → record `"version"`.
 4. Make a visible trivial change (e.g. a status string), rebuild, then OTA via CLI:
-   `pwsh firmware/communicator/tools/dev.ps1 ota -DeviceHost comm-unit-7.local`.
+   `pwsh tools/dev.ps1 ota -DeviceHost comm-unit-7.local`.
    Expect `{"ok":true,"rebooting":true}`, device reboots.
 5. Re-query `/state` — `"version"` changed and the visible change is present →
    confirms the OTA + version reporting + auto-mark-valid all worked.

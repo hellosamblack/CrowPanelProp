@@ -1,6 +1,6 @@
 ---
 name: design-kit
-description: Build or redesign communicator prop screens (firmware/communicator) the code-first way — compose them from the reusable prop_kit components (cards, key/value rows, themed buttons/fields/meters) and lean on LVGL 9 features (flex/grid layout, gradients, observer). Use when adding a screen or reworking an existing panel's layout. For the build/flash/screenshot loop and house style, see the communicator-ui skill.
+description: Build or redesign communicator prop screens (repo root) the code-first way — compose them from the reusable prop_kit components (cards, key/value rows, themed buttons/fields/meters) and lean on LVGL 9 features (flex/grid layout, gradients, observer). Use when adding a screen or reworking an existing panel's layout. For the build/flash/screenshot loop and house style, see the communicator-ui skill.
 ---
 
 # Communicator prop — code-first design kit
@@ -100,4 +100,4 @@ after — a kit change touches every screen that uses it, so confirm the deltas 
 LVGL's heap is in PSRAM (`main/lv_port_mem.c`) so object count is no longer a hard ceiling,
 but panels are still **lazily built one-at-a-time** (`open_panel`/`close_panel`) to keep the
 per-frame render cost down. Heavy procedural screens (spectrum) run ~8 fps; don't pile static
-objects onto those. See `communicator-ui` and `firmware/communicator/CLAUDE.md` for the why.
+objects onto those. See `communicator-ui` and `CLAUDE.md` for the why.

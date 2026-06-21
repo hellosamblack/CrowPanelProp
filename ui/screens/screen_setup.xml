@@ -1,6 +1,6 @@
 <!--
   SETUP panel — the settings menu (WI-FI / DISPLAY / AUDIO / LEDS / I/O BENCH / ABOUT).
-  Mirrors build_menu_panel() in firmware/communicator/main/prop_ui.c.
+  Mirrors build_menu_panel() in main/prop_ui.c.
 
   Layout: 76px nav-rail placeholder on left, 948×600 panel content on right.
   SCAN_W = 1024 - 76 = 948 (matches the firmware constant).

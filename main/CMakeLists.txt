@@ -37,7 +37,7 @@ file(WRITE "${WIFI_SECRET_GEN_DIR}/wifi_secret.h"
      "#define PROP_WIFI_SSID \"${PROP_WIFI_SSID}\"\n"
      "#define PROP_WIFI_PASS \"${PROP_WIFI_PASS}\"\n")
 if(PROP_WIFI_SSID STREQUAL "")
-    message(STATUS "wifi_secret: no default SSID (set firmware/communicator/wifi_secret.env)")
+    message(STATUS "wifi_secret: no default SSID (set wifi_secret.env)")
 else()
     message(STATUS "wifi_secret: baking default STA SSID '${PROP_WIFI_SSID}'")
 endif()

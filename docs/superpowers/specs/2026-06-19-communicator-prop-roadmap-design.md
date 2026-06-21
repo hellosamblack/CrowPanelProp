@@ -5,7 +5,7 @@
 **See also:** `2026-06-19-communicator-archive-addendum.md`, which reframes the *top level*
 of the device around the author's brief (the data **archive** is now primary; this scanner
 is one instrument on the console rail).
-**Scope:** `firmware/communicator/` (ESP-IDF 6.0.1, ESP32-P4, LVGL 8.4)
+**Scope:** `` (ESP-IDF 6.0.1, ESP32-P4, LVGL 8.4)
 
 ## Context
 
@@ -50,7 +50,7 @@ The design keeps three concerns cleanly separated so the hero screen never gets 
 - **LVGL is not a shader engine.** Overlay-based effects are cheap; true per-pixel
   blur/bloom at 1024×600 is expensive on the CPU and is treated as best-effort/faked, with
   the P4 PPA / 2D-DMA accelerator noted as a research stretch — never a blocker.
-- **Memory discipline holds** (see `firmware/communicator/CLAUDE.md`): do not raise
+- **Memory discipline holds** (see `CLAUDE.md`): do not raise
   `LV_MEM`; big buffers/assets go to PSRAM. The mic capture buffer and any spectrum/FFT
   working set must be PSRAM-allocated.
 - **Verify each phase with `tools/screenshot.py`** — drive the UI via `/cmd` and capture
@@ -160,11 +160,11 @@ Per phase, build + flash, then drive and capture the UI to review directly:
 
 ```powershell
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
+idf.py -C "f:\git\personal\CrowPanelProp" build
+idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 flash
 # drive a scene / screen, then screenshot it:
 Invoke-RestMethod -Uri "http://<ip>/cmd" -Method Post -Body '{"cmd":"scene","value":"SIGNAL_ACQUIRED"}'
-python firmware/communicator/tools/screenshot.py <ip> phase1_signal.png
+python tools/screenshot.py <ip> phase1_signal.png
 ```
 
 - **Phase 1:** cycle every scene via `/cmd` and screenshot each; confirm trace character,

@@ -262,33 +262,33 @@ P1-A is confirmed working.
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","fps":true}'
 
 # Baseline: steady-state FPS per screen (watch HUD over 10 s on each)
-python firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait
-python firmware/communicator/tools/prop.py shot csi.png      --screen csi     --wait
-python firmware/communicator/tools/prop.py shot ble.png      --screen ble     --wait
-python firmware/communicator/tools/prop.py shot scanner.png  --screen scanner --wait
+python tools/prop.py shot spectrum.png --screen spectrum --wait
+python tools/prop.py shot csi.png      --screen csi     --wait
+python tools/prop.py shot ble.png      --screen ble     --wait
+python tools/prop.py shot scanner.png  --screen scanner --wait
 
 # CRT overlay A/B (measures prop_fx band cost on SPECTRUM)
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":false}'
-python firmware/communicator/tools/prop.py shot spectrum_nofx.png --screen spectrum --wait
+python tools/prop.py shot spectrum_nofx.png --screen spectrum --wait
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":true}'
-python firmware/communicator/tools/prop.py shot spectrum_fx.png   --screen spectrum --wait
+python tools/prop.py shot spectrum_fx.png   --screen spectrum --wait
 # Crop the FPS readout for comparison:
-python firmware/communicator/tools/prop.py shot crop.png --screen spectrum --crop 764,8,260,86 --zoom 3
+python tools/prop.py shot crop.png --screen spectrum --crop 764,8,260,86 --zoom 3
 
 # After P1-A (core pinning): re-run all screens, watch for stable vs swinging HUD.
 # Key: watch the HUD number for 10 s. Stable "18" = fixed. "18->6->18" = still contending.
 
 # After P1-B (hybrid allocator): SPECTRUM FPS should increase.
 # Also verify internal RAM budget via VITALS:
-python firmware/communicator/tools/prop.py shot vitals.png --screen vitals --wait
+python tools/prop.py shot vitals.png --screen vitals --wait
 
 # After P2-A (shadow-compare): SPECTRUM + CSI FPS in a quiet room.
 # Walk away from the device so the mic sees near-silence — bars should stabilize.
 # FPS should approach the static-screen baseline (~18) when all bars are unchanged.
-python firmware/communicator/tools/prop.py shot spectrum_quiet.png --screen spectrum --wait
+python tools/prop.py shot spectrum_quiet.png --screen spectrum --wait
 
 # After P2-B (BLE row pool): verify no hitch on BLE screen over 30+ seconds.
-python firmware/communicator/tools/prop.py shot ble_after.png --screen ble --wait
+python tools/prop.py shot ble_after.png --screen ble --wait
 
 # Input latency spot-check (compare before/after P1-A):
 time curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"input","control":"selector","arg":"cw"}'

@@ -131,10 +131,10 @@ The user reports 10-20 fps overall with inconsistent frame times — consistent 
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","fps":true}'
 
 # Per-screen steady-state FPS (watch HUD over ~10 s, note mean AND swing)
-python firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait
-python firmware/communicator/tools/prop.py shot csi.png     --screen csi     --wait
-python firmware/communicator/tools/prop.py shot ble.png     --screen ble     --wait
-python firmware/communicator/tools/prop.py shot home.png    --screen home    --wait
+python tools/prop.py shot spectrum.png --screen spectrum --wait
+python tools/prop.py shot csi.png     --screen csi     --wait
+python tools/prop.py shot ble.png     --screen ble     --wait
+python tools/prop.py shot home.png    --screen home    --wait
 
 # A/B: CRT overlay cost (run on spectrum screen for worst case)
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":false}'

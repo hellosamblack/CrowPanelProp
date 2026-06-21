@@ -60,11 +60,11 @@ All panels stay **lazily built, one alive at a time** (LV_MEM is hard-capped —
 
 ```
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
-python firmware/communicator/tools/prop.py shot console.png --screen home --wait
+idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 flash
+python tools/prop.py shot console.png --screen home --wait
 # drive the dial/tabs, then capture:
 #   POST /cmd {"cmd":"input","control":"selector","arg":"cw"}    -> rail highlight moves
 #   POST /cmd {"cmd":"input","control":"selector","arg":"press"} -> opens highlighted function
 #   POST /cmd {"cmd":"input","control":"tab","arg":2}            -> archive WILDLIFE tab
-python firmware/communicator/tools/prop.py shot archive.png --screen archive --wait
+python tools/prop.py shot archive.png --screen archive --wait
 ```

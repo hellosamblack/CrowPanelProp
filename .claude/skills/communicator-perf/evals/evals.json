@@ -4,7 +4,7 @@
     {
       "id": 0,
       "name": "general-sluggish-low-fps",
-      "prompt": "The communicator prop UI feels really sluggish — I'm only getting about 10-20 fps and the frame times are all over the place. Review the firmware in firmware/communicator and figure out what's killing the display framerate. Consistent frame times matter most to me, then higher fps. Give me a prioritized list of what to fix.",
+      "prompt": "The communicator prop UI feels really sluggish — I'm only getting about 10-20 fps and the frame times are all over the place. Review the firmware in the repo root and figure out what's killing the display framerate. Consistent frame times matter most to me, then higher fps. Give me a prioritized list of what to fix.",
       "expected_output": "A prioritized, impact-ranked review report with concrete file:line findings. Leads with consistency fixes (core affinity / contention), then throughput (hybrid allocator, redraw area, per-frame widget churn). Does NOT recommend known dead ends (dropping refresh period, raising CPU clock) or constraint-violating fixes (builtin pool, swap_bytes). Includes a measurement plan using the FPS HUD / prop.py.",
       "files": []
     },

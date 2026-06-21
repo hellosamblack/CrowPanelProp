@@ -22,7 +22,7 @@ Contrast this with the home/scanner screen, which is heavily optimised: the wave
 
 ### Finding 1 (CRITICAL) -- Unconditional 72-invalidation storm per frame
 
-**File:** `firmware/communicator/main/prop_ui.c`, lines ~2714-2728 (inside `ui_observer`)
+**File:** `main/prop_ui.c`, lines ~2714-2728 (inside `ui_observer`)
 
 **What happens:** The spectrum update block runs unconditionally on every observer tick while `PK_SPECTRUM` is active. For all 24 bars it calls `lv_obj_set_height`, `lv_obj_align`, and `lv_obj_set_style_bg_color` with no change-detection. Even when audio is silent and all bar values are identical to the previous frame, all 72 mutations fire, causing LVGL to mark 24 dirty regions and repaint them all.
 
@@ -91,7 +91,7 @@ if (st->tick % 4 == 0 && s_spec_db) {
 
 ### Finding 4 (MEDIUM) -- FFT trig recomputed per butterfly stage, not pre-tabled
 
-**File:** `firmware/communicator/main/prop_mic.c`, lines 44-47 (inside `fft()`)
+**File:** `main/prop_mic.c`, lines 44-47 (inside `fft()`)
 
 ```c
 float ang = -2.0f * (float)M_PI / len;

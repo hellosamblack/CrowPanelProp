@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-20
 **Status:** Approved design — ready for implementation plan
-**Scope:** `firmware/communicator/` (ESP-IDF 6.0.1, ESP32-P4, LVGL 8.4)
+**Scope:** `` (ESP-IDF 6.0.1, ESP32-P4, LVGL 8.4)
 **See also:** `2026-06-19-communicator-prop-roadmap-design.md` (scanner instrument),
 `2026-06-19-communicator-archive-addendum.md` (archive reframing / input model).
 
@@ -211,9 +211,9 @@ new `peripheral/bsp_audio/`, new `main/prop_audio.{c,h}`, `prop_ui.c`
 
 ```powershell
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
-python firmware/communicator/tools/prop.py shot home.png --screen home --wait
+idf.py -C "f:\git\personal\CrowPanelProp" build
+idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 flash
+python tools/prop.py shot home.png --screen home --wait
 ```
 
 - **FX:** set each effect slider independently; screenshot won't show the overlay —

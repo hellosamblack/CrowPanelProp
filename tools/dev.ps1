@@ -4,13 +4,13 @@
   crash), and runs a build/flash/monitor action against the project.
 
   Usage (from anywhere):
-    pwsh firmware/communicator/tools/dev.ps1 build
-    pwsh firmware/communicator/tools/dev.ps1 flash   -Port COM7
-    pwsh firmware/communicator/tools/dev.ps1 bf      -Port COM7   # build + flash
-    pwsh firmware/communicator/tools/dev.ps1 bfw     -Port COM7   # build + flash + wait until API answers
-    pwsh firmware/communicator/tools/dev.ps1 monitor -Port COM7
-    pwsh firmware/communicator/tools/dev.ps1 ota                  # build + OTA push to mDNS host
-    pwsh firmware/communicator/tools/dev.ps1 ota    -DeviceHost 172.17.2.167   # explicit IP
+    pwsh tools/dev.ps1 build
+    pwsh tools/dev.ps1 flash   -Port COM7
+    pwsh tools/dev.ps1 bf      -Port COM7   # build + flash
+    pwsh tools/dev.ps1 bfw     -Port COM7   # build + flash + wait until API answers
+    pwsh tools/dev.ps1 monitor -Port COM7
+    pwsh tools/dev.ps1 ota                  # build + OTA push to mDNS host
+    pwsh tools/dev.ps1 ota    -DeviceHost 172.17.2.167   # explicit IP
 
   After flashing, drive/inspect the UI with tools/prop.py (see the communicator-ui skill):
     python tools/prop.py shot out.png --screen spectrum --wait

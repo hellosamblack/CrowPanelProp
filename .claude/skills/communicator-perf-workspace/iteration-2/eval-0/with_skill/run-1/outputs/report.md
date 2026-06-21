@@ -285,33 +285,33 @@ Confirmed from `sdkconfig` — no action needed, do not re-propose:
 ## Measurement plan
 
     # 1. Confirm device reachable
-    python firmware/communicator/tools/prop.py state
+    python tools/prop.py state
 
     # 2. Enable FPS HUD (amber readout top-right)
     curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","fps":true}'
 
     # 3. Baseline: FX off, measure each heavy screen for ~10 s each
     curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":false}'
-    python firmware/communicator/tools/prop.py shot spectrum_baseline.png --screen spectrum --wait
-    python firmware/communicator/tools/prop.py shot scanner_baseline.png  --screen scanner  --wait
-    python firmware/communicator/tools/prop.py shot ble_baseline.png      --screen ble      --wait
-    python firmware/communicator/tools/prop.py shot csi_baseline.png      --screen csi      --wait
+    python tools/prop.py shot spectrum_baseline.png --screen spectrum --wait
+    python tools/prop.py shot scanner_baseline.png  --screen scanner  --wait
+    python tools/prop.py shot ble_baseline.png      --screen ble      --wait
+    python tools/prop.py shot csi_baseline.png      --screen csi      --wait
 
     # 4. FX overhead A/B (P4 quantification)
     curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":true}'
-    python firmware/communicator/tools/prop.py shot spectrum_fx.png --screen spectrum --wait
+    python tools/prop.py shot spectrum_fx.png --screen spectrum --wait
     # Compare FPS readout in spectrum_baseline.png vs spectrum_fx.png
 
     # 5. After [P1] core pinning: repeat step 3 and compare
     #    Look for: narrower FPS swing (18->16->18 vs 18->6->18), not just average
 
     # 6. After [P2] hybrid allocator: compare spectrum FPS
-    python firmware/communicator/tools/prop.py shot spectrum_after_p2.png --screen spectrum --wait
+    python tools/prop.py shot spectrum_after_p2.png --screen spectrum --wait
     # Target: spectrum FPS should rise from ~8 toward ~15
 
     # 7. After [P3] bar dedup: compare spectrum + CSI FPS
-    python firmware/communicator/tools/prop.py shot spectrum_after_p3.png --screen spectrum --wait
-    python firmware/communicator/tools/prop.py shot csi_after_p3.png      --screen csi      --wait
+    python tools/prop.py shot spectrum_after_p3.png --screen spectrum --wait
+    python tools/prop.py shot csi_after_p3.png      --screen csi      --wait
 
     # 8. Input lag check (drive dial, watch frame reaction)
     curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"input","control":"selector","arg":"cw"}'

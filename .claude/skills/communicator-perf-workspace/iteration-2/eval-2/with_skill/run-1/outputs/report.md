@@ -183,7 +183,7 @@ Known baselines from cost-model (treat as ground truth):
 ### [P4] Second SW draw unit — untried experiment
 **Affects: throughput (pairs with core affinity)**
 
-- Where: `firmware/communicator/sdkconfig:4925` (`CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1`)
+- Where: `sdkconfig:4925` (`CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1`)
 - Cost/rationale: With core affinity pinning LVGL to core 0 (P1), core 1 runs radio tasks.
   A second SW draw unit would run a rendering thread on core 1, parallelizing the
   software rasterizer. Only worth trying after P1 — measure whether core 1 has headroom.
@@ -238,37 +238,37 @@ Known baselines from cost-model (treat as ground truth):
 
 ```bash
 # Confirm device is reachable
-python firmware/communicator/tools/prop.py state
+python tools/prop.py state
 
 # Enable FPS HUD (persisted in NVS)
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","fps":true}'
 
 # Baseline: capture FPS on each active screen (watch HUD for 10-30 s on each)
-python firmware/communicator/tools/prop.py shot spectrum_before.png --screen spectrum --wait
-python firmware/communicator/tools/prop.py shot ble_before.png      --screen ble     --wait
-python firmware/communicator/tools/prop.py shot csi_before.png      --screen csi     --wait
-python firmware/communicator/tools/prop.py shot home_before.png     --screen home    --wait
+python tools/prop.py shot spectrum_before.png --screen spectrum --wait
+python tools/prop.py shot ble_before.png      --screen ble     --wait
+python tools/prop.py shot csi_before.png      --screen csi     --wait
+python tools/prop.py shot home_before.png     --screen home    --wait
 
 # A/B: CRT overlay off vs on (quantify FX cost)
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":false}'
-python firmware/communicator/tools/prop.py shot spectrum_nofx.png --screen spectrum --wait
+python tools/prop.py shot spectrum_nofx.png --screen spectrum --wait
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":true}'
-python firmware/communicator/tools/prop.py shot spectrum_fx.png   --screen spectrum --wait
+python tools/prop.py shot spectrum_fx.png   --screen spectrum --wait
 
 # After P1 (core affinity): recheck consistency — HUD should be stable for 30 s
-python firmware/communicator/tools/prop.py shot spectrum_after_p1.png --screen spectrum --wait
+python tools/prop.py shot spectrum_after_p1.png --screen spectrum --wait
 
 # After P2 (hybrid allocator): recheck SPECTRUM fps and internal RAM
-python firmware/communicator/tools/prop.py shot spectrum_after_p2.png --screen spectrum --wait
-python firmware/communicator/tools/prop.py shot vitals_after_p2.png   --screen vitals  --wait
+python tools/prop.py shot spectrum_after_p2.png --screen spectrum --wait
+python tools/prop.py shot vitals_after_p2.png   --screen vitals  --wait
 # Target: heap_caps_get_free_size(MALLOC_CAP_INTERNAL) > 200 KB
 
 # Verify BLE hitch is gone (watch CONTACTS screen for 30 s)
-python firmware/communicator/tools/prop.py shot ble_after.png --screen ble --wait
+python tools/prop.py shot ble_after.png --screen ble --wait
 
 # Input latency check after P1
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"input","control":"selector","arg":1}'
-python firmware/communicator/tools/prop.py shot input_after.png --screen home --wait
+python tools/prop.py shot input_after.png --screen home --wait
 ```
 
 Key metric: frame-time **consistency** (not just average). Watch the HUD over 10–30 seconds.

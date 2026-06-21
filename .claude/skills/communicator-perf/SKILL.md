@@ -1,6 +1,6 @@
 ---
 name: communicator-perf
-description: Audit the CrowPanel communicator prop firmware (firmware/communicator) for performance hogs that drag down LVGL display framerate and touch/dial responsiveness, and that make frame times inconsistent. Use whenever the user mentions the prop feeling slow, sluggish, janky, stuttery, low FPS, choppy animation, laggy touch/dial, uneven/inconsistent frame times, or asks to profile/optimize/speed up rendering on this board. Produces a prioritized findings report (impact-ranked, file:line, concrete fix) and a measurement plan — it does not blindly apply changes.
+description: Audit the CrowPanel communicator prop firmware (repo root) for performance hogs that drag down LVGL display framerate and touch/dial responsiveness, and that make frame times inconsistent. Use whenever the user mentions the prop feeling slow, sluggish, janky, stuttery, low FPS, choppy animation, laggy touch/dial, uneven/inconsistent frame times, or asks to profile/optimize/speed up rendering on this board. Produces a prioritized findings report (impact-ranked, file:line, concrete fix) and a measurement plan — it does not blindly apply changes.
 ---
 
 # Communicator performance review
@@ -31,12 +31,12 @@ The firmware has a built-in FPS HUD; turn it on and walk the screens.
 
 ```bash
 # turn on the on-device FPS meter (top-right amber readout), then capture each screen
-python firmware/communicator/tools/prop.py state                                    # confirm device is reachable (mDNS comm-unit-7.local)
+python tools/prop.py state                                    # confirm device is reachable (mDNS comm-unit-7.local)
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","fps":true}'          # enables FPS HUD — calls prop_ui_set_fps() (prop_api.c:117)
 # NOTE: {"cmd":"fx","on":true} is a SEPARATE toggle — it enables the CRT overlay (prop_fx), not the HUD
-python firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait
-python firmware/communicator/tools/prop.py shot scanner.png  --screen scanner --wait
-python firmware/communicator/tools/prop.py shot ble.png      --screen ble     --wait
+python tools/prop.py shot spectrum.png --screen spectrum --wait
+python tools/prop.py shot scanner.png  --screen scanner --wait
+python tools/prop.py shot ble.png      --screen ble     --wait
 ```
 
 What to record per screen, and why it matters for *this* review:

@@ -1,7 +1,7 @@
 {
   "eval_id": 0,
   "eval_name": "general-sluggish-low-fps",
-  "prompt": "The communicator prop UI feels really sluggish — I'm only getting about 10-20 fps and the frame times are all over the place. Review the firmware in firmware/communicator and figure out what's killing the display framerate. Consistent frame times matter most to me, then higher fps. Give me a prioritized list of what to fix.",
+  "prompt": "The communicator prop UI feels really sluggish — I'm only getting about 10-20 fps and the frame times are all over the place. Review the firmware in the repo root and figure out what's killing the display framerate. Consistent frame times matter most to me, then higher fps. Give me a prioritized list of what to fix.",
   "assertions": [
     {"text": "Prioritizes consistency fixes ahead of pure-throughput ones (matches the user's stated priority order)"},
     {"text": "Identifies missing core affinity / unpinned LVGL+radio tasks as a top consistency cause, with file:line"},

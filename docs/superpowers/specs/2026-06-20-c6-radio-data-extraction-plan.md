@@ -30,7 +30,7 @@ verification spike** with a WiFi-only fallback.
   writes a small cache (`s_bands[24]`, `s_db`); the UI reads it with a cheap copy. Mirror this
   for `prop_ble` and `prop_csi`. Never touch radio/SDIO APIs under `lvgl_port_lock()`
   (see `prop_net.c:280` `rssi_task`).
-- **New screen wiring** (per `firmware/communicator/CLAUDE.md`): add `PK_*` to `panel_kind_t`
+- **New screen wiring** (per `CLAUDE.md`): add `PK_*` to `panel_kind_t`
   (`prop_ui.c:~129`); write `build_<x>_panel(parent)` using
   `make_panel(parent,"TITLE",back_to_home_cb)`; add a `case` in `open_panel`
   (`prop_ui.c:~281`); add a row to `s_rail[]` (`prop_ui.c:202`) and/or `menu_item(...)`
@@ -143,22 +143,22 @@ Only build the real version if the Phase 0 CSI callback fired.
 
 | File | Change |
 |------|--------|
-| `firmware/communicator/sdkconfig.defaults` | Phase 0: BLE/NimBLE + esp_hosted BT flags; possibly `SPIRAM_TRY_ALLOCATE_WIFI_LWIP`. |
-| `firmware/communicator/main/prop_net.c` + `include/prop_net.h` | Phase 1: `prop_net_scan_channels()` (refactor shared scan body). Phase 0/3: CSI enable hooks. |
-| `firmware/communicator/main/prop_ble.c` + `include/prop_ble.h` (new) | Phase 2: NimBLE scan task + cache + Company-ID table. |
-| `firmware/communicator/main/prop_csi.c` + `include/prop_csi.h` (new) | Phase 3: CSI capture/fold (or synthetic fallback). |
-| `firmware/communicator/main/prop_ui.c` | `PK_RFBAND/PK_BLE/PK_CSI`, `build_*_panel`, `open_panel`/`close_panel`, `s_rail[]`/`menu_item`, `prop_ui_goto`, `ui_observer` blocks. |
-| `firmware/communicator/main/CLAUDE.md` (module map) | Document new modules + any new RAM ceiling learned in Phase 0. |
-| `firmware/communicator/main/prop_api.c` | (optional) extend `/state` JSON with ble/rfband summaries for scripted screenshots. |
+| `sdkconfig.defaults` | Phase 0: BLE/NimBLE + esp_hosted BT flags; possibly `SPIRAM_TRY_ALLOCATE_WIFI_LWIP`. |
+| `main/prop_net.c` + `include/prop_net.h` | Phase 1: `prop_net_scan_channels()` (refactor shared scan body). Phase 0/3: CSI enable hooks. |
+| `main/prop_ble.c` + `include/prop_ble.h` (new) | Phase 2: NimBLE scan task + cache + Company-ID table. |
+| `main/prop_csi.c` + `include/prop_csi.h` (new) | Phase 3: CSI capture/fold (or synthetic fallback). |
+| `main/prop_ui.c` | `PK_RFBAND/PK_BLE/PK_CSI`, `build_*_panel`, `open_panel`/`close_panel`, `s_rail[]`/`menu_item`, `prop_ui_goto`, `ui_observer` blocks. |
+| `main/CLAUDE.md` (module map) | Document new modules + any new RAM ceiling learned in Phase 0. |
+| `main/prop_api.c` | (optional) extend `/state` JSON with ble/rfband summaries for scripted screenshots. |
 
 ## Verification (per phase)
 
-- **Build/flash**: `& "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"; idf.py -C firmware/communicator build` then `... -p COM7 flash monitor` (or `pwsh tools/dev.ps1 bf -Port COM7`).
+- **Build/flash**: `& "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"; idf.py -C . build` then `... -p COM7 flash monitor` (or `pwsh tools/dev.ps1 bf -Port COM7`).
 - **Boot health (Phase 0 gate)**: monitor log shows no `HS_MP: mempool ... no mem` loop; WiFi STA still gets an IP; (BLE) NimBLE host reports sync; (CSI) callback fires with a subcarrier count.
 - **Visual** (per `communicator-ui` skill / `tools/prop.py`):
-  - `python firmware/communicator/tools/prop.py shot rfband.png --screen rfband --wait`
-  - `python firmware/communicator/tools/prop.py shot ble.png --screen ble --wait`
-  - `python firmware/communicator/tools/prop.py shot csi.png --screen csi --wait`
+  - `python tools/prop.py shot rfband.png --screen rfband --wait`
+  - `python tools/prop.py shot ble.png --screen ble --wait`
+  - `python tools/prop.py shot csi.png --screen csi --wait`
   Inspect the PNGs directly (CRT `prop_fx` overlay isn't captured — judge that on the panel).
 - **Functional**: with the prop near a phone/laptop, the BLE panel device count should track
   devices appearing/disappearing; the RF BAND chart should shift when scanning near a known AP's

@@ -31,10 +31,10 @@ spectrum ~8 fps, static screens ~18 fps; full-screen software render ~250 ms.
 
 ### [P1] Spectrum bars are rewritten every frame with no change-gating
 - **Affects:** both (consistency + throughput), and is the cheapest high-value fix.
-- **Where:** `firmware/communicator/main/prop_ui.c:2690-2704` (`ui_observer`, the
+- **Where:** `main/prop_ui.c:2690-2704` (`ui_observer`, the
   `s_cur_kind == PK_SPECTRUM` block).
 - **Cost / mechanism:** Each of the 24 bars (`PROP_MIC_BANDS = 24`,
-  `firmware/communicator/main/include/prop_mic.h:20`) gets, every ~20 Hz tick, unconditionally:
+  `main/include/prop_mic.h:20`) gets, every ~20 Hz tick, unconditionally:
   - `lv_obj_set_height()` (2699)
   - `lv_obj_align()` (2700-2701)
   - `lv_obj_set_style_bg_color()` (2702-2703)
@@ -74,7 +74,7 @@ spectrum ~8 fps, static screens ~18 fps; full-screen software render ~250 ms.
 - **Affects:** consistency (the swinging frame times — the user's #1 complaint).
 - **Where:** all tasks are unpinned (`task_affinity = -1` for the LVGL port in `bsp_illuminate.c`;
   plain `xTaskCreate` with no `PinnedToCore` for: `mic_task`
-  `firmware/communicator/main/prop_mic.c:186` (prio 5, ~62 FFT/s), engine animate_task
+  `main/prop_mic.c:186` (prio 5, ~62 FFT/s), engine animate_task
   `prop_engine.c:302` (prio 5, 20 Hz), `rssi` `prop_net.c:240`, `ble_prune` `prop_ble.c:331`,
   `prop_csi` `prop_csi.c:151` (prio 4)).
 - **Cost / mechanism:** The mic FFT task only runs while the spectrum screen is open (it's the data
@@ -96,7 +96,7 @@ spectrum ~8 fps, static screens ~18 fps; full-screen software render ~250 ms.
 
 ### [P2] LVGL draw-mask allocations come from PSRAM (the ~8 vs ~18 fps gap)
 - **Affects:** throughput (raises the spectrum ceiling).
-- **Where:** `firmware/communicator/main/lv_port_mem.c` (custom `lv_malloc` -> PSRAM, via
+- **Where:** `main/lv_port_mem.c` (custom `lv_malloc` -> PSRAM, via
   `CONFIG_LV_USE_CUSTOM_MALLOC`).
 - **Cost / mechanism:** Documented in the firmware CLAUDE.md "Memory reality" and the cost model:
   LVGL 9 allocates line/shape anti-alias masks via `lv_malloc` during drawing. Routing the whole
@@ -144,14 +144,14 @@ frame time, you may not need to touch the allocator at all.
 
 ```bash
 # confirm device reachable
-python firmware/communicator/tools/prop.py state
+python tools/prop.py state
 
 # turn on the FPS HUD (top-right amber readout; also drops refresh period to 8 ms)
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":true}'
 
 # capture the heavy screen and the baseline static screen
-python firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait
-python firmware/communicator/tools/prop.py shot home.png     --screen home     --wait
+python tools/prop.py shot spectrum.png --screen spectrum --wait
+python tools/prop.py shot home.png     --screen home     --wait
 ```
 
 For each change:

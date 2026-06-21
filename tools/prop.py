@@ -2,7 +2,7 @@
 """prop.py - one CLI for driving + inspecting the communicator prop during dev.
 
 Collapses the build/flash -> wait -> drive UI -> screenshot loop (and crash
-decoding) into single commands, so iterating on firmware/communicator is fast.
+decoding) into single commands, so iterating on the repo root is fast.
 
 Networking is stdlib-only (reaches the prop at its mDNS name comm-unit-7.local).
 `trace` additionally needs pyserial; `trace`/`decode` need the build/ ELF.

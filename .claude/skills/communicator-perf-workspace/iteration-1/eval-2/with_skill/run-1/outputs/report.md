@@ -136,7 +136,7 @@ NOTE: the skill's example uses {"cmd":"fx","on":true} to toggle the FPS HUD, but
 switch (persisted as fps_on, prop_ui.c:719,2970). Turn the HUD on via SETUP before measuring; use
 fx on/off separately to A/B the CRT-overlay cost.
 
-  cd firmware/communicator
+  cd <repo root>
   python tools/prop.py state                 # confirm comm-unit-7.local reachable
   # Per-screen baseline: open each, settle, read top-right FPS HUD over ~10 s. Watch the SWING.
   python tools/prop.py shot base_spectrum.png --screen spectrum --wait

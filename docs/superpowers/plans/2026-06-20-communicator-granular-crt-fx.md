@@ -19,18 +19,18 @@
 - **Build/flash (this machine):**
   ```powershell
   & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
-  idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
-  idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
+  idf.py -C "f:\git\personal\CrowPanelProp" build
+  idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 flash
   ```
 
 ---
 
 ## File Structure
 
-- `firmware/communicator/main/include/prop_fx.h` — add per-effect setter/getter declarations.
-- `firmware/communicator/main/prop_fx.c` — per-effect state, bake using per-effect alpha, NVS load/migrate, setters/getters.
-- `firmware/communicator/main/prop_ui.c` — `build_display_panel` gains the four sliders (scrollable panel); replaces the single FX-intensity slider.
-- `firmware/communicator/main/prop_api.c` — extend `{"cmd":"fx",...}` to accept per-effect values so the effects are scriptable (the only programmatic handle, since the overlay isn't screenshot-visible).
+- `main/include/prop_fx.h` — add per-effect setter/getter declarations.
+- `main/prop_fx.c` — per-effect state, bake using per-effect alpha, NVS load/migrate, setters/getters.
+- `main/prop_ui.c` — `build_display_panel` gains the four sliders (scrollable panel); replaces the single FX-intensity slider.
+- `main/prop_api.c` — extend `{"cmd":"fx",...}` to accept per-effect values so the effects are scriptable (the only programmatic handle, since the overlay isn't screenshot-visible).
 
 No new files.
 
@@ -39,7 +39,7 @@ No new files.
 ## Task 1: Per-effect state + bake in `prop_fx.c`
 
 **Files:**
-- Modify: `firmware/communicator/main/prop_fx.c`
+- Modify: `main/prop_fx.c`
 
 **Interfaces:**
 - Consumes: nothing new (internal refactor).
@@ -133,14 +133,14 @@ and for the band:
 Run:
 ```powershell
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
+idf.py -C "f:\git\personal\CrowPanelProp" build
 ```
 Expected: compiles clean (no references to the removed `intensity_opa`/`s_intensity`).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add firmware/communicator/main/prop_fx.c
+git add main/prop_fx.c
 git commit -m "prop_fx: bake CRT effects at per-effect alpha (internal refactor)"
 ```
 
@@ -149,8 +149,8 @@ git commit -m "prop_fx: bake CRT effects at per-effect alpha (internal refactor)
 ## Task 2: Per-effect setters/getters + NVS load/migrate
 
 **Files:**
-- Modify: `firmware/communicator/main/include/prop_fx.h`
-- Modify: `firmware/communicator/main/prop_fx.c`
+- Modify: `main/include/prop_fx.h`
+- Modify: `main/prop_fx.c`
 
 **Interfaces:**
 - Produces (used by Tasks 3–4):
@@ -260,7 +260,7 @@ uint8_t prop_fx_refresh(void) { return s_refresh_pct; }
 Run:
 ```powershell
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
+idf.py -C "f:\git\personal\CrowPanelProp" build
 ```
 Expected: compiles clean. (Tasks 3–4 still reference the removed `prop_fx_intensity` — they are fixed in those tasks. If building before them, expect `prop_ui.c`/`prop_api.c` errors at link/compile referencing `prop_fx_intensity`; that is why Tasks 3 and 4 follow immediately.)
 
@@ -269,7 +269,7 @@ Expected: compiles clean. (Tasks 3–4 still reference the removed `prop_fx_inte
 - [ ] **Step 5: Commit**
 
 ```bash
-git add firmware/communicator/main/include/prop_fx.h firmware/communicator/main/prop_fx.c
+git add main/include/prop_fx.h main/prop_fx.c
 git commit -m "prop_fx: per-effect setters/getters + NVS load with legacy migration"
 ```
 
@@ -278,7 +278,7 @@ git commit -m "prop_fx: per-effect setters/getters + NVS load with legacy migrat
 ## Task 3: Display panel — four effect sliders (scrollable)
 
 **Files:**
-- Modify: `firmware/communicator/main/prop_ui.c` (`build_display_panel` ~line 635; its callbacks `fx_toggle_cb`/`fx_int_cb` ~line 624; the `s_fx_int_val` static).
+- Modify: `main/prop_ui.c` (`build_display_panel` ~line 635; its callbacks `fx_toggle_cb`/`fx_int_cb` ~line 624; the `s_fx_int_val` static).
 
 **Interfaces:**
 - Consumes: `prop_fx_set_scanlines/phosphor/vignette/refresh` + getters (Task 2); `prop_fx_enabled`/`prop_fx_set_enabled`; `make_slider`, `make_switch`, `panel_label`, `make_panel`.
@@ -362,15 +362,15 @@ Also NULL the four label pointers in `close_panel` alongside the other Display s
 Run:
 ```powershell
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
+idf.py -C "f:\git\personal\CrowPanelProp" build
 ```
 Expected: compiles clean.
 
 - [ ] **Step 4: Flash and verify the panel renders (screenshot)**
 
 ```powershell
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
-python firmware/communicator/tools/prop.py shot display.png --screen display --wait
+idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 flash
+python tools/prop.py shot display.png --screen display --wait
 ```
 Expected: `display.png` shows BACKLIGHT, CRT EFFECTS toggle, and four labelled sliders (SCANLINES/PHOSPHOR/VIGNETTE/REFRESH SWEEP) with % values, themed amber-on-black. Open the PNG and confirm.
 
@@ -381,7 +381,7 @@ Enable CRT, set SCANLINES high / VIGNETTE low, reboot the board, reopen Display:
 - [ ] **Step 6: Commit**
 
 ```bash
-git add firmware/communicator/main/prop_ui.c
+git add main/prop_ui.c
 git commit -m "ui: granular per-effect CRT sliders in Display settings"
 ```
 
@@ -390,7 +390,7 @@ git commit -m "ui: granular per-effect CRT sliders in Display settings"
 ## Task 4: Scriptable per-effect `/cmd fx` (programmatic handle)
 
 **Files:**
-- Modify: `firmware/communicator/main/prop_api.c` (the `"fx"` command handler).
+- Modify: `main/prop_api.c` (the `"fx"` command handler).
 
 **Interfaces:**
 - Consumes: `prop_fx_set_scanlines/phosphor/vignette/refresh`, `prop_fx_set_enabled` (Task 2).
@@ -398,7 +398,7 @@ git commit -m "ui: granular per-effect CRT sliders in Display settings"
 
 - [ ] **Step 1: Locate the current fx handler**
 
-Run: `grep -n '"fx"' firmware/communicator/main/prop_api.c`
+Run: `grep -n '"fx"' main/prop_api.c`
 Read the handler; today it reads `on` (bool) and `value` (0–100 → `prop_fx_set_intensity`).
 
 - [ ] **Step 2: Replace the `value`→intensity call with per-effect keys**
@@ -420,23 +420,23 @@ Keep the `on` handling (→ `prop_fx_set_enabled`). Replace the single `value` p
 Run:
 ```powershell
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
+idf.py -C "f:\git\personal\CrowPanelProp" build
 ```
-Expected: compiles clean; no remaining references to `prop_fx_set_intensity`/`prop_fx_intensity` anywhere (`grep -rn prop_fx_intensity firmware/communicator/main` returns nothing).
+Expected: compiles clean; no remaining references to `prop_fx_set_intensity`/`prop_fx_intensity` anywhere (`grep -rn prop_fx_intensity main` returns nothing).
 
 - [ ] **Step 4: Flash and verify via /cmd**
 
 ```powershell
-idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
+idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 flash
 Invoke-RestMethod -Uri "http://comm-unit-7.local/cmd" -Method Post -Body '{"cmd":"fx","on":true,"scan":90,"phosphor":10,"vignette":80,"refresh":40}'
-python firmware/communicator/tools/prop.py shot display.png --screen display --wait
+python tools/prop.py shot display.png --screen display --wait
 ```
 Expected: command returns OK; opening Display shows the four sliders at 90/10/80/40; the panel shows strong scanlines, faint phosphor. Reboot → values persist.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add firmware/communicator/main/prop_api.c firmware/communicator/main/prop_fx.c firmware/communicator/main/include/prop_fx.h
+git add main/prop_api.c main/prop_fx.c main/include/prop_fx.h
 git commit -m "api: per-effect fx control via /cmd; drop legacy global intensity"
 ```
 

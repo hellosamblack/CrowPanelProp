@@ -66,22 +66,22 @@ Scanner waveform 10-segment shadow-compare + change-gated style writes (`prop_ui
 ## Measurement plan
 ```bash
 # 0. Reachability + HUD/FX toggle (mDNS comm-unit-7.local)
-python firmware/communicator/tools/prop.py state
+python tools/prop.py state
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":true}'
 # 1. Per-screen baseline
-python firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait
-python firmware/communicator/tools/prop.py shot csi.png      --screen csi      --wait
-python firmware/communicator/tools/prop.py shot scanner.png  --screen scanner  --wait
-python firmware/communicator/tools/prop.py shot ble.png      --screen ble      --wait
+python tools/prop.py shot spectrum.png --screen spectrum --wait
+python tools/prop.py shot csi.png      --screen csi      --wait
+python tools/prop.py shot scanner.png  --screen scanner  --wait
+python tools/prop.py shot ble.png      --screen ble      --wait
 # 2. P1 overlay A/B (read HUD each time)
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":false}'   # then re-read HUD
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":true}'
 # 3. After each code change: flash + re-capture + re-read HUD (record steady fps AND the 10 s swing)
-./firmware/communicator/tools/dev.sh bf -Port /dev/ttyUSB0     # or dev.ps1 bf -Port COM7
+./tools/dev.sh bf -Port /dev/ttyUSB0     # or dev.ps1 bf -Port COM7
 # 4. Input/dial latency (handled under the LVGL lock)
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"input","control":"selector","arg":"cw"}'
 # 5. RAM headroom guard after hybrid allocator
-python firmware/communicator/tools/prop.py shot vitals.png --screen vitals --wait
+python tools/prop.py shot vitals.png --screen vitals --wait
 ```
 
 Highest-confidence levers: **affinity (P1 consistency)** and the **hybrid allocator (P1 throughput)**; the **FX overlay** is the highest-confidence *immediate* win if enabled; the **bar shadow-compare (P2)** is a code-evident cleanup. Experiments (2nd draw unit, partial internal buffers) keep/revert strictly on measured numbers.
