@@ -1,0 +1,11 @@
+<screen>
+	<styles>
+		<style name="bg" bg_color="#col_bg" text_color="#col_amber" />
+	</styles>
+
+	<view>
+		<style name="bg" />
+		<lv_label text="COMMUNICATOR" align="top_left"
+		          style_text_font="font_head" style_text_color="#col_amber" />
+	</view>
+</screen>
