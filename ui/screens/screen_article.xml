@@ -1,0 +1,98 @@
+<!--
+  ARTICLE — a single archive entry: a per-section visual band + scrollable body.
+  Mirrors build_article_panel() + vis_climate() in main/prop_ui.c.
+
+  This XML shows the CLIMATE motif (a diurnal thermal trace in a framed inset).
+  The firmware draws one of four motifs by section (CLIMATE trace / MAP survey chart /
+  WILDLIFE bio-scan / PLANTS field plate) procedurally from the entry title; only the
+  CLIMATE variant is mocked here as the representative layout.
+
+  Bands: VIS_Y=116  VIS_H=168  VIS_BODY_Y=312. The title (section name) is in the
+  header; the entry title sits at y=64; the visual caption at y=94.
+-->
+<screen>
+    <styles>
+        <style name="panel"    bg_color="#col_bg" border_color="#col_amber" border_width="2" radius="0" pad_all="0" />
+        <style name="btn_back" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="title"    text_color="#col_amber" text_font="font_head" />
+        <style name="entry"    text_color="#col_amber" text_font="font_head" />
+        <style name="caption"  text_color="#col_mute"  text_font="font_body" />
+        <style name="dim"      text_color="#col_dim"   text_font="font_body" />
+        <style name="frame"    bg_color="#col_panel_item" bg_opa="255" border_color="#col_dim" border_width="2" radius="0" pad_all="0" />
+        <style name="grid"     bg_color="#col_dim" bg_opa="255" border_width="0" radius="0" />
+        <style name="body"     text_color="#col_amber" text_font="font_body" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <lv_obj width="76" height="600" align="top_left"
+                style_bg_color="#col_panel_item" style_border_width="0" style_radius="0" style_pad_all="0" />
+
+        <lv_obj width="948" height="600" align="top_right">
+            <style name="panel" />
+
+            <lv_button width="130" height="40" align="top_left" x="20" y="12">
+                <style name="btn_back" />
+                <lv_label text="&lt; BACK" />
+            </lv_button>
+
+            <!-- Header shows the section name -->
+            <lv_label text="CLIMATE" align="top_mid" y="18">
+                <style name="title" />
+            </lv_label>
+
+            <!-- Entry title -->
+            <lv_label text="THERMAL PROFILE" align="top_left" x="30" y="64">
+                <style name="entry" />
+            </lv_label>
+
+            <!-- Visual caption -->
+            <lv_label text="THERMAL CYCLE  //  24H DIURNAL" align="top_left" x="30" y="94">
+                <style name="caption" />
+            </lv_label>
+            <lv_label text="HI 48 C   LO 04 C" align="top_right" x="-34" y="94">
+                <style name="caption" />
+            </lv_label>
+
+            <!-- Visual frame (thermal trace inset): x=30 y=116 w=888 h=168 -->
+            <lv_obj width="888" height="168" align="top_left" x="30" y="116">
+                <style name="frame" />
+
+                <!-- Vertical graticule (7 lines) -->
+                <lv_obj width="1" height="164" align="left_mid" x="111" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="222" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="333" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="444" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="555" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="666" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="777" y="0"><style name="grid" /></lv_obj>
+
+                <!-- Horizontal graticule (3 lines) -->
+                <lv_obj width="884" height="1" align="top_mid" y="41"><style name="grid" /></lv_obj>
+                <lv_obj width="884" height="1" align="top_mid" y="82"><style name="grid" /></lv_obj>
+                <lv_obj width="884" height="1" align="top_mid" y="123"><style name="grid" /></lv_obj>
+
+                <!-- The thermal trace itself is an lv_line drawn at runtime; in the
+                     viewer we approximate the diurnal curve with an amber polyline. -->
+                <lv_line
+                    style_line_color="#col_amber" style_line_width="2"
+                    points="(2 120) (90 132) (180 120) (270 86) (360 40) (450 28) (540 40) (630 70) (720 100) (810 124) (884 132)" />
+            </lv_obj>
+
+            <!-- Day-phase axis labels under the frame -->
+            <lv_label text="NIGHT" align="top_left"  x="34"  y="286"><style name="dim" /></lv_label>
+            <lv_label text="NOON"  align="top_mid"   y="286"><style name="dim" /></lv_label>
+            <lv_label text="NIGHT" align="top_right" x="-34" y="286"><style name="dim" /></lv_label>
+
+            <!-- Scrollable body (starts y=312) -->
+            <lv_obj width="888" height="272" align="top_left" x="30" y="312"
+                    style_bg_opa="0" style_border_width="0" style_pad_all="0">
+                <lv_label width="848" long_mode="wrap" align="top_left" x="0" y="0"
+                          text="Surface temperatures swing violently between day and night. Midday highs reach 48 C in open dune fields; clear-sky nights fall below 4 C. The thin, dry air holds little heat, so the ground radiates it away the moment the sun drops below the horizon.">
+                    <style name="body" />
+                </lv_label>
+            </lv_obj>
+
+        </lv_obj>
+    </view>
+</screen>

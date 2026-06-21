@@ -18,7 +18,46 @@
     </styles>
 
     <subjects>
-        <!-- Add <int>, <string>, or <float> subjects here -->
+        <!-- Reactive state — the editor's equivalent of the firmware's ui_observer
+             (prop_engine pushes prop_state_t ~20 Hz; in firmware the C sets these,
+             here they drive the bound widgets live in the editor preview).
+             Only int + string subjects are supported. Firmware setters would be
+             set_<name>() if this XML were code-generated. -->
+
+        <!-- Live engine/network readouts (the SCANNER + CONSOLE strips) -->
+        <string name="subj_status"    value="STANDBY" />
+        <string name="subj_channel"   value="CH 06 / 218 MHz" />
+        <string name="subj_link_text" value="LINK: NET" />
+        <string name="subj_ip"        value="172.17.2.167" />
+        <string name="subj_clock"     value="20:14" />
+        <string name="subj_uptime"    value="01:23:45" />
+        <int    name="subj_link"      value="1" />    <!-- 0 down / 1 STA / 2 AP -->
+        <int    name="subj_rssi"      value="-62" />
+        <int    name="subj_sens"      value="65" />
+
+        <!-- VITALS telemetry -->
+        <int    name="subj_core_temp" value="48" />   <!-- deg C -->
+        <int    name="subj_free_ram"  value="332" />  <!-- KB -->
+        <int    name="subj_cell"      value="70" />   <!-- % -->
+
+        <!-- DISPLAY settings (mirror NVS keys) -->
+        <int    name="subj_brightness" value="80" />
+        <int    name="subj_fx_on"      value="1" />
+        <int    name="subj_scanlines"  value="75" />
+        <int    name="subj_phosphor"   value="50" />
+        <int    name="subj_vignette"   value="30" />
+        <int    name="subj_refresh"    value="60" />
+        <int    name="subj_transition" value="1" />   <!-- 0 off..4 snow+collapse -->
+        <int    name="subj_fps_on"     value="0" />
+
+        <!-- AUDIO settings -->
+        <int    name="subj_volume"     value="60" />
+        <int    name="subj_mute"       value="0" />
+
+        <!-- LEDS + WI-FI -->
+        <int    name="subj_led_power"  value="0" />
+        <int    name="subj_led_alert"  value="0" />
+        <int    name="subj_remember"   value="1" />
     </subjects>
 
     <images>

@@ -1,0 +1,130 @@
+<!--
+  SCANNER — the base readout that shows through when no panel is open (PK_NONE).
+  Mirrors build_screen() in main/prop_ui.c.
+
+  Layout constants: SCAN_W=948, RAIL_W=76, SCAN_TRACK_Y=330, SCAN_TRACK_H=160,
+  CHAN_BAND_W=760, CHAN_BAND_H=28, SENS_W=220, SENS_H=22.
+  The rail (left 76 px) is drawn from LVGL primitives in the firmware; shown here
+  as a placeholder column.  The waveform and channel marker animate at runtime;
+  shown here at a representative static state.
+-->
+<screen>
+    <styles>
+        <style name="head"  text_color="#col_amber" text_font="font_head" />
+        <style name="mute"  text_color="#col_mute"  text_font="font_body" />
+        <style name="dim"   text_color="#col_dim"   text_font="font_body" />
+        <style name="rule"  bg_color="#col_dim" bg_opa="255" border_width="0" radius="0" />
+        <style name="track" bg_color="#col_panel_item" bg_opa="255" border_color="#col_dim" border_width="2" radius="0" />
+        <style name="band"  bg_color="#col_panel_item" bg_opa="255" border_color="#col_dim" border_width="2" radius="0" />
+        <style name="tick"  bg_color="#col_dim" bg_opa="255" border_width="0" radius="0" />
+        <style name="marker" bg_color="#col_amber" bg_opa="255" border_width="0" radius="0" />
+        <style name="sens_bar" bg_color="#col_panel_item" bg_opa="255" border_color="#col_dim" border_width="2" radius="0" />
+        <style name="sens_fill" bg_color="#col_amber" bg_opa="255" border_width="0" radius="0" />
+        <style name="foot_btn" bg_color="#col_panel_item" border_color="#col_mute" border_width="1" radius="0" text_color="#col_mute" text_font="font_body" shadow_width="0" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <!-- Nav rail placeholder (left 76 px) -->
+        <lv_obj width="76" height="600" align="top_left"
+                style_bg_color="#col_panel_item"
+                style_border_side="right"
+                style_border_color="#col_dim"
+                style_border_width="2"
+                style_radius="0" style_pad_all="0" />
+
+        <!-- Scanner content (right 948 px) — no panel frame (it's the root screen) -->
+        <lv_obj width="948" height="600" align="top_right"
+                style_bg_color="#col_bg" style_border_width="0" style_radius="0" style_pad_all="0">
+
+            <!-- Title -->
+            <lv_label text="SCANNER  //  UNIT-7" align="top_left" x="24" y="20">
+                <style name="head" />
+            </lv_label>
+
+            <!-- LINK + SIG cells (top right) -->
+            <lv_label bind_text="subj_link_text" align="top_right" x="-24" y="12"
+                      style_text_color="#col_amber" style_text_font="font_body" />
+            <lv_label bind_text="subj_ip" align="top_right" x="-24" y="38">
+                <style name="mute" />
+            </lv_label>
+
+            <!-- Divider -->
+            <lv_obj width="900" height="3" align="top_mid" y="64"><style name="rule" /></lv_obj>
+
+            <!-- Big status headline  FONT_STATUS = eurostile_40 -->
+            <lv_label bind_text="subj_status" align="top_mid" y="96"
+                      style_text_color="#col_amber" style_text_font="font_status" />
+
+            <!-- Channel readout -->
+            <lv_label bind_text="subj_channel" align="top_mid" y="168">
+                <style name="head" />
+            </lv_label>
+
+            <!-- Channel tuning band (760×28, centred) -->
+            <lv_obj width="760" height="28" align="top_mid" y="214">
+                <style name="band" />
+                <!-- Major tick at 0% -->
+                <lv_obj width="2" height="20" align="left_mid" x="0" y="0"><style name="tick" /></lv_obj>
+                <!-- Minor ticks at 10%, 20%, 30%, 40% -->
+                <lv_obj width="1" height="10" align="left_mid" x="76" y="0"><style name="tick" /></lv_obj>
+                <lv_obj width="1" height="10" align="left_mid" x="152" y="0"><style name="tick" /></lv_obj>
+                <lv_obj width="1" height="10" align="left_mid" x="228" y="0"><style name="tick" /></lv_obj>
+                <lv_obj width="1" height="10" align="left_mid" x="304" y="0"><style name="tick" /></lv_obj>
+                <!-- Major tick at 50% -->
+                <lv_obj width="2" height="20" align="left_mid" x="380" y="0"><style name="tick" /></lv_obj>
+                <!-- Minor ticks at 60%, 70%, 80%, 90% -->
+                <lv_obj width="1" height="10" align="left_mid" x="456" y="0"><style name="tick" /></lv_obj>
+                <lv_obj width="1" height="10" align="left_mid" x="532" y="0"><style name="tick" /></lv_obj>
+                <lv_obj width="1" height="10" align="left_mid" x="608" y="0"><style name="tick" /></lv_obj>
+                <lv_obj width="1" height="10" align="left_mid" x="684" y="0"><style name="tick" /></lv_obj>
+                <!-- Major tick at 100% -->
+                <lv_obj width="2" height="20" align="right_mid" x="-2" y="0"><style name="tick" /></lv_obj>
+                <!-- Tuned position marker at ~30% -->
+                <lv_obj width="4" height="28" align="left_mid" x="228" y="0"><style name="marker" /></lv_obj>
+            </lv_obj>
+            <!-- TUNE label left of band -->
+            <lv_label text="TUNE" align="top_left" x="94" y="222"><style name="mute" /></lv_label>
+            <!-- Band edge labels -->
+            <lv_label text="100" align="top_left" x="94" y="246"><style name="mute" /></lv_label>
+            <lv_label text="400 MHz" align="top_right" x="-94" y="246"><style name="mute" /></lv_label>
+
+            <!-- SENS meter (above waveform, y=298) -->
+            <lv_label text="SENS" align="top_left" x="24" y="302"><style name="mute" /></lv_label>
+            <lv_obj width="220" height="22" align="top_left" x="80" y="298">
+                <style name="sens_bar" />
+                <lv_obj width="143" height="14" align="left_mid" x="0" y="0"><style name="sens_fill" /></lv_obj>
+            </lv_obj>
+            <lv_label bind_text="subj_sens" bind_text-fmt="%d%%" align="top_left" x="310" y="302"><style name="mute" /></lv_label>
+
+            <!-- Waveform track (SCAN_W-48 × 160) at y=330 -->
+            <lv_obj width="900" height="160" align="top_mid" y="330">
+                <style name="track" />
+                <!-- Mid-line reference (flat waveform at rest) -->
+                <lv_obj width="900" height="2" align="center"
+                        style_bg_color="#col_dim" style_bg_opa="255" style_border_width="0" style_radius="0" />
+                <!-- Blip write-head at ~35% position -->
+                <lv_obj width="4" height="152" align="left_mid" x="315" y="0">
+                    <style name="marker" />
+                </lv_obj>
+            </lv_obj>
+
+            <!-- Footer -->
+            <lv_label text="AUTHORIZED PERSONNEL ONLY  -  SYS REV 0.1"
+                      align="bottom_mid" y="-20">
+                <style name="mute" />
+            </lv_label>
+
+            <!-- HOME button (bottom left) -->
+            <lv_button width="130" height="44" align="bottom_left" x="16" y="-12">
+                <style name="foot_btn" /><lv_label text="&lt; CONSOLE" />
+            </lv_button>
+
+            <!-- SETUP button (bottom right) -->
+            <lv_button width="110" height="44" align="bottom_right" x="-16" y="-12">
+                <style name="foot_btn" /><lv_label text="SETUP" />
+            </lv_button>
+
+        </lv_obj>
+    </view>
+</screen>

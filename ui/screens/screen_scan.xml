@@ -1,0 +1,86 @@
+<!--
+  SIGNAL SCAN instrument — WiFi APs rendered as ranged contacts.
+  Mirrors build_signal_panel() in main/prop_ui.c.
+
+  Demo shows 3 contacts. Real data is populated by the background scan task.
+  Each row: index+SSID (top), dBm (top right), vendor//PHY//sec//CH (second line), meter bar.
+  Row height = SIG_ROW_H = 62 px. List container starts at y=140.
+-->
+<screen>
+    <styles>
+        <style name="panel"    bg_color="#col_bg" border_color="#col_amber" border_width="2" radius="0" pad_all="0" />
+        <style name="btn_back" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="title"    text_color="#col_amber" text_font="font_head" />
+        <style name="rescan"   bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="tag"      text_color="#col_amber" text_font="font_body" />
+        <style name="sub"      text_color="#col_mute"  text_font="font_body" />
+        <style name="meter_track" bg_color="#col_panel_item" bg_opa="255" border_color="#col_dim" border_width="2" radius="0" />
+        <style name="meter_fill"  bg_color="#col_amber" bg_opa="255" border_width="0" radius="0" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <lv_obj width="76" height="600" align="top_left"
+                style_bg_color="#col_panel_item" style_border_width="0" style_radius="0" style_pad_all="0" />
+
+        <lv_obj width="948" height="600" align="top_right">
+            <style name="panel" />
+
+            <lv_button width="130" height="40" align="top_left" x="20" y="12">
+                <style name="btn_back" />
+                <lv_label text="&lt; BACK" />
+            </lv_button>
+
+            <lv_label text="SIGNAL SCAN" align="top_mid" y="18">
+                <style name="title" />
+            </lv_label>
+
+            <!-- Status label -->
+            <lv_label text="3 CONTACTS DETECTED" align="top_left" x="30" y="84"
+                      style_text_color="#col_amber" style_text_font="font_head" />
+
+            <!-- RESCAN button -->
+            <lv_button width="150" height="44" align="top_right" x="-30" y="78">
+                <style name="rescan" /><lv_label text="RESCAN" />
+            </lv_button>
+
+            <!-- Contact list container (no background, no scroll in viewer) -->
+            <lv_obj width="868" height="434" align="top_left" x="40" y="140"
+                    style_bg_opa="0" style_border_width="0" style_pad_all="0">
+
+                <!-- Contact 1 (y=0) -->
+                <lv_label text="01  CROWPANEL-7" align="top_left" x="6" y="0"><style name="tag" /></lv_label>
+                <lv_label text="-62 dBm"         align="top_right" x="-6" y="0"><style name="sub" /></lv_label>
+                <lv_label text="CIVILIAN UNIT  //  Espressif Inc  //  WPA2  //  CH 6"
+                          align="top_left" x="6" y="22"><style name="sub" /></lv_label>
+                <lv_obj width="700" height="18" align="top_left" x="6" y="44">
+                    <style name="meter_track" />
+                    <lv_obj width="455" height="10" align="left_mid" x="0" y="0"><style name="meter_fill" /></lv_obj>
+                </lv_obj>
+
+                <!-- Contact 2 (y=62) -->
+                <lv_label text="02  HOME-NETWORK" align="top_left" x="6" y="62"><style name="tag" /></lv_label>
+                <lv_label text="-74 dBm"          align="top_right" x="-6" y="62"><style name="sub" /></lv_label>
+                <lv_label text="CIVILIAN UNIT  //  TP-Link Technologies  //  WPA2  //  CH 1"
+                          align="top_left" x="6" y="84"><style name="sub" /></lv_label>
+                <lv_obj width="700" height="18" align="top_left" x="6" y="106">
+                    <style name="meter_track" />
+                    <lv_obj width="252" height="10" align="left_mid" x="0" y="0"><style name="meter_fill" /></lv_obj>
+                </lv_obj>
+
+                <!-- Contact 3 (y=124) -->
+                <lv_label text="03  &lt;unnamed source&gt;" align="top_left" x="6" y="124"><style name="tag" /></lv_label>
+                <lv_label text="-88 dBm"              align="top_right" x="-6" y="124"><style name="sub" /></lv_label>
+                <lv_label text="UNKNOWN EMITTER  //  802.11bgn  //  OPEN  //  CH 11"
+                          align="top_left" x="6" y="146"><style name="sub" /></lv_label>
+                <lv_obj width="700" height="18" align="top_left" x="6" y="168">
+                    <style name="meter_track" />
+                    <lv_obj width="70" height="10" align="left_mid" x="0" y="0"
+                            style_bg_color="#col_dim" style_bg_opa="255" style_border_width="0" style_radius="0" />
+                </lv_obj>
+
+            </lv_obj>
+
+        </lv_obj>
+    </view>
+</screen>

@@ -1,0 +1,96 @@
+<!--
+  CONSOLE panel — the in-world landing screen (ARMADA identity card + status strip).
+  Mirrors build_home_panel() in main/prop_ui.c.
+
+  No amber border frame — this panel is a plain full-bleed overlay on the root screen.
+  Status cells (CLOCK / DATE / CORE TEMP / INTAKE) are live-updated by the observer.
+-->
+<screen>
+    <styles>
+        <style name="head" text_color="#col_amber" text_font="font_head" />
+        <style name="mute" text_color="#col_mute" text_font="font_body" />
+        <style name="dim"  text_color="#col_dim"  text_font="font_body" />
+        <style name="rule" bg_color="#col_dim" bg_opa="255" border_width="0" radius="0" />
+        <style name="cell_cap" text_color="#col_mute" text_font="font_body" />
+        <style name="cell_val" text_color="#col_amber" text_font="font_head" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <!-- Nav rail placeholder (left 76 px) -->
+        <lv_obj
+            width="76" height="600"
+            align="top_left"
+            style_bg_color="#col_panel_item"
+            style_border_side="right"
+            style_border_color="#col_dim"
+            style_border_width="2"
+            style_radius="0"
+            style_pad_all="0"
+        />
+
+        <!-- Console content (right 948 px) — no amber frame -->
+        <lv_obj width="948" height="600" align="top_right"
+                style_bg_color="#col_bg" style_border_width="0" style_radius="0" style_pad_all="0">
+
+            <!-- Identity header -->
+            <lv_label text="ARMADA MULTI-DATA INTERFACE" align="top_left" x="24" y="16">
+                <style name="head" />
+            </lv_label>
+
+            <lv_label text="FIELD UNIT 7   //   OPER: ZARRAH" align="top_left" x="24" y="52">
+                <style name="mute" />
+            </lv_label>
+
+            <!-- Horizontal rule under the header -->
+            <lv_obj width="900" height="3" align="top_mid" y="84">
+                <style name="rule" />
+            </lv_obj>
+
+            <!-- Status strip — four captioned cells -->
+            <!-- CLOCK -->
+            <lv_label text="CLOCK" align="top_left" x="24" y="98">
+                <style name="cell_cap" />
+            </lv_label>
+            <lv_label bind_text="subj_clock" align="top_left" x="24" y="118">
+                <style name="cell_val" />
+            </lv_label>
+
+            <!-- DATE -->
+            <lv_label text="DATE" align="top_left" x="230" y="98">
+                <style name="cell_cap" />
+            </lv_label>
+            <lv_label text="TRAXIAN STD  4471.212" align="top_left" x="230" y="118">
+                <style name="cell_val" />
+            </lv_label>
+
+            <!-- CORE TEMP -->
+            <lv_label text="CORE TEMP" align="top_left" x="600" y="98">
+                <style name="cell_cap" />
+            </lv_label>
+            <lv_label bind_text="subj_core_temp" bind_text-fmt="%d C" align="top_left" x="600" y="118">
+                <style name="cell_val" />
+            </lv_label>
+
+            <!-- INTAKE (link) -->
+            <lv_label text="INTAKE" align="top_left" x="790" y="98">
+                <style name="cell_cap" />
+            </lv_label>
+            <lv_label bind_text="subj_link_text" align="top_left" x="790" y="118">
+                <style name="cell_val" />
+            </lv_label>
+
+            <!-- Centre body prompt -->
+            <lv_label text="DATA SPONGE LINKED  //  SELECT A FUNCTION FROM THE RAIL"
+                      align="left_mid" x="24" y="-20"
+                      style_text_color="#col_mute" style_text_font="font_head" />
+
+            <!-- Footer hint -->
+            <lv_label text="SELECTOR  rotate rail  -  PRESS  open  -  SWITCH  archive tabs"
+                      align="bottom_mid" y="-16">
+                <style name="mute" />
+            </lv_label>
+
+        </lv_obj>
+    </view>
+</screen>

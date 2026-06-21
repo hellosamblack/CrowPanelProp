@@ -14,6 +14,7 @@
 #include "bsp_i2c.h"
 #include "bsp_io.h"
 #include "bsp_aio.h"
+#include "bsp_audio.h"
 
 /* Prop modules */
 #include "prop_settings.h"
@@ -23,6 +24,7 @@
 #include "prop_ui.h"
 #include "prop_fx.h"
 #include "prop_mic.h"
+#include "prop_audio.h"
 #include "prop_ble.h"
 #include "prop_csi.h"
 

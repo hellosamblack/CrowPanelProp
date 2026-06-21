@@ -1,0 +1,94 @@
+<!--
+  WI-FI panel — network credentials form (SCAN → SSID → PASS → CONNECT).
+  Mirrors build_wifi_panel() in main/prop_ui.c.
+
+  Row layout below header (y=84):
+    Row 1 y=84:  [SCAN 110]  [SSID dropdown 340]  [FORGET 150]  [CONNECT 150]
+    Row 2 y=144: PASS label  [password textarea 300]  [eye button 70]
+    Row 3 y=212: [Remember checkbox]  [status label]
+    Keyboard: bottom 948×320, hidden until PASS focused
+-->
+<screen>
+    <styles>
+        <style name="panel"    bg_color="#col_bg" border_color="#col_amber" border_width="2" radius="0" pad_all="0" />
+        <style name="btn_back" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="title"    text_color="#col_amber" text_font="font_head" />
+        <style name="btn"      bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="field"    bg_color="#col_panel_item" border_color="#col_dim"   border_width="1" radius="0" text_color="#col_amber" text_font="font_body" />
+        <style name="lbl"      text_color="#col_amber" text_font="font_body" />
+        <style name="cb_style" text_color="#col_amber" text_font="font_body" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <lv_obj width="76" height="600" align="top_left"
+                style_bg_color="#col_panel_item" style_border_width="0" style_radius="0" style_pad_all="0" />
+
+        <lv_obj width="948" height="600" align="top_right">
+            <style name="panel" />
+
+            <lv_button width="130" height="40" align="top_left" x="20" y="12">
+                <style name="btn_back" />
+                <lv_label text="&lt; BACK" />
+            </lv_button>
+
+            <lv_label text="WI-FI" align="top_mid" y="18">
+                <style name="title" />
+            </lv_label>
+
+            <!-- Row 1: SCAN + SSID dropdown + FORGET + CONNECT -->
+            <lv_button width="110" height="50" align="top_left" x="30" y="84">
+                <style name="btn" /><lv_label text="SCAN" />
+            </lv_button>
+
+            <lv_dropdown width="340" align="top_left" x="150" y="84"
+                         options="HOME-NETWORK&#10;CORP-WIFI&#10;GUEST-NET&#10;(tap SCAN)"
+                         selected="0">
+                <style name="field" />
+            </lv_dropdown>
+
+            <lv_button width="150" height="50" align="top_right" x="-190" y="84">
+                <style name="btn" /><lv_label text="FORGET" />
+            </lv_button>
+
+            <lv_button width="150" height="50" align="top_right" x="-30" y="84">
+                <style name="btn" /><lv_label text="CONNECT" />
+            </lv_button>
+
+            <!-- Row 2: PASS label + textarea + eye button -->
+            <lv_label text="PASS" align="top_left" x="30" y="156">
+                <style name="lbl" />
+            </lv_label>
+
+            <lv_textarea width="300" height="48" align="top_left" x="100" y="144"
+                         placeholder_text="password">
+                <style name="field" />
+            </lv_textarea>
+
+            <lv_button width="70" height="48" align="top_left" x="410" y="144">
+                <style name="btn" /><lv_label text="&#128065;" />
+            </lv_button>
+
+            <!-- Row 3: Remember checkbox + status -->
+            <lv_checkbox text="Remember this network" align="top_left" x="30" y="212" bind_checked="subj_remember"
+                         style_text_color="#col_amber" style_text_font="font_body"
+                         style_bg_color-indicator="#col_amber"
+                         style_border_color-indicator="#col_dim"
+                         style_radius-indicator="0" />
+
+            <lv_label text="" align="top_left" x="360" y="214"
+                      style_text_color="#col_amber" style_text_font="font_body" />
+
+            <!-- On-screen keyboard (hidden until password field focused) -->
+            <lv_keyboard width="948" height="320" align="bottom_mid" y="0"
+                         style_bg_color="#col_bg"
+                         style_border_color="#col_amber" style_border_width="2" style_radius="0"
+                         style_bg_color-items="#col_panel_item"
+                         style_text_color-items="#col_amber"
+                         style_border_color-items="#col_dim" style_border_width-items="1"
+                         style_radius-items="0"
+                         style_text_font-items="font_head" />
+
+        </lv_obj>
+    </view>
+</screen>

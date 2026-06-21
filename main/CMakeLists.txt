@@ -45,7 +45,7 @@ endif()
 idf_component_register(SRCS ${main}
                        INCLUDE_DIRS "include"
                        PRIV_INCLUDE_DIRS "${WIFI_SECRET_GEN_DIR}"
-                       REQUIRES bsp_display bsp_illuminate bsp_i2c bsp_io bsp_aio
+                       REQUIRES bsp_display bsp_illuminate bsp_i2c bsp_io bsp_aio bsp_audio
                                 esp_timer esp_lvgl_port lvgl
                                 esp_wifi esp_netif esp_event nvs_flash
                                 esp_http_server app_update cjson mdns

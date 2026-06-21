@@ -1,5 +1,6 @@
 /* prop_engine — scene state machine + animation task + observer fan-out. */
 #include "prop_engine.h"
+#include "prop_audio.h"
 #include "bsp_io.h"
 #include <string.h>
 #include <strings.h>   /* strcasecmp */
@@ -330,6 +331,7 @@ esp_err_t prop_engine_set_scene(prop_scene_t scene)
         return ESP_ERR_INVALID_ARG;
     }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
+    prop_scene_t prev = s_state.scene;
     s_state.scene = scene;
     s_state.scene_tick = 0;     /* drives the UI's punch-in / settle timing */
     s_led_override_valid = 0;   /* a new scene clears manual LED overrides */
@@ -352,6 +354,15 @@ esp_err_t prop_engine_set_scene(prop_scene_t scene)
     s_state.led_mask = scene_led_mask(scene, s_state.tick);
     publish_locked();
     xSemaphoreGive(s_mutex);
+
+    /* Scene-transition sting (only on a real change), off the engine lock. */
+    if (scene != prev) {
+        if (scene == SCENE_SIGNAL_ACQUIRED) {
+            prop_audio_play(PA_SIGNAL);
+        } else if (scene == SCENE_ALERT) {
+            prop_audio_play(PA_ALERT);
+        }
+    }
     ESP_LOGI(ENGINE_TAG, "scene -> %s", prop_scene_name(scene));
     return ESP_OK;
 }

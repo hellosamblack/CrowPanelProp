@@ -1,0 +1,69 @@
+<!--
+  ARCHIVE browser — tabbed sections (CLIMATE / MAP / WILDLIFE / PLANTS) + entry rows.
+  Mirrors build_archive_panel() in main/prop_ui.c.
+
+  Section tabs are 150×40 at y=70, spaced 160 px (x = 40 + i*160).
+  The active tab is amber-filled with dark text; others are panel-item fill.
+  Entry rows are full-width 52 px buttons at y = 128 + i*60; the selected row is
+  amber-filled (dial cursor). BACK returns to the console.
+-->
+<screen>
+    <styles>
+        <style name="panel"    bg_color="#col_bg" border_color="#col_amber" border_width="2" radius="0" pad_all="0" />
+        <style name="btn_back" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="title"    text_color="#col_amber" text_font="font_head" />
+        <!-- Tab (inactive) -->
+        <style name="tab"      bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <!-- Tab (active) -->
+        <style name="tab_on"   bg_color="#col_amber"      border_color="#col_amber" border_width="1" radius="0" text_color="#col_bg"    text_font="font_body" shadow_width="0" />
+        <!-- Entry row (inactive) -->
+        <style name="row"      bg_color="#col_panel_item" border_color="#col_dim"   border_width="1" radius="0" text_color="#col_amber" text_font="font_head" shadow_width="0" />
+        <!-- Entry row (selected by dial cursor) -->
+        <style name="row_on"   bg_color="#col_amber"      border_color="#col_amber" border_width="1" radius="0" text_color="#col_bg"    text_font="font_head" shadow_width="0" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <lv_obj width="76" height="600" align="top_left"
+                style_bg_color="#col_panel_item" style_border_width="0" style_radius="0" style_pad_all="0" />
+
+        <lv_obj width="948" height="600" align="top_right">
+            <style name="panel" />
+
+            <lv_button width="130" height="40" align="top_left" x="20" y="12">
+                <style name="btn_back" />
+                <lv_label text="&lt; BACK" />
+            </lv_button>
+
+            <lv_label text="ARCHIVE" align="top_mid" y="18">
+                <style name="title" />
+            </lv_label>
+
+            <!-- Section tabs (CLIMATE active) -->
+            <lv_button width="150" height="40" align="top_left" x="40"  y="70">
+                <style name="tab_on" /><lv_label text="CLIMATE" align="center" />
+            </lv_button>
+            <lv_button width="150" height="40" align="top_left" x="200" y="70">
+                <style name="tab" /><lv_label text="MAP" align="center" />
+            </lv_button>
+            <lv_button width="150" height="40" align="top_left" x="360" y="70">
+                <style name="tab" /><lv_label text="WILDLIFE" align="center" />
+            </lv_button>
+            <lv_button width="150" height="40" align="top_left" x="520" y="70">
+                <style name="tab" /><lv_label text="PLANTS" align="center" />
+            </lv_button>
+
+            <!-- Entry rows for the active (CLIMATE) section. First row is dial-selected. -->
+            <lv_button width="868" height="52" align="top_left" x="40" y="128">
+                <style name="row_on" /><lv_label text="THERMAL PROFILE" align="left_mid" x="18" />
+            </lv_button>
+            <lv_button width="868" height="52" align="top_left" x="40" y="188">
+                <style name="row" /><lv_label text="WIND &amp; DUST" align="left_mid" x="18" />
+            </lv_button>
+            <lv_button width="868" height="52" align="top_left" x="40" y="248">
+                <style name="row" /><lv_label text="WATER CYCLE" align="left_mid" x="18" />
+            </lv_button>
+
+        </lv_obj>
+    </view>
+</screen>

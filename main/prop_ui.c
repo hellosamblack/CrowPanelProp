@@ -5,6 +5,7 @@
 #include "prop_settings.h"
 #include "prop_fx.h"
 #include "prop_mic.h"
+#include "prop_audio.h"
 #include "prop_ble.h"
 #include "prop_csi.h"
 #include "prop_content.h"
@@ -344,6 +345,24 @@ static void rail_sync(panel_kind_t kind)
 }
 
 /* Switch to a panel (or PK_NONE for the main screen). */
+/* Logical nesting depth of a panel, for the screen-change clack pitch (deeper = higher).
+ * 0 = console root, 1 = top-level rail panels / submenus, 2 = leaves under a submenu,
+ * 3 = a page reached from a leaf (the I/O single-pin config). */
+static int panel_depth(panel_kind_t kind)
+{
+    switch (kind) {
+        case PK_NONE: case PK_HOME:
+            return 0;
+        case PK_MENU: case PK_INSTRUMENTS: case PK_SENSORS:
+        case PK_ARCHIVE: case PK_CASSETTE: case PK_INSIGHTS:
+            return 1;
+        case PK_IO_PIN:
+            return 3;
+        default:
+            return 2;   /* WIFI/DISPLAY/AUDIO/LEDS/ABOUT/IO + the instrument/sensor leaves + ARTICLE */
+    }
+}
+
 static void open_panel(panel_kind_t kind)
 {
     close_panel();
@@ -385,6 +404,9 @@ static void open_panel(panel_kind_t kind)
      * shows it over the already-swapped screen). */
     if (s_ui_ready) {
         prop_fx_transition_play();
+        /* Mechanical clack on every screen change, pitched up the deeper we navigate
+         * (+4 semitones per nesting level) so descending into menus rises in tone. */
+        prop_audio_play_pitched(PA_SCREEN, panel_depth(kind) * 4);
     }
 }
 
@@ -804,17 +826,24 @@ static lv_obj_t *build_leds_panel(lv_obj_t *parent)
     return p;
 }
 
-/* AUDIO: volume/mute stub (persisted; consumed when speaker SFX is promoted). */
+/* AUDIO: master volume + mute for the synthesized feedback tones (persisted in NVS;
+ * prop_audio reads these per event, so changes take effect on the next sound). */
 static void audio_vol_cb(lv_event_t *e)
 {
     int v = lv_slider_get_value(lv_event_get_target(e));
     prop_settings_set_u32("audio_vol", v);
     lv_label_set_text_fmt(s_audio_vol_val, "%d%%", v);
+    /* The slider's own PA_SLIDER tick plays at the new volume, auditioning the level. */
 }
 static void audio_mute_cb(lv_event_t *e)
 {
     prop_settings_set_u32("audio_mute",
                           lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED) ? 1 : 0);
+}
+static void audio_test_cb(lv_event_t *e)
+{
+    (void)e;
+    prop_audio_play(PA_SIGNAL);
 }
 
 static lv_obj_t *build_audio_panel(lv_obj_t *parent)
@@ -828,8 +857,18 @@ static lv_obj_t *build_audio_panel(lv_obj_t *parent)
     s_audio_vol_val = kit_slider_row(b, "VOLUME", 0, 100, vol, audio_vol_cb);
     kit_switch_row(b, "MUTE", mute != 0, audio_mute_cb, NULL);
 
+    lv_obj_t *test = lv_btn_create(b);
+    lv_obj_set_size(test, 200, 52);
+    kit_style_btn(test);
+    lv_obj_add_event_cb(test, audio_test_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *tl = lv_label_create(test);
+    lv_label_set_text(tl, "TEST TONE");
+    lv_obj_center(tl);
+
     lv_obj_t *note = lv_label_create(b);
-    lv_label_set_text(note, "Output stage idle - SFX not yet wired.");
+    lv_label_set_text(note, prop_audio_available()
+                            ? "Synth feedback active over the speaker amp."
+                            : "Audio output offline.");
     lv_obj_set_style_text_color(note, COL_MUTE, 0);
     return p;
 }
@@ -3533,11 +3572,16 @@ void prop_ui_input(const char *control, int arg)
     if (!control || !lvgl_port_lock(300)) {
         return;
     }
+    /* Only the dial *rotation* needs a sound here — it changes the highlight/scroll
+     * without a screen swap. Press / back / tab all route through open_panel(), which
+     * plays the screen-change clack, so emitting a tone here too would double up. */
+    int sfx = -1;                          /* feedback tone, played after the lock drops */
     if (strcmp(control, "selector") == 0) {
         if (arg == 0) {
             nav_select_press();
         } else {
             nav_select_move(arg > 0 ? 1 : -1);
+            sfx = PA_DIAL_TICK;
         }
     } else if (strcmp(control, "tab") == 0) {
         nav_tab(arg);
@@ -3549,6 +3593,11 @@ void prop_ui_input(const char *control, int arg)
         }
     }
     lvgl_port_unlock();
+    /* Play outside the LVGL lock (prop_audio only enqueues, but the spec keeps audio
+     * off the lock; harmless if dropped when audio is unavailable). */
+    if (sfx >= 0) {
+        prop_audio_play((prop_audio_event_t)sfx);
+    }
     ESP_LOGI(UI_TAG, "input %s %d", control, arg);
 }
 

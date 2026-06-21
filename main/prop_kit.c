@@ -1,6 +1,25 @@
 /* prop_kit — reusable cassette-futurism components. See prop_kit.h. */
 #include "prop_kit.h"
+#include "prop_audio.h"
+#include "esp_timer.h"
 #include <stdio.h>
+
+/* Interaction sound feedback. Attached centrally here so every themed widget sounds the
+ * same across all screens (prop_audio_play is a no-op when audio is unavailable). */
+static void kit_btn_sfx_cb(lv_event_t *e)    { (void)e; prop_audio_play(PA_BUTTON); }
+static void kit_slider_sfx_cb(lv_event_t *e)
+{
+    /* Dragging fires many VALUE_CHANGED events; throttle to a ~35 ms ratchet so it
+     * ticks instead of buzzing. One slider is dragged at a time, so a single gate is fine. */
+    static int64_t last_us;
+    int64_t now = esp_timer_get_time();
+    if (now - last_us < 35000) {
+        return;
+    }
+    last_us = now;
+    (void)e;
+    prop_audio_play(PA_SLIDER);
+}
 
 lv_obj_t *kit_card(lv_obj_t *parent, lv_coord_t w, lv_coord_t h)
 {
@@ -59,6 +78,8 @@ void kit_style_btn(lv_obj_t *b)
     lv_obj_set_style_border_width(b, 1, 0);
     lv_obj_set_style_radius(b, 0, 0);
     lv_obj_set_style_text_color(b, COL_AMBER, 0);
+    /* Every themed button clicks when pressed (one callback per styled button). */
+    lv_obj_add_event_cb(b, kit_btn_sfx_cb, LV_EVENT_CLICKED, NULL);
 }
 void kit_style_field(lv_obj_t *f)
 {
@@ -67,6 +88,11 @@ void kit_style_field(lv_obj_t *f)
     lv_obj_set_style_border_width(f, 1, 0);
     lv_obj_set_style_radius(f, 0, 0);
     lv_obj_set_style_text_color(f, COL_AMBER, 0);
+    /* Dropdowns click when tapped open (text areas stay silent — tapping one opens a
+     * keyboard, a different interaction). */
+    if (lv_obj_check_type(f, &lv_dropdown_class)) {
+        lv_obj_add_event_cb(f, kit_btn_sfx_cb, LV_EVENT_CLICKED, NULL);
+    }
 }
 void kit_style_slider(lv_obj_t *s)
 {
@@ -176,6 +202,7 @@ lv_obj_t *kit_slider_row(lv_obj_t *body, const char *label, int min, int max, in
     lv_slider_set_range(s, min, max);
     lv_slider_set_value(s, val, LV_ANIM_OFF);
     kit_style_slider(s);
+    lv_obj_add_event_cb(s, kit_slider_sfx_cb, LV_EVENT_VALUE_CHANGED, NULL);
     if (cb) lv_obj_add_event_cb(s, cb, LV_EVENT_VALUE_CHANGED, NULL);
     return v;
 }
@@ -187,6 +214,7 @@ lv_obj_t *kit_switch_row(lv_obj_t *body, const char *label, bool on, lv_event_cb
     lv_obj_t *sw = lv_switch_create(row);
     kit_style_switch(sw);
     if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, kit_btn_sfx_cb, LV_EVENT_VALUE_CHANGED, NULL);
     if (cb) lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, ud);
     return sw;
 }

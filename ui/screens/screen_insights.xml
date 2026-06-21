@@ -1,0 +1,38 @@
+<!--
+  INSIGHTS engine — stub panel (no content yet).
+  Mirrors build_insights_panel() in main/prop_ui.c.
+-->
+<screen>
+    <styles>
+        <style name="panel"    bg_color="#col_bg" border_color="#col_amber" border_width="2" radius="0" pad_all="0" />
+        <style name="btn_back" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="title"    text_color="#col_amber" text_font="font_head" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <lv_obj width="76" height="600" align="top_left"
+                style_bg_color="#col_panel_item" style_border_width="0" style_radius="0" style_pad_all="0" />
+
+        <lv_obj width="948" height="600" align="top_right">
+            <style name="panel" />
+
+            <lv_button width="130" height="40" align="top_left" x="20" y="12">
+                <style name="btn_back" />
+                <lv_label text="&lt; BACK" />
+            </lv_button>
+
+            <lv_label text="INSIGHTS" align="top_mid" y="18">
+                <style name="title" />
+            </lv_label>
+
+            <lv_label text="INSIGHT ENGINE  //  IDLE" align="center" y="-20"
+                      style_text_color="#col_amber" style_text_font="font_head" />
+
+            <lv_label text="Programmed correlations across the archive will surface here."
+                      align="center" y="24"
+                      style_text_color="#col_mute" style_text_font="font_body" />
+
+        </lv_obj>
+    </view>
+</screen>

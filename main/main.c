@@ -114,6 +114,14 @@ void app_main(void)
                    esp_err_to_name(mic_err));
     }
 
+    /* Synthesized feedback audio over the speaker amp. NON-fatal: if the amp/I2S
+     * won't come up the prop runs silent (prop_audio_play becomes a no-op). */
+    esp_err_t audio_err = prop_audio_init();
+    if (audio_err != ESP_OK) {
+        MAIN_ERROR("audio unavailable (%s) — running without feedback tones",
+                   esp_err_to_name(audio_err));
+    }
+
     /* WiFi (AP+STA via the C6) then the live control API. Both are NON-fatal:
      * the C6 radio is optional to the prop's core function, so a co-processor
      * problem must not take down the display/LEDs/buttons. */
@@ -147,6 +155,9 @@ void app_main(void)
     esp_ota_mark_app_valid_cancel_rollback();
 
     MAIN_INFO("ready — AP '%s', console at http://<ip>/", PROP_AP_SSID);
+
+    /* Boot chime — also the on-device validation that the amp output path works. */
+    prop_audio_play(PA_BOOT);
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(5000));

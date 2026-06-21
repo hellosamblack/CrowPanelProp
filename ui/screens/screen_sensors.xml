@@ -1,0 +1,43 @@
+<!--
+  SENSORS submenu — C6 radio-environment instruments.
+  Mirrors build_sensors_panel() in main/prop_ui.c.
+  BACK returns to the console (PK_HOME).
+  Items open: RF BAND, CONTACTS, SIGNAL ENV.
+-->
+<screen>
+    <styles>
+        <style name="panel"    bg_color="#col_bg" border_color="#col_amber" border_width="2" radius="0" pad_all="0" />
+        <style name="btn_back" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="title"    text_color="#col_amber" text_font="font_head" />
+        <style name="list_row" width="100%" bg_color="#col_panel_item" border_width="0" radius="0" text_color="#col_amber" text_font="font_head" text_align="left" pad_left="20" pad_top="14" pad_bottom="14" shadow_width="0" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <lv_obj width="76" height="600" align="top_left"
+                style_bg_color="#col_panel_item" style_border_width="0" style_radius="0" style_pad_all="0" />
+
+        <lv_obj width="948" height="600" align="top_right">
+            <style name="panel" />
+
+            <lv_button width="130" height="40" align="top_left" x="20" y="12">
+                <style name="btn_back" />
+                <lv_label text="&lt; BACK" />
+            </lv_button>
+
+            <lv_label text="SENSORS" align="top_mid" y="18">
+                <style name="title" />
+            </lv_label>
+
+            <column width="100%" align="top_left" y="70"
+                    style_pad_row="4" style_pad_hor="12"
+                    style_pad_top="0" style_pad_bottom="0"
+                    style_bg_opa="0" style_border_width="0">
+                <lv_button><style name="list_row" /><lv_label text="RF BAND" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="CONTACTS" /></lv_button>
+                <lv_button><style name="list_row" /><lv_label text="SIGNAL ENV" /></lv_button>
+            </column>
+
+        </lv_obj>
+    </view>
+</screen>

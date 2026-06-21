@@ -164,9 +164,10 @@ Palette + helpers are at the top of `prop_ui.c` (and mirrored in `ui/globals.xml
 | `main/prop_fx.c` | CRT post overlay on `lv_layer_top()` (scanlines/vignette/phosphor + refresh band); paints ARGB pixels **directly** into the canvas buffer (v9 canvas layer-draw deadlocks under the lock); lazy-allocated |
 | `main/lv_port_mem.c` | Custom LVGL allocator → routes `lv_malloc` to PSRAM (see Memory reality) |
 | `main/prop_mic.c` | PDM mic capture (I2S0) + FFT → cached spectrum bands + dB level |
+| `main/prop_audio.c` | **Synthesized feedback tones** (square/sine/noise + envelope) over the I2S **speaker amp** (I2S1, `bsp_audio`) — queue + dedicated task; events from `prop_ui_input` (dial/open/back/tab) and `prop_engine` scene stings + boot chime; volume/mute from NVS (`audio_vol`/`audio_mute`) |
 | `main/prop_ble.c` | **Passive BLE scan via the C6** (NimBLE host, controller on the C6 over esp_hosted VHCI) → cached contact table (MAC/RSSI/name/Company-ID/appearance, LRU age-out) + distance estimate. Drives the CONTACTS instrument |
 | `main/prop_csi.c` | **WiFi CSI "signal environment"** — best-effort real CSI from the C6 with a **synthetic RSSI-variance fallback** (real CSI returns `ESP_ERR_NOT_SUPPORTED` on this esp_hosted/slave; the panel self-labels LIVE vs SYNTHETIC). Drives SIGNAL ENV |
-| `peripheral/bsp_*` | display/touch/backlight (bsp_illuminate, bsp_display, bsp_i2c), LEDs+buttons (bsp_io) |
+| `peripheral/bsp_*` | display/touch/backlight (bsp_illuminate, bsp_display, bsp_i2c), LEDs+buttons (bsp_io), I2S speaker amp (bsp_audio: I2S1 TX, amp enable IO30 active-low) |
 
 ### Rail layout (grouped)
 

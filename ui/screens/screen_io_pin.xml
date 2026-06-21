@@ -1,0 +1,111 @@
+<!--
+  I/O BENCH single-pin config page — full GPIO option set for one pin + live readout.
+  Mirrors build_io_pin_panel() in main/prop_ui.c.
+
+  The page is dynamic: the rows shown depend on MODE (DIGITAL IN / DIGITAL OUT /
+  ANALOG IN / ANALOG OUT). This XML shows the DIGITAL IN variant as the representative
+  layout: MODE + PULL + INTERRUPT dropdowns, an EDGES counter, and a live LEVEL readout.
+  Each "setting" is a control with a muted caption tucked under it (io_setting).
+  The title is the pin label (e.g. "IO05"); BACK returns to the overview grid.
+-->
+<screen>
+    <styles>
+        <style name="panel"    bg_color="#col_bg" border_color="#col_amber" border_width="2" radius="0" pad_all="0" />
+        <style name="btn_back" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="title"    text_color="#col_amber" text_font="font_head" />
+        <style name="lbl"      text_color="#col_amber" text_font="font_body" />
+        <style name="val"      text_color="#col_amber" text_font="font_body" />
+        <style name="cap"      text_color="#col_mute"  text_font="font_body" />
+        <style name="field"    bg_color="#col_panel_item" border_color="#col_dim" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" />
+        <style name="reset_btn" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_head" shadow_width="0" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <lv_obj width="76" height="600" align="top_left"
+                style_bg_color="#col_panel_item" style_border_width="0" style_radius="0" style_pad_all="0" />
+
+        <lv_obj width="948" height="600" align="top_right">
+            <style name="panel" />
+
+            <lv_button width="130" height="40" align="top_left" x="20" y="12">
+                <style name="btn_back" />
+                <lv_label text="&lt; BACK" />
+            </lv_button>
+
+            <lv_label text="IO05" align="top_mid" y="18">
+                <style name="title" />
+            </lv_label>
+
+            <!-- Settings body (flex column, tight 8px gap) -->
+            <lv_obj width="868" height="500" align="top_mid" y="76" flex_flow="column"
+                    style_pad_row="8" style_bg_opa="0" style_border_width="0" style_pad_all="0">
+
+                <!-- MODE setting -->
+                <lv_obj width="100%" height="content" flex_flow="column"
+                        style_pad_row="2" style_bg_opa="0" style_border_width="0">
+                    <lv_obj width="100%" height="content" style_bg_opa="0" style_border_width="0">
+                        <lv_label text="MODE" align="left_mid"><style name="lbl" /></lv_label>
+                        <lv_dropdown width="250" align="right_mid"
+                                     options="DIGITAL IN&#10;DIGITAL OUT&#10;ANALOG IN&#10;ANALOG OUT" selected="0">
+                            <style name="field" />
+                        </lv_dropdown>
+                    </lv_obj>
+                    <lv_label text="How this pin behaves (ADC-capable: analog in available)."><style name="cap" /></lv_label>
+                </lv_obj>
+
+                <!-- PULL setting -->
+                <lv_obj width="100%" height="content" flex_flow="column"
+                        style_pad_row="2" style_bg_opa="0" style_border_width="0">
+                    <lv_obj width="100%" height="content" style_bg_opa="0" style_border_width="0">
+                        <lv_label text="PULL" align="left_mid"><style name="lbl" /></lv_label>
+                        <lv_dropdown width="250" align="right_mid"
+                                     options="NONE&#10;PULL-UP&#10;PULL-DOWN" selected="1">
+                            <style name="field" />
+                        </lv_dropdown>
+                    </lv_obj>
+                    <lv_label text="Internal resistor that sets the level when nothing drives the pin."><style name="cap" /></lv_label>
+                </lv_obj>
+
+                <!-- INTERRUPT setting -->
+                <lv_obj width="100%" height="content" flex_flow="column"
+                        style_pad_row="2" style_bg_opa="0" style_border_width="0">
+                    <lv_obj width="100%" height="content" style_bg_opa="0" style_border_width="0">
+                        <lv_label text="INTERRUPT" align="left_mid"><style name="lbl" /></lv_label>
+                        <lv_dropdown width="250" align="right_mid"
+                                     options="OFF&#10;RISING&#10;FALLING&#10;ANY EDGE" selected="3">
+                            <style name="field" />
+                        </lv_dropdown>
+                    </lv_obj>
+                    <lv_label text="Count signal edges on the pin in the background."><style name="cap" /></lv_label>
+                </lv_obj>
+
+                <!-- EDGES counter (shown when interrupt != OFF) -->
+                <lv_obj width="100%" height="content" style_bg_opa="0" style_border_width="0">
+                    <lv_label text="EDGES" align="left_mid"><style name="lbl" /></lv_label>
+                    <lv_label text="1842" align="right_mid"><style name="val" /></lv_label>
+                </lv_obj>
+
+                <!-- RESET EDGE COUNT row -->
+                <lv_button width="100%" height="56" style_bg_color="#col_panel_item"
+                           style_border_color="#col_amber" style_border_width="1" style_radius="0"
+                           style_shadow_width="0">
+                    <lv_label text="RESET EDGE COUNT" align="left_mid" x="20"
+                              style_text_color="#col_amber" style_text_font="font_head" />
+                </lv_button>
+
+                <!-- LEVEL live readout -->
+                <lv_obj width="100%" height="content" flex_flow="column"
+                        style_pad_row="2" style_bg_opa="0" style_border_width="0">
+                    <lv_obj width="100%" height="content" style_bg_opa="0" style_border_width="0">
+                        <lv_label text="LEVEL" align="left_mid"><style name="lbl" /></lv_label>
+                        <lv_label text="HIGH" align="right_mid"><style name="val" /></lv_label>
+                    </lv_obj>
+                    <lv_label text="Live pin reading."><style name="cap" /></lv_label>
+                </lv_obj>
+
+            </lv_obj>
+
+        </lv_obj>
+    </view>
+</screen>
