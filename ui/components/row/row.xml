@@ -1,0 +1,10 @@
+<!-- Flex row: places children side-by-side. Size follows content by default. -->
+<component>
+	<styles>
+		<style name="style_base" width="content" height="content" layout="flex" flex_flow="row" />
+	</styles>
+	<view>
+		<remove_style_all />
+		<style name="style_base" />
+	</view>
+</component>
