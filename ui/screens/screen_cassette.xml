@@ -42,15 +42,15 @@
             <lv_label text="0 0 0 0" align="top_mid" y="150"
                       style_text_color="#col_amber" style_text_font="font_head" />
 
-            <!-- Transport buttons: |&lt;  &#9654;  &#9632;  &gt;| -->
+            <!-- Transport buttons: |&lt;  &gt;  []  &gt;| -->
             <lv_button width="90" height="44" align="top_mid" x="-150" y="300">
                 <style name="xport" /><lv_label text="|&lt;" />
             </lv_button>
             <lv_button width="90" height="44" align="top_mid" x="-50" y="300">
-                <style name="xport" /><lv_label text="&#9654;" />
+                <style name="xport" /><lv_label text="&gt;" />
             </lv_button>
             <lv_button width="90" height="44" align="top_mid" x="50" y="300">
-                <style name="xport" /><lv_label text="&#9632;" />
+                <style name="xport" /><lv_label text="[]" />
             </lv_button>
             <lv_button width="90" height="44" align="top_mid" x="150" y="300">
                 <style name="xport" /><lv_label text="&gt;|" />

@@ -70,6 +70,5 @@
         <tiny_ttf name="font_body"   size="14" as_file="true" src_path="fonts/Eurostile-Bold.ttf" />
         <tiny_ttf name="font_head"   size="24" as_file="true" src_path="fonts/Eurostile-Bold.ttf" />
         <tiny_ttf name="font_status" size="40" as_file="true" src_path="fonts/Eurostile-Bold.ttf" />
-        <tiny_ttf name="font_punch"  size="56" as_file="true" src_path="fonts/Eurostile-Bold.ttf" />
     </fonts>
 </globals>

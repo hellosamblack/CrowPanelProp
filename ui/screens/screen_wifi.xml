@@ -66,7 +66,7 @@
             </lv_textarea>
 
             <lv_button width="70" height="48" align="top_left" x="410" y="144">
-                <style name="btn" /><lv_label text="&#128065;" />
+                <style name="btn" /><lv_label text="SHOW" />
             </lv_button>
 
             <!-- Row 3: Remember checkbox + status -->
