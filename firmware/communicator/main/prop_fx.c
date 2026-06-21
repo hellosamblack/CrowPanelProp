@@ -73,37 +73,64 @@ static lv_opa_t scale_opa(uint8_t base, uint8_t pct)
     return (lv_opa_t)((uint16_t)base * pct / 100);
 }
 
+/* Alpha-blend (src-over) a solid-colour rect straight into an ARGB8888 canvas buffer.
+ * v9's canvas layer-draw path (lv_draw_rect + lv_canvas_finish_layer) replaced v8's
+ * synchronous lv_canvas_draw_rect, but its dispatch loop can't be driven from a
+ * non-LVGL task while the port lock is held — it spins forever (boot watchdog). These
+ * overlays are just solid rects with alpha, so we composite them by hand. Buffer is
+ * tightly packed (stride = w*4; LV_DRAW_BUF_STRIDE_ALIGN == 1), one uint32 0xAARRGGBB
+ * per pixel. */
+static void fx_fill(void *buf, int bw, int bh, int x0, int y0, int w, int h,
+                    lv_color_t color, lv_opa_t opa)
+{
+    if (opa == 0 || w <= 0 || h <= 0) return;
+    int x1 = x0 + w, y1 = y0 + h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > bw) x1 = bw;
+    if (y1 > bh) y1 = bh;
+    uint32_t sr = color.red, sg = color.green, sb = color.blue, sa = opa, ia = 255u - opa;
+    uint32_t *base = (uint32_t *)buf;
+    for (int y = y0; y < y1; y++) {
+        uint32_t *row = base + (size_t)y * bw;
+        for (int x = x0; x < x1; x++) {
+            uint32_t d = row[x];
+            uint32_t da = d >> 24;
+            uint32_t oa = sa + da * ia / 255u;
+            if (oa == 0) { row[x] = 0; continue; }
+            uint32_t dr = (d >> 16) & 0xFF, dg = (d >> 8) & 0xFF, db = d & 0xFF;
+            uint32_t r = (sr * sa + dr * da * ia / 255u) / oa;
+            uint32_t g = (sg * sa + dg * da * ia / 255u) / oa;
+            uint32_t b = (sb * sa + db * da * ia / 255u) / oa;
+            row[x] = (oa << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
+}
+
 /* Bake the static overlay (scanlines + phosphor wash + vignette) into the canvas. */
 static void paint_canvas(void)
 {
-    /* Phosphor amber wash. */
+    /* Phosphor amber wash (lv_canvas_fill_bg is a direct buffer write — safe). */
     lv_canvas_fill_bg(s_canvas, FX_AMBER, scale_opa(FX_WASH_OPA, s_phosphor_pct));
 
-    lv_draw_rect_dsc_t d;
-    lv_draw_rect_dsc_init(&d);
-    d.radius = 0;
-    d.border_width = 0;
-
     /* Horizontal scanlines: darkened rows. */
-    d.bg_color = FX_BLACK;
-    d.bg_opa = scale_opa(FX_SCAN_OPA, s_scan_pct);
-    if (d.bg_opa) {
+    lv_opa_t scan = scale_opa(FX_SCAN_OPA, s_scan_pct);
+    if (scan) {
         for (int y = 0; y < FX_H; y += FX_SCAN_STEP) {
-            lv_canvas_draw_rect(s_canvas, 0, y, FX_W, 1, &d);
+            fx_fill(s_canvas_buf, FX_W, FX_H, 0, y, FX_W, 1, FX_BLACK, scan);
         }
     }
 
     /* Vignette: nested 1px black frames, darkest at the edge, fading inward — the
      * CRT tube's darkened corners / glow falloff. */
-    d.bg_color = FX_BLACK;
     for (int i = 0; i < FX_VIGN; i++) {
         lv_opa_t edge = (lv_opa_t)(FX_VIGN_MAX * (FX_VIGN - i) / FX_VIGN);
-        d.bg_opa = scale_opa(edge, s_vignette_pct);
-        if (!d.bg_opa) continue;
-        lv_canvas_draw_rect(s_canvas, 0, i, FX_W, 1, &d);              /* top */
-        lv_canvas_draw_rect(s_canvas, 0, FX_H - 1 - i, FX_W, 1, &d);   /* bottom */
-        lv_canvas_draw_rect(s_canvas, i, 0, 1, FX_H, &d);             /* left */
-        lv_canvas_draw_rect(s_canvas, FX_W - 1 - i, 0, 1, FX_H, &d);  /* right */
+        lv_opa_t o = scale_opa(edge, s_vignette_pct);
+        if (!o) continue;
+        fx_fill(s_canvas_buf, FX_W, FX_H, 0, i, FX_W, 1, FX_BLACK, o);              /* top */
+        fx_fill(s_canvas_buf, FX_W, FX_H, 0, FX_H - 1 - i, FX_W, 1, FX_BLACK, o);   /* bottom */
+        fx_fill(s_canvas_buf, FX_W, FX_H, i, 0, 1, FX_H, FX_BLACK, o);              /* left */
+        fx_fill(s_canvas_buf, FX_W, FX_H, FX_W - 1 - i, 0, 1, FX_H, FX_BLACK, o);   /* right */
     }
 }
 
@@ -113,12 +140,6 @@ static void paint_band(void)
 {
     lv_canvas_fill_bg(s_band, FX_AMBER, 0);   /* fully transparent base */
 
-    lv_draw_rect_dsc_t d;
-    lv_draw_rect_dsc_init(&d);
-    d.radius = 0;
-    d.border_width = 0;
-    d.bg_color = FX_AMBER;
-
     int c = FX_BAND_H / 2;
     for (int y = 0; y < FX_BAND_H; y++) {
         float dist = fabsf((float)(y - c)) / (float)c;   /* 0 centre .. 1 edge */
@@ -127,13 +148,10 @@ static void paint_band(void)
             continue;
         }
         prof *= prof;                                    /* soft falloff */
-        d.bg_opa = (lv_opa_t)(prof * FX_BAND_PEAK);
-        lv_canvas_draw_rect(s_band, 0, y, FX_W, 1, &d);
+        fx_fill(s_band_buf, FX_W, FX_BAND_H, 0, y, FX_W, 1, FX_AMBER, (lv_opa_t)(prof * FX_BAND_PEAK));
     }
     /* Bright hot core line. */
-    d.bg_color = FX_GLOW;
-    d.bg_opa = 120;
-    lv_canvas_draw_rect(s_band, 0, c - 1, FX_W, 2, &d);
+    fx_fill(s_band_buf, FX_W, FX_BAND_H, 0, c - 1, FX_W, 2, FX_GLOW, 120);
 }
 
 /* Advance the refresh line (runs in the LVGL task under the port lock, so it must
@@ -160,14 +178,14 @@ static bool fx_build(void)
     lv_obj_t *top = lv_layer_top();   /* composited above every screen on the panel */
 
     /* Static scanline/wash/vignette canvas. */
-    size_t buf_sz = LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(FX_W, FX_H);
+    size_t buf_sz = LV_CANVAS_BUF_SIZE(FX_W, FX_H, 32, LV_DRAW_BUF_STRIDE_ALIGN);
     s_canvas_buf = heap_caps_malloc(buf_sz, MALLOC_CAP_SPIRAM);
     if (!s_canvas_buf) {
         ESP_LOGE(FX_TAG, "no PSRAM for fx canvas (%u bytes)", (unsigned)buf_sz);
         return false;
     }
     s_canvas = lv_canvas_create(top);
-    lv_canvas_set_buffer(s_canvas, s_canvas_buf, FX_W, FX_H, LV_IMG_CF_TRUE_COLOR_ALPHA);
+    lv_canvas_set_buffer(s_canvas, s_canvas_buf, FX_W, FX_H, LV_COLOR_FORMAT_ARGB8888);
     lv_obj_align(s_canvas, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_CLICKABLE);   /* touches pass through */
     lv_obj_add_flag(s_canvas, LV_OBJ_FLAG_FLOATING);
@@ -175,11 +193,11 @@ static bool fx_build(void)
     lv_obj_set_style_opa(s_canvas, LV_OPA_COVER, 0);
 
     /* Scrolling refresh line (thin band canvas + a slow timer). */
-    size_t band_sz = LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(FX_W, FX_BAND_H);
+    size_t band_sz = LV_CANVAS_BUF_SIZE(FX_W, FX_BAND_H, 32, LV_DRAW_BUF_STRIDE_ALIGN);
     s_band_buf = heap_caps_malloc(band_sz, MALLOC_CAP_SPIRAM);
     if (s_band_buf) {
         s_band = lv_canvas_create(top);
-        lv_canvas_set_buffer(s_band, s_band_buf, FX_W, FX_BAND_H, LV_IMG_CF_TRUE_COLOR_ALPHA);
+        lv_canvas_set_buffer(s_band, s_band_buf, FX_W, FX_BAND_H, LV_COLOR_FORMAT_ARGB8888);
         lv_obj_clear_flag(s_band, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(s_band, LV_OBJ_FLAG_FLOATING);
         paint_band();
@@ -402,9 +420,10 @@ void prop_fx_transition_play(void)
     if (!s_tr_buf) {
         s_tr_buf = heap_caps_malloc(TR_NW * TR_NH * 2, MALLOC_CAP_SPIRAM);
         if (!s_tr_buf) return;
-        s_tr_noise.header.cf = LV_IMG_CF_TRUE_COLOR;
+        s_tr_noise.header.cf = LV_COLOR_FORMAT_RGB565;
         s_tr_noise.header.w = TR_NW;
         s_tr_noise.header.h = TR_NH;
+        s_tr_noise.header.stride = TR_NW * 2;          /* v9 image headers carry an explicit stride */
         s_tr_noise.data = (const uint8_t *)s_tr_buf;
         s_tr_noise.data_size = TR_NW * TR_NH * 2;
     }
@@ -431,10 +450,10 @@ void prop_fx_transition_play(void)
 
     if (snow) {
         tr_fill_noise();
-        s_tr_img = lv_img_create(s_tr_box);
-        lv_img_set_src(s_tr_img, &s_tr_noise);
-        lv_img_set_antialias(s_tr_img, false);
-        lv_img_set_zoom(s_tr_img, (256 * FX_W / TR_NW) + 1);   /* overfill 1024x600 */
+        s_tr_img = lv_image_create(s_tr_box);
+        lv_image_set_src(s_tr_img, &s_tr_noise);
+        lv_image_set_antialias(s_tr_img, false);
+        lv_image_set_scale(s_tr_img, (256 * FX_W / TR_NW) + 1);   /* overfill 1024x600 */
         lv_obj_align(s_tr_img, LV_ALIGN_CENTER, 0, 0);
     }
 

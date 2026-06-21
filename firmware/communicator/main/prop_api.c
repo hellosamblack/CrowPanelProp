@@ -6,6 +6,7 @@
 #include "prop_fx.h"
 #include "prop_settings.h"
 #include "bsp_io.h"
+#include "bsp_illuminate.h"   /* panel_handle + H_size/V_size for the framebuffer grab */
 #include <string.h>
 #include <strings.h>   /* strcasecmp */
 #include <stdlib.h>
@@ -18,6 +19,7 @@
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
 #include "esp_lvgl_port.h"
+#include "esp_cache.h"        /* invalidate the PSRAM framebuffer cache before reading it */
 #include "lvgl.h"
 #include "cJSON.h"
 
@@ -368,61 +370,45 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* GET /screenshot — capture the live screen as raw RGB565 (little-endian).
- * Dimensions come back in X-Width/X-Height headers. Decode host-side with
- * tools/screenshot.py. This is the remote "see the UI" path for graphics work. */
+/* GET /screenshot — the live composited screen as raw RGB565 (little-endian).
+ * Dimensions come back in X-Width/X-Height. Decode host-side with tools/screenshot.py.
+ *
+ * Reads the MIPI-DPI panel's framebuffer directly rather than re-rendering via
+ * lv_snapshot: under LVGL 9 a snapshot runs the deferred draw pipeline, which deadlocks
+ * when called from this HTTP task while holding the LVGL lock — it wedges the whole UI
+ * (lock never released). The FB read needs no lock and no re-render, and it captures
+ * exactly what's on the panel, INCLUDING the prop_fx top-layer overlay (the old
+ * lv_snapshot path captured the active screen only). swap_bytes is off, so the FB is
+ * already native little-endian RGB565. */
+extern esp_lcd_panel_handle_t panel_handle;   /* owned by bsp_illuminate */
+
 static esp_err_t screenshot_get_handler(httpd_req_t *req)
 {
-    void *buf = NULL;
-    lv_img_dsc_t dsc = { 0 };
-    bool ok = false;
-
-    if (lvgl_port_lock(1000)) {
-        lv_obj_t *scr = lv_scr_act();
-        uint32_t sz = lv_snapshot_buf_size_needed(scr, LV_IMG_CF_TRUE_COLOR);
-        if (sz > 0) {
-            buf = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM);
-            if (!buf) {
-                ESP_LOGE(API_TAG, "snapshot: malloc %u failed (psram_largest=%u)",
-                         (unsigned)sz,
-                         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
-            } else {
-                /* lv_snapshot builds its draw context from the live display driver;
-                 * a custom monitor_cb on this accelerated port breaks that path, so
-                 * disable it for the duration of the capture and restore it after. */
-                lv_disp_t *d = lv_disp_get_default();
-                void (*saved_mon)(lv_disp_drv_t *, uint32_t, uint32_t) = NULL;
-                if (d && d->driver) { saved_mon = d->driver->monitor_cb; d->driver->monitor_cb = NULL; }
-                lv_res_t r = lv_snapshot_take_to_buf(scr, LV_IMG_CF_TRUE_COLOR, &dsc, buf, sz);
-                if (d && d->driver) { d->driver->monitor_cb = saved_mon; }
-                if (r == LV_RES_OK) {
-                    ok = true;
-                } else {
-                    ESP_LOGE(API_TAG, "snapshot: take_to_buf returned %d", (int)r);
-                }
-            }
-        }
-        lvgl_port_unlock();
-    } else {
-        ESP_LOGE(API_TAG, "snapshot: could not lock LVGL");
-    }
-    if (!ok) {
-        free(buf);
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "snapshot failed");
+    void *fb = NULL;
+    if (!panel_handle ||
+        esp_lcd_dpi_panel_get_frame_buffer(panel_handle, 1, &fb) != ESP_OK || !fb) {
+        ESP_LOGE(API_TAG, "screenshot: no DPI framebuffer");
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no framebuffer");
         return ESP_FAIL;
     }
 
     char w_str[8], h_str[8];
-    snprintf(w_str, sizeof(w_str), "%d", (int)dsc.header.w);
-    snprintf(h_str, sizeof(h_str), "%d", (int)dsc.header.h);
+    snprintf(w_str, sizeof(w_str), "%d", (int)H_size);
+    snprintf(h_str, sizeof(h_str), "%d", (int)V_size);
     httpd_resp_set_type(req, "application/octet-stream");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_set_hdr(req, "X-Width", w_str);
     httpd_resp_set_hdr(req, "X-Height", h_str);
     httpd_resp_set_hdr(req, "X-Format", "RGB565LE");
 
-    const char *p = (const char *)dsc.data;
-    size_t remaining = dsc.data_size;
+    /* The DPI framebuffer is cached PSRAM that LVGL fills via esp_lcd_panel_draw_bitmap;
+     * invalidate our CPU cache for it so this read sees the latest flushed pixels rather
+     * than a stale cached frame. */
+    size_t fb_bytes = (size_t)H_size * V_size * 2;   /* RGB565 = 2 bytes/px */
+    esp_cache_msync(fb, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+
+    const char *p = (const char *)fb;
+    size_t remaining = fb_bytes;
     esp_err_t err = ESP_OK;
     while (remaining > 0) {
         size_t chunk = remaining > 8192 ? 8192 : remaining;
@@ -434,7 +420,6 @@ static esp_err_t screenshot_get_handler(httpd_req_t *req)
         remaining -= chunk;
     }
     httpd_resp_send_chunk(req, NULL, 0);   /* end response */
-    free(buf);
     return err;
 }
 

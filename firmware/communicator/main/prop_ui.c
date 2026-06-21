@@ -68,7 +68,7 @@ static lv_obj_t *s_scan_blip;
 #define WAVE_SEGS    10
 #define WAVE_SEG_LEN (PROP_WAVE_SAMPLES / WAVE_SEGS)   /* 16 samples per segment */
 static lv_obj_t  *s_wave_seg[WAVE_SEGS];            /* segment lines across the track */
-static lv_point_t s_wave_pts[PROP_WAVE_SAMPLES];    /* persistent points buffer for lv_line */
+static lv_point_precise_t s_wave_pts[PROP_WAVE_SAMPLES];    /* persistent points buffer for lv_line */
 static lv_coord_t s_wave_shadow[PROP_WAVE_SAMPLES]; /* last-rendered y, to detect changed segments */
 static lv_color_t s_wave_color;                     /* current trace tint (recolor only on change) */
 
@@ -1143,10 +1143,10 @@ static lv_obj_t *build_spectrum_panel(lv_obj_t *parent)
 
 /* lv_line keeps a pointer to its points (no copy) — each polyline needs a live
  * buffer. The rail is built once, so one buffer per glyph is enough. */
-static lv_point_t s_ic_scan[9];
-static lv_point_t s_ic_vit[6];
-static lv_point_t s_ic_sig[3][3];
-static lv_point_t s_ic_ins[2][2];
+static lv_point_precise_t s_ic_scan[9];
+static lv_point_precise_t s_ic_vit[6];
+static lv_point_precise_t s_ic_sig[3][3];
+static lv_point_precise_t s_ic_ins[2][2];
 
 static lv_obj_t *ic_box(lv_obj_t *cell, int x, int y, int w, int h, lv_color_t col, bool fill, bool circle)
 {
@@ -1161,7 +1161,7 @@ static lv_obj_t *ic_box(lv_obj_t *cell, int x, int y, int w, int h, lv_color_t c
     return o;
 }
 
-static lv_obj_t *ic_poly(lv_obj_t *cell, lv_point_t *pts, int n, lv_color_t col)
+static lv_obj_t *ic_poly(lv_obj_t *cell, lv_point_precise_t *pts, int n, lv_color_t col)
 {
     lv_obj_t *l = lv_line_create(cell);
     lv_line_set_points(l, pts, n);
@@ -1177,7 +1177,7 @@ static void draw_icon(lv_obj_t *cell, icon_id_t id, lv_color_t col)
 {
     switch (id) {
     case IC_HOME: {                                  /* house: roof + body */
-        static lv_point_t roof[3] = {{22,30},{38,16},{54,30}};
+        static lv_point_precise_t roof[3] = {{22,30},{38,16},{54,30}};
         ic_poly(cell, roof, 3, col);
         ic_box(cell, 26, 30, 24, 18, col, false, false);
         break; }
@@ -1468,10 +1468,10 @@ static void back_to_archive_cb(lv_event_t *e) { (void)e; open_panel(PK_ARCHIVE);
 #define VIS_H      168
 #define VIS_BODY_Y 312
 
-static lv_point_t s_vis_curve[64];   /* climate trace (lv_line needs a live buffer) */
-static lv_point_t s_vis_route[5];    /* map: survey trail through region markers */
-static lv_point_t s_vis_dune[3][20]; /* map: dune-field contour texture */
-static lv_point_t s_vis_ridge[12];   /* map: escarpment ridge line */
+static lv_point_precise_t s_vis_curve[64];   /* climate trace (lv_line needs a live buffer) */
+static lv_point_precise_t s_vis_route[5];    /* map: survey trail through region markers */
+static lv_point_precise_t s_vis_dune[3][20]; /* map: dune-field contour texture */
+static lv_point_precise_t s_vis_ridge[12];   /* map: escarpment ridge line */
 
 static uint32_t title_hash(const char *s)
 {
@@ -2306,7 +2306,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         /* Re-render only the segments whose slice actually changed (steady state =
          * one segment; spikes = a few; SENS change = all). This is the optimisation
          * that takes the trace from ~14 fps (full-track redraw) toward 60. */
-        bool recolor = (s_wave_color.full != status_col.full);
+        bool recolor = !lv_color_eq(s_wave_color, status_col);  /* v9 lv_color_t has no .full */
         for (int k = 0; k < WAVE_SEGS; k++) {
             int start = k * WAVE_SEG_LEN;
             int cnt = wave_seg_count(k);
@@ -2336,9 +2336,10 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             lv_obj_align(s_scan_blip, LV_ALIGN_LEFT_MID, head_x, 0);
             s_last_blip_x = head_x;
         }
-        if (status_col.full != s_last_blip_col) {
+        uint16_t blip_col = lv_color_to_u16(status_col);
+        if (blip_col != s_last_blip_col) {
             lv_obj_set_style_bg_color(s_scan_blip, status_col, 0);
-            s_last_blip_col = status_col.full;
+            s_last_blip_col = blip_col;
         }
 
         /* Status punch-in: SIGNAL_ACQUIRED / ALERT slam the headline in big + bright,
@@ -2352,9 +2353,10 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             lv_obj_set_style_text_font(s_status_label, punching ? FONT_PUNCH : FONT_STATUS, 0);
             s_last_punch = punching;
         }
-        if (headline_col.full != s_last_headline_col) {
+        uint16_t hl_col = lv_color_to_u16(headline_col);
+        if (hl_col != s_last_headline_col) {
             lv_obj_set_style_text_color(s_status_label, headline_col, 0);
-            s_last_headline_col = headline_col.full;
+            s_last_headline_col = hl_col;
         }
 
         /* Channel gauge marker tracks the tuned position (scrambles while SCANNING). */
@@ -2365,7 +2367,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             lv_obj_align(s_chan_marker, LV_ALIGN_LEFT_MID, marker_x, 0);
             s_last_marker_x = marker_x;
         }
-        uint16_t marker_col = (alert ? COL_ALERT : COL_AMBER).full;
+        uint16_t marker_col = lv_color_to_u16(alert ? COL_ALERT : COL_AMBER);
         if (marker_col != s_last_marker_col) {
             lv_obj_set_style_bg_color(s_chan_marker, alert ? COL_ALERT : COL_AMBER, 0);
             s_last_marker_col = marker_col;
@@ -2602,14 +2604,12 @@ void prop_ui_input(const char *control, int arg)
 static lv_obj_t *s_fps_label;
 static volatile uint32_t s_fps_frames;
 static lv_timer_t *s_fps_timer;     /* 1 Hz: publishes the count */
-static void (*s_fps_prev_cb)(lv_disp_drv_t *, uint32_t, uint32_t);
 
-static void fps_monitor_cb(lv_disp_drv_t *drv, uint32_t time_ms, uint32_t px)
+/* v9 removed lv_disp_drv_t / monitor_cb; count completed renders via a display event. */
+static void fps_render_ready_cb(lv_event_t *e)
 {
+    (void)e;
     s_fps_frames++;
-    if (s_fps_prev_cb) {
-        s_fps_prev_cb(drv, time_ms, px);   /* chain any pre-existing monitor */
-    }
 }
 
 static void fps_tick(lv_timer_t *t)
@@ -2624,12 +2624,11 @@ static void fps_tick(lv_timer_t *t)
 /* Build the HUD + install the frame counter. Call once, under the LVGL lock. */
 static void fps_init(void)
 {
-    lv_disp_t *d = lv_disp_get_default();
-    if (d && d->driver) {
-        s_fps_prev_cb = d->driver->monitor_cb;
-        d->driver->monitor_cb = fps_monitor_cb;
+    lv_display_t *d = lv_display_get_default();
+    if (d) {
+        lv_display_add_event_cb(d, fps_render_ready_cb, LV_EVENT_RENDER_READY, NULL);
     }
-    s_fps_label = lv_label_create(lv_scr_act());
+    s_fps_label = lv_label_create(lv_screen_active());
     lv_obj_set_style_text_font(s_fps_label, FONT_BODY, 0);
     lv_obj_set_style_text_color(s_fps_label, COL_BG, 0);
     lv_obj_set_style_bg_color(s_fps_label, COL_AMBER, 0);

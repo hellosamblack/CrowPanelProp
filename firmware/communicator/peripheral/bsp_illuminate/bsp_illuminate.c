@@ -188,7 +188,11 @@ static esp_err_t lvgl_init()  // Initialize LVGL
             .buff_spiram = true,                 // Buffer in SPIRAM
             .sw_rotate = false,                  // No rotation (avoids PPA path that breaks on rev v1.3)
 #if LVGL_VERSION_MAJOR >= 9
-            .swap_bytes = true,                  // Swap bytes (LVGL v9+)
+            /* This DPI panel takes NATIVE little-endian RGB565 — the v8 build ran with
+             * CONFIG_LV_COLOR_16_SWAP off and rendered correctly. Swapping here turns the
+             * near-black background (0x0840) into 0x4008 = dark magenta over the whole
+             * screen. Keep it false. */
+            .swap_bytes = false,
 #endif
 #if CONFIG_DISPLAY_LVGL_FULL_REFRESH
             .full_refresh = true,                // Enable full refresh

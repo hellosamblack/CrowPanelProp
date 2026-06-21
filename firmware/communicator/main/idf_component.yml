@@ -5,7 +5,12 @@ dependencies:
   espressif/esp_lcd_ek79007: ^1.0.2
   espressif/esp_lvgl_port: ^2.6.0
   espressif/esp_lcd_touch_gt911: ^1.1.3
-  lvgl/lvgl: ^8.3.11
+  # LVGL 9. esp_lvgl_port 2.8 already ships an lvgl9 source path (idf_component.yml
+  # declares lvgl >=8,<10), so no port major bump is needed — bumping this pin and
+  # re-resolving flips the whole stack onto the v9 implementation.
+  # NB: must be >=9.3 — esp_lvgl_port 2.8's lvgl9 disp code references
+  # LV_COLOR_FORMAT_RGB565_SWAPPED, which only exists from LVGL 9.3.0 onward.
+  lvgl/lvgl: '>=9.3.0,<10'
   # cJSON: removed from IDF core in 6.0, now pulled from the registry
   espressif/cjson: '*'
   # mDNS: advertise <PROP_HOSTNAME>.local + the _http._tcp web console

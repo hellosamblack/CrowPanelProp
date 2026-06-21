@@ -53,9 +53,19 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # Log level
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
-# LVGL fonts used by the cassette-futurism UI (montserrat_14 is on by default).
-CONFIG_LV_FONT_MONTSERRAT_24=y
+# RGB565 to match the EK79007 panel (LVGL 9 pairs this with the swap_bytes flag set
+# in bsp_illuminate.c). Keep it explicit so a menuconfig reset can't drift it.
+CONFIG_LV_COLOR_DEPTH_16=y
+
+# LVGL default font (montserrat_14) stays on; the UI itself uses the custom Eurostile
+# fonts, so the larger montserrat sizes are not needed.
 
 # LVGL snapshot: lets the firmware capture the screen to a buffer for the
 # /screenshot HTTP endpoint (remote visual verification during UI development).
 CONFIG_LV_USE_SNAPSHOT=y
+
+# Route LVGL's heap to PSRAM via a custom allocator (main/lv_port_mem.c). LVGL 9 draws
+# line/shape anti-alias masks through lv_malloc; the 32 KB builtin INTERNAL pool can't be
+# raised (esp_hosted needs that RAM) and exhausts on instrument screens -> NULL ->
+# Store-fault in draw_line_skew. PSRAM (32 MB) removes the ceiling, internal RAM untouched.
+CONFIG_LV_USE_CUSTOM_MALLOC=y
