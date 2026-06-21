@@ -23,29 +23,12 @@
 #include "driver/temperature_sensor.h"
 #include "lvgl.h"
 
-/* Eurostile (cassette-futurism typeface) — generated from the TTFs in resources/
- * with the LVGL FontAwesome symbol range merged in, so LV_SYMBOL_* glyphs still
- * render. Regular at 14 px (body), Bold at 24 px (headings/status). */
-LV_FONT_DECLARE(eurostile_14);
-LV_FONT_DECLARE(eurostile_24);
-LV_FONT_DECLARE(eurostile_40);   /* resting status headline */
-LV_FONT_DECLARE(eurostile_56);   /* status punch-in (SIGNAL DETECTED / ALERT) */
-#define FONT_BODY (&eurostile_14)
-#define FONT_HEAD (&eurostile_24)
-#define FONT_STATUS (&eurostile_40)   /* the big readout status line */
-#define FONT_PUNCH (&eurostile_56)    /* the scene-entry slam */
+/* Palette (COL_*), fonts (FONT_*) and reusable components live in the design kit —
+ * single source of truth. See prop_kit.h. */
+#include "prop_kit.h"
 
 #define UI_TAG "PROP_UI"
 #define SCAN_MAX 20
-
-/* Cassette-futurism palette: amber phosphor on near-black. */
-#define COL_BG     lv_color_hex(0x0A0A06)
-#define COL_AMBER  lv_color_hex(0xE0B000)
-#define COL_DIM    lv_color_hex(0x6B5300)
-#define COL_ALERT  lv_color_hex(0xFF3030)
-/* Secondary text that still has to read on camera (footer, SETUP, IP): brighter
- * than COL_DIM so it survives a 7" panel + lens, while staying below COL_AMBER. */
-#define COL_MUTE   lv_color_hex(0xB58A00)
 
 #define SCREEN_W 1024           /* physical panel width */
 #define RAIL_W   76             /* persistent icon nav rail (left edge, all screens) */
@@ -123,8 +106,6 @@ static bool s_pass_shown;
  * Therefore panels are NOT all pre-built: exactly one is alive at a time, built
  * on navigation and torn down on leave. This caps LVGL usage at "main screen +
  * one panel" regardless of how many panel types exist (and scales to new ones). */
-
-#define COL_PANEL_ITEM lv_color_hex(0x141008)
 
 typedef enum {
     PK_NONE = 0,   /* no panel: the bare SCANNER readout on the root screen */
@@ -867,25 +848,20 @@ static lv_obj_t *build_about_panel(lv_obj_t *parent)
     lv_obj_t *p = make_panel(parent, "ABOUT", back_to_menu_cb);
     const esp_app_desc_t *app = esp_app_get_description();
 
-    lv_obj_t *rows = lv_label_create(p);
-    lv_obj_set_style_text_color(rows, COL_AMBER, 0);
-    lv_obj_align(rows, LV_ALIGN_TOP_LEFT, 50, 100);
-    lv_label_set_text_fmt(rows,
-        "UNIT      COMM // SCANNER UNIT-7\n"
-        "FIRMWARE  %s\n"
-        "BUILD     %s  %s\n"
-        "IDF       %s",
-        app->version, app->date, app->time, app->idf_ver);
+    /* Identity + live telemetry as a flex card of key/value rows (LVGL 9 design kit:
+     * rows self-stack with no manual y offsets; kit_info_row returns the value label
+     * for the observer to update). */
+    lv_obj_t *card = kit_card(p, SCAN_W - 100, LV_SIZE_CONTENT);
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 92);
 
-    s_about_ip = lv_label_create(p);
-    lv_obj_set_style_text_color(s_about_ip, COL_MUTE, 0);
-    lv_obj_align(s_about_ip, LV_ALIGN_TOP_LEFT, 50, 230);
-    lv_label_set_text(s_about_ip, "IP        ...");
-
-    s_about_uptime = lv_label_create(p);
-    lv_obj_set_style_text_color(s_about_uptime, COL_MUTE, 0);
-    lv_obj_align(s_about_uptime, LV_ALIGN_TOP_LEFT, 50, 262);
-    lv_label_set_text(s_about_uptime, "UPTIME    00:00:00");
+    kit_info_row(card, "UNIT", "COMM // SCANNER UNIT-7");
+    kit_info_row(card, "FIRMWARE", app->version);
+    char build[48];
+    snprintf(build, sizeof(build), "%s  %s", app->date, app->time);
+    kit_info_row(card, "BUILD", build);
+    kit_info_row(card, "IDF", app->idf_ver);
+    s_about_ip = kit_info_row(card, "IP", "...");
+    s_about_uptime = kit_info_row(card, "UPTIME", "00:00:00");
     return p;
 }
 
@@ -2461,9 +2437,9 @@ static void ui_observer(const prop_state_t *st, void *ctx)
     if (s_cur_kind == PK_ABOUT && s_about_ip && (st->tick % 20 == 0)) {
         char ip[16];
         prop_net_get_ip(ip, sizeof(ip));
-        lv_label_set_text_fmt(s_about_ip, "IP        %s", ip[0] ? ip : "(no link)");
+        lv_label_set_text_fmt(s_about_ip, "%s", ip[0] ? ip : "(no link)");
         uint32_t s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-        lv_label_set_text_fmt(s_about_uptime, "UPTIME    %02u:%02u:%02u",
+        lv_label_set_text_fmt(s_about_uptime, "%02u:%02u:%02u",
                               (unsigned)(s / 3600), (unsigned)((s / 60) % 60),
                               (unsigned)(s % 60));
     }

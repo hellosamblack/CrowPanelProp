@@ -5,6 +5,7 @@
 # Scratch screenshots from the dev loop (tools/prop.py, tools/screenshot.py).
 # Firmware images are C arrays in main/*.c, never .png — so every .png here is scratch.
 *.png
+!design/screens/*.png
 
 # Python bytecode cache from the dev tools.
 __pycache__/

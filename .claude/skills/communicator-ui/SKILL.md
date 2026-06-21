@@ -49,11 +49,21 @@ python tools/prop.py fx on 70         # CRT overlay on @ intensity; `fx off` to 
 Then `Read` the PNG and judge it yourself. (`tools/screenshot.py` is still the bare
 RGB565→PNG converter that `prop.py shot` builds on.)
 
-**Caveat:** `/screenshot` snapshots **only `lv_scr_act()`** — it does NOT include
-`lv_layer_top()` (where the CRT `prop_fx` overlay lives) and `lv_snapshot` even *fails*
-("snapshot failed" 500) if a `LV_IMG_CF_TRUE_COLOR_ALPHA` canvas is in the captured tree.
-So the CRT scanlines never appear in captures — judge those on the panel/camera; the clean
-capture is for checking the underlying UI legibility.
+**Batch loop — capture/compare ALL screens at once** (use this for kit refactors):
+
+```bash
+python tools/gallery.py --out baselines     # snapshot every screen -> baselines/<screen>.png
+#   ...refactor / build / flash...
+python tools/gallery.py --out after
+python tools/diff_png.py baselines after     # per-screen "% changed  maxΔ" regression gate
+python tools/diff_png.py baselines/scan.png after/scan.png d.png   # + amber heatmap of what moved
+```
+
+A screen you *didn't* touch showing a big % is the red flag; a few % from AA/animation is normal.
+
+**`/screenshot` now reads the MIPI-DPI framebuffer directly** (LVGL 9's `lv_snapshot`
+deadlocks under the port lock), so a capture shows the **whole panel INCLUDING the `prop_fx`
+CRT overlay** — scanlines/vignette appear in captures now. Reads are cache-invalidated (live).
 
 ## 3. Keep the house style (see top of `main/prop_ui.c`)
 
@@ -68,21 +78,23 @@ capture is for checking the underlying UI legibility.
 
 ## 4. Hard-won gotchas (don't relearn these)
 
-- **LVGL heap (`LV_MEM`) is HARD-CAPPED at 32 KB — do NOT raise it.** It boot-loops
-  with `HS_MP: mempool create failed: no mem` / `assert ... sdio_mempool_create`:
-  esp_hosted's SDIO DMA mempool needs internal RAM and can't move to PSRAM, so
-  `SPIRAM_TRY_ALLOCATE_WIFI_LWIP` does **not** rescue it. When LVGL runs out you get a
-  boot hang in `lv_mem_realloc`/`LV_ASSERT_MALLOC` (a `while(1)` → task WDT). Fix the
-  *object count*, not the heap — see the lazy-panel rule below.
+- **LVGL's heap lives in PSRAM** (custom allocator `main/lv_port_mem.c`, selected by
+  `CONFIG_LV_USE_CUSTOM_MALLOC`). Do NOT switch back to the builtin internal pool / raise
+  `LV_MEM`: esp_hosted's SDIO DMA mempool needs that internal RAM and boot-loops
+  (`HS_MP: mempool create failed: no mem`; `SPIRAM_TRY_ALLOCATE_WIFI_LWIP` does not rescue it).
+  Why PSRAM: v9 allocates line/shape AA mask buffers via `lv_malloc` *while drawing*, and the
+  old 32 KB pool exhausted on instrument screens → NULL → store-fault in `draw_line_skew`.
+  Cost: ~8 fps on the heavy spectrum screen (vs ~18 static); a hybrid allocator (small allocs
+  internal, big draw masks PSRAM) is the tuning lever if you need the frames back.
 - **SETUP/instrument panels are lazily built, ONE alive at a time** (`open_panel` /
   `close_panel` in `prop_ui.c`). Peak LVGL usage = "main screen + one panel", so adding
   new screens is free. To add one: add a `PK_*` enum, a `build_*_panel()` builder, a
   case in `open_panel`, a `menu_item` row, a `prop_ui_goto` name, and NULL its widget
   pointers in `close_panel`. Async users (scan tasks, the observer) must guard on
   `s_cur_kind == PK_x && s_widget != NULL` since the panel can be torn down underneath.
-- **LVGL v8 labels can't scale via `transform_zoom`** (text vanishes on upscale). For a
-  punch-in/headline, **swap to a bigger pre-generated font** (`FONT_STATUS`/`FONT_PUNCH`
-  = `eurostile_40`/`eurostile_56`), not a transform.
+- **Scaling label text via a transform is unreliable** (it rasterises at the base size then
+  scales the bitmap — fuzzy/clipped). For a punch-in/headline, **swap to a bigger pre-generated
+  font** (`FONT_STATUS`/`FONT_PUNCH` = `eurostile_40`/`eurostile_56`), not a transform.
 - **LVGL's `lv_label_set_text_fmt` has NO `%f`** (prints a literal `f`). Format floats
   with stdio `snprintf` into a buffer, then `lv_label_set_text`.
 - **Don't render synchronously on a command flood.** A dragged web slider fires many
