@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "communicator-perf", "runs": [{"id": "eval-0-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "report.md", "type": "text", "content": "# Communicator framerate review\n\n## Measured baseline\n\n**Static review \u2014 NOT measured on hardware.** The device was unreachable (`tools/prop.py` couldn't run \u2014 no `python` on PATH, no board attached), so I could not enable the FPS HUD or capture per-screen FPS / frame-time swings. Findings are tagged code-evident vs. needs-on-device-confirmation; a measurement plan is at the end.\n\nKnown baseline (from cost model): full 1024\u00d7600 software render \u2248 250 ms (~4 fps); spectrum ~8 fps; static screens ~18 fps; the 8\u219418 gap is dominated by per-frame PSRAM allocation during drawing. The user's ~10\u201320 fps + erratic frame times fits that baseline plus a contention/overlay cost. Priority applied: **(1) consistency, (2) fps.**\n\n## Findings (ranked by frame-time impact)\n\n### [P1] No core affinity \u2014 LVGL and all radio/background tasks float across both HP cores\n- **Affects:** consistency (prime suspect for the swinging frame times)\n- **Where:** `bsp_illuminate.c:159` (`task_affinity = -1`); `prop_net.c:240,229`; `prop_ble.c:331` + NimBLE host; `prop_csi.c:151`; `prop_mic.c:186`; `prop_engine.c:302`; on-demand scans `prop_ui.c:431,950,1085` (blocking 1\u20135 s)\n- **Cost:** every task is unpinned. A ~250 ms render holds a core for the whole frame; when the scheduler migrates a radio task (NimBLE adverts, CSI fold, mic FFT, RSSI SDIO poll, blocking scan) onto LVGL's core mid-render, that frame stalls \u2192 18\u21926\u219218 swing. Cost model names this \"the main consistency liability.\"\n- **Fix:** set `lvgl_cfg.task_affinity = 0` and convert the radio/sensor `xTaskCreate` calls to `xTaskCreatePinnedToCore(..., 1)`. Decide where `prop_anim`/observer rides by A/B. **Biggest consistency win**; confidence high it helps, fps delta needs measurement.\n- **Risk:** don't pile the 2nd draw unit (P3) + radio tasks on the same core. No hard-constraint knobs touched.\n\n### [P1] Full-screen ARGB8888 CRT overlay on `lv_layer_top()` \u2014 alpha-composited every frame (when FX on)\n- **Affects:** both \u2014 large fixed per-frame cost on every screen + periodic stripe-composite from the scroll band\n- **Where:** `prop_fx.c:178-193` (`s_canvas` = 1024\u00d7600 ARGB8888 on `lv_layer_top()`), `:64-67` (scanline/phosphor/vignette all *partial* alpha), `:159-170`/`:51` (band scrolls every `FX_BAND_MS = 55 ms`)\n- **Cost:** object is `LV_OPA_COVER` but its **pixels carry per-pixel alpha < 255**, so LVGL must software alpha-blend this full top-layer canvas (ARGB8888 over RGB565 \u2014 the most expensive blend path) over every dirty region of every frame, on every screen, while FX is on. The band also invalidates a full-width ~82 px stripe ~18\u00d7/s, forcing overlay recomposite even on static screens. The cost-model \"paints directly to dodge recomposite\" note addresses the *canvas-update deadlock*, NOT this per-frame *composite* of an alpha layer-top object.\n- **Fix:** (1) Confirm FX state first \u2014 defaults OFF (`prop_fx.c:258`) but is persisted; A/B `{\"cmd\":\"fx\",\"on\":false}`. (2) If it must stay on, bake the static scanline/vignette/wash into content and keep only the moving band as a small object. (3) Interim: raise `FX_BAND_MS` / shrink band width. Turning FX off is a large immediate win (code-evident); restructure quantified by measurement.\n- **Risk:** keep visually verified via `/screenshot`. Do NOT make it a *translucent* layer_top object (cost-model dead-end: watchdog hang).\n\n### [P1] LVGL heap entirely in PSRAM \u2014 per-draw AA-mask allocation pays PSRAM latency (the named lever)\n- **Affects:** both \u2014 documented reason spectrum is ~8 fps vs ~18; allocator spikes add variance\n- **Where:** `lv_port_mem.c:39-43` \u2014 all `lv_malloc`/`lv_realloc` \u2192 `MALLOC_CAP_SPIRAM` regardless of size\n- **Cost:** LVGL 9 allocates line/shape AA masks via `lv_malloc` *during drawing*; with the whole heap in PSRAM every draw pays PSRAM alloc+access latency, and variable timing adds jitter.\n- **Fix:** implement the **hybrid allocator** (CLAUDE.md/cost-model named lever): route small/short-lived allocs (e.g. <1\u20134 KB) to `MALLOC_CAP_INTERNAL` with **PSRAM fallback**; large buffers stay PSRAM. Keep generous internal headroom (~332 KB free budget). \"Usually the single highest-value throughput change.\"\n- **Risk (hard constraint):** never internal-only \u2014 must not starve esp_hosted's SDIO mempool (\"HS_MP: no mem\" boot loop). Don't restore the builtin pool / raise `LV_MEM`. If WiFi RAM tightens, use `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`.\n\n### [P2] Spectrum/RF/CSI bars restyle + realign every bar every frame (no shadow-compare)\n- **Affects:** throughput (+ small hitch)\n- **Where:** `prop_ui.c` ui_observer \u2014 SPECTRUM 24 bars `:2693-2704`, RF 13 bars `:2715-2726`, CSI 32 bars `:2758-2769`\n- **Cost:** each bar calls `set_height` + `lv_obj_align` + `set_style_bg_color` *unconditionally* ~20 Hz (~96 ops/frame for CSI), invalidating each bbox even when nothing changed. The X/Y in `lv_obj_align` are constants re-set every frame; bg_color only needs to change on a threshold crossing. The scanner waveform already does this right (`prop_ui.c:2542-2557`, `WAVE_SEGS`); the bar screens don't.\n- **Fix:** mirror the scanner shadow-compare. Skip `set_height` when height unchanged; **drop the per-frame `lv_obj_align` entirely** (set bar position once at build time); call `set_bg_color` only when the colour bucket changes. Cuts heavy-bar-screen op count ~2/3 and invalidated area to changed bars only \u2014 directly attacks the ~8 fps spectrum number. Pairs with the hybrid allocator (fewer draws \u21d2 fewer mask allocs).\n- **Risk:** track colour shadow independently of height shadow. Low.\n\n### [P2] BLE CONTACTS \u2014 full `lv_obj_clean` + row rebuild every refresh\n- **Affects:** consistency (periodic hitch on CONTACTS)\n- **Where:** `prop_ui.c:2747-2750` \u2014 `lv_obj_clean(s_ble_list)` + `ble_add_row()` for all devices in the `tick % 8` (~2.5 Hz) block\n- **Cost:** tears down/recreates the whole row hierarchy every ~400 ms \u2192 PSRAM free+alloc churn + full-list redraw spike (recurring stutter). Throttle is fine; the teardown-rebuild shape is wrong.\n- **Fix:** reuse a fixed pool of pre-built rows sized to `PROP_BLE_MAX`; update label text/colour in place, hide unused rows. Only changed rows invalidate. Low risk (reset stale rows on shrink).\n\n### [P3] Evaluate a second SW draw unit\n- **Where:** `CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1`. Try `=2` to use both HP cores for rendering \u2014 **only after the affinity decision (P1)**, since the 2nd unit competes with radio tasks for the second core. Measurement-dependent, coupled to P1; medium confidence, propose as experiment. Risk: can *worsen* consistency if affinity doesn't separate them \u2014 measure the swing, not just average.\n\n### [P3] Partial draw buffers in internal SRAM (experiment)\n- **Where:** `bsp_illuminate.c:173-188` \u2014 full-screen double buffer, `buff_spiram = true`. Rendering into PSRAM is much slower than internal SRAM; a partial N-line buffer fits internal RAM and may beat full-screen PSRAM for this UI's small dirty regions. A/B: drop `buffer_size` to an N-line strip + `buff_spiram = false`. Keep `swap_bytes=false`, no full_refresh/direct_mode/PPA. Watch internal-RAM budget (esp_hosted). Experimental.\n\n### [P3] (Note) FPS-HUD comment overstates behavior; refresh-period is a known dead end\n- `prop_ui.c:2908-2925` claims the HUD drops the refresh period 30\u21928 ms, but there's **no `set_refr_period` call anywhere** (grep clean); the LVGL timer period is fixed at 5 ms (`bsp_illuminate.c:161`). Comment is stale. Per cost model, chasing the refresh period was already tried and lifted nothing \u2014 don't pursue it; optionally fix the comment.\n\n### Already-correct / do-not-churn (verified)\nScanner waveform 10-segment shadow-compare + change-gated style writes (`prop_ui.c:2498-2615`); bare SCANNER skipped when an opaque panel is up (`PK_NONE` guard); HOME/VITALS/ABOUT `tick % N` throttling; change-gated LED I2C + non-publishing sensitivity (`prop_engine.c:235-239,426-429`); RSSI/uplink read from background cache, not under the lock. CPU 360 MHz / PSRAM 200 MHz HEX / `-O2` / FreeRTOS 1000 Hz are at the ceiling \u2014 verify only, don't propose raising.\n\n## Suggested order of attack\n1. **Free baseline (minutes):** FPS + ~10 s consistency on spectrum/csi/scanner/ble, **FX off vs on** \u2014 quantifies the overlay and reveals whether the unit even has FX on.\n2. **Core affinity (P1, consistency)** \u2014 re-measure the *swing* (user's #1 priority).\n3. **Hybrid allocator (P1, throughput)** \u2014 re-measure spectrum/csi; watch internal RAM via VITALS.\n4. **Bar shadow-compare + drop per-frame align (P2)** \u2014 apply to all three bar screens together (synergistic with #3).\n5. **BLE row pooling (P2)**.\n6. **CRT overlay restructure (P1)** only if FX must stay on.\n7. **Experiments together (P3):** 2nd draw unit \u00d7 affinity, partial internal buffers \u2014 keep/revert on data.\n\n## Measurement plan\n```bash\n# 0. Reachability + HUD/FX toggle (mDNS comm-unit-7.local)\npython firmware/communicator/tools/prop.py state\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"fx\",\"on\":true}'\n# 1. Per-screen baseline\npython firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait\npython firmware/communicator/tools/prop.py shot csi.png      --screen csi      --wait\npython firmware/communicator/tools/prop.py shot scanner.png  --screen scanner  --wait\npython firmware/communicator/tools/prop.py shot ble.png      --screen ble      --wait\n# 2. P1 overlay A/B (read HUD each time)\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"fx\",\"on\":false}'   # then re-read HUD\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"fx\",\"on\":true}'\n# 3. After each code change: flash + re-capture + re-read HUD (record steady fps AND the 10 s swing)\n./firmware/communicator/tools/dev.sh bf -Port /dev/ttyUSB0     # or dev.ps1 bf -Port COM7\n# 4. Input/dial latency (handled under the LVGL lock)\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"input\",\"control\":\"selector\",\"arg\":\"cw\"}'\n# 5. RAM headroom guard after hybrid allocator\npython firmware/communicator/tools/prop.py shot vitals.png --screen vitals --wait\n```\n\nHighest-confidence levers: **affinity (P1 consistency)** and the **hybrid allocator (P1 throughput)**; the **FX overlay** is the highest-confidence *immediate* win if enabled; the **bar shadow-compare (P2)** is a code-evident cleanup. Experiments (2nd draw unit, partial internal buffers) keep/revert strictly on measured numbers.\n"}], "grading": {"expectations": [{"text": "Prioritizes consistency fixes ahead of pure-throughput ones", "passed": true, "evidence": "Leads with [P1] core affinity tagged 'affects: consistency'; Order-of-attack runs baseline+affinity before throughput."}, {"text": "Identifies missing core affinity / unpinned tasks, with file:line", "passed": true, "evidence": "bsp_illuminate.c:159 task_affinity=-1 plus prop_net/ble/csi/mic/engine unpinned, named the main consistency liability."}, {"text": "Names the PSRAM->hybrid LVGL allocator (lv_port_mem.c) lever", "passed": true, "evidence": "lv_port_mem.c:39-43 all allocs to PSRAM; recommends hybrid allocator."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "17 file:line citations."}, {"text": "Avoids dead ends / constraint violations", "passed": true, "evidence": "Explicit hard-constraint list; flags refresh-period as a known dead end rather than recommending it."}, {"text": "Includes a measurement plan using prop.py and the FPS HUD", "passed": true, "evidence": "## Measurement plan with prop.py shot + HUD reads."}, {"text": "Enables the FPS HUD with the correct mechanism (not {cmd:fx,on})", "passed": false, "evidence": "Uses {\"cmd\":\"fx\",\"on\":true} to 'toggle the FPS HUD' \u2014 that calls prop_fx_set_enabled (CRT overlay, prop_api.c:108). Correct is {\"cmd\":\"fx\",\"fps\":true} (prop_api.c:117). Inherited from the skill."}], "summary": {"pass_rate": 0.8571, "passed": 6, "failed": 1, "total": 7}}}, {"id": "eval-0-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "report.md", "type": "text", "content": "# Communicator framerate review\n\n## Measured baseline\n\n**Static review only \u2014 not measured on hardware.** No device was reachable (no\n`python`/mDNS in this environment), so every number below is the *code-evident* mechanism\nplus figures already recorded in the firmware (`prop_ui.c` FPS-meter comment, `CLAUDE.md`\n\"Memory reality\"): full-screen 1024x600 software render ~= 250 ms (~4 fps); spectrum\n~8 fps; mostly-static screens ~18 fps. Findings are tagged **[code-evident]** (cost is\nstructural and visible in source) vs **[needs on-device confirmation]** (plausible, must\nbe A/B'd with the FPS HUD).\n\nEverything renders in software (no GPU/PPA on rev v1.3), so frame time is governed by\nfour things: invalidated area, where pixels/draw-masks live (PSRAM vs internal SRAM), CPU\ncontention from radio tasks, and per-frame widget work. All four are in play here.\n\n---\n\n## Findings (ranked by frame-time impact \u2014 consistency first, then throughput)\n\n### [P1] CRT overlay is a full-screen ARGB8888 layer over every redraw \u2014 affects: BOTH\n- **Where:** `main/prop_fx.c:178-193` (`fx_build`): `s_canvas` is a 1024x600\n  `LV_COLOR_FORMAT_ARGB8888` canvas on `lv_layer_top()` with `opa = LV_OPA_COVER`. The\n  scrolling band (`prop_fx.c:159-170` `band_tick`, `FX_BAND_MS=55`) moves an 80 px\n  full-width ARGB8888 canvas ~18x/s.\n- **Cost / mechanism:** Although the canvas pixels are static (baked once), it sits on the\n  top layer above the whole panel. In LVGL's software renderer **every dirty region the UI\n  produces underneath must be alpha-composited against the ARGB8888 overlay pixel-by-pixel**\n  before flush \u2014 4 bytes/px with a per-pixel src-over blend on top of the RGB565 base\n  draw. So this multiplies the cost of every other invalidation, which is why\n  spectrum/scanner feel heavy with FX on. Worse for consistency: the band timer forces an\n  ~80px x 1024 full-width recomposite every 55 ms regardless of UI activity \u2014 a periodic,\n  FX-on-only hitch at a steady ~18 Hz. The cost-model flags translucent top-layer objects\n  as the recomposite hazard; this is one (alpha lives in the buffer even though layer\n  opacity is COVER).\n- **Fix:** (1) cheapest big consistency win: gate the overlay OFF during the heavy moving\n  instruments (spectrum/scanner/csi/rfband), or off by default. (2) drop or slow the\n  refresh band (wider step / longer period) if FX stays on during motion. (3) an opaque\n  RGB565 cover can be blitted not blended, but an opaque cover would hide the UI, so the\n  scanlines force alpha \u2014 (1) is the real lever.\n- **Estimated win:** Large on FX-on screens (blend vs no-blend on every dirty pixel).\n  **[code-evident]** that it adds per-pixel ARGB cost; exact fps delta **[needs on-device\n  confirmation]**. Likely the single largest *consistency* win \u2014 the band stripe is the\n  clearest periodic hitch in the codebase.\n- **Risk:** Changes the on-camera look (deliberate aesthetic). Make it a per-screen policy\n  (FX on for static/hero screens, off while an analyser moves), not a global kill. Do NOT\n  move it off `lv_layer_top` onto a translucent screen child \u2014 reintroduces the\n  watchdog-hang hazard in the cost-model.\n\n### [P1] No core pinning \u2014 radio/engine tasks migrate onto LVGL's core mid-render \u2014 affects: CONSISTENCY\n- **Where:** every task uses plain `xTaskCreate` (affinity -1; no `xTaskCreatePinnedToCore`\n  exists anywhere, verified by grep):\n  - LVGL port task: `peripheral/bsp_illuminate/bsp_illuminate.c:159` `.task_affinity = -1`\n  - engine/observer: `main/prop_engine.c:302` (`prop_anim`, prio 5)\n  - rssi poll + ap fallback: `main/prop_net.c:240,229` (prio 3)\n  - ble prune + NimBLE host: `main/prop_ble.c:331` (prio 3)\n  - csi fold: `main/prop_csi.c:151` (prio 4)\n  - mic FFT: `main/prop_mic.c:186` (prio 5)\n- **Cost / mechanism:** With no affinity the scheduler can land a Wi-Fi/BLE/CSI/FFT task on\n  the same HP core as LVGL mid-frame. A software render is a long CPU burst; when a radio\n  task preempts it, that frame stretches \u2014 the textbook cause of the 18->6->18 swing the\n  user cares most about. The mic FFT (prio 5 = engine, radix-2 256-pt ~62x/s) and CSI fold\n  (prio 4, ~15 Hz) are the most likely render-stealers on the spectrum/CSI screens.\n- **Fix:** Pin LVGL to one HP core (`.task_affinity = 0` at `bsp_illuminate.c:159`) and push\n  the producers to the other (`xTaskCreatePinnedToCore(...,1)` for `prop_anim`, `rssi`,\n  `ble_prune`, `prop_csi`, `prop_mic`; NimBLE host via its Kconfig core option). The\n  observer takes the LVGL lock, so test the engine on LVGL's core vs the opposite core and\n  keep whichever gives flatter frame times.\n- **Estimated win:** Mainly variance reduction (priority-1 goal); modest avg fps change.\n  **[needs on-device confirmation]** \u2014 but \"everything unpinned\" is the clearest structural\n  consistency liability in the build.\n- **Risk:** Low. Don't starve the core esp_hosted/Wi-Fi prefers; verify no boot regression.\n  Pairs with the second-draw-unit finding (competes for the core you free).\n\n### [P2] Hybrid allocator not implemented \u2014 every line/shape draw pays PSRAM alloc latency \u2014 affects: THROUGHPUT\n- **Where:** `main/lv_port_mem.c:39-43` \u2014 `lv_malloc_core`/`lv_realloc_core` route ALL LVGL\n  allocations to PSRAM (`MALLOC_CAP_SPIRAM`) unconditionally.\n- **Cost / mechanism:** LVGL 9 allocates anti-alias mask buffers via `lv_malloc` *during*\n  drawing (lines, the scanner trace, rounded/AA shapes, large AA fonts). With the heap\n  entirely in PSRAM, every such draw pays PSRAM alloc + access latency \u2014 the documented\n  reason spectrum is ~8 fps vs ~18 static (named as *the* tuning lever in cost-model and\n  firmware CLAUDE.md).\n- **Fix:** Implement the hybrid allocator in `lv_port_mem.c`: route small/short-lived allocs\n  (the draw masks, e.g. <= a few KB) to `MALLOC_CAP_INTERNAL` with a PSRAM fallback when\n  internal is low; keep large buffers (objects, assets) in PSRAM. Leave generous internal\n  headroom for esp_hosted (~332 KB free at runtime with all radios live \u2014 stay well under).\n- **Estimated win:** Potentially the largest *throughput* win on line/AA-heavy screens.\n  **[code-evident]** that the cost exists; magnitude **[needs on-device confirmation]**.\n- **Risk:** Must not regress into the esp_hosted \"HS_MP / mempool: no mem\" boot loop \u2014 cap\n  internal use, always fall back to PSRAM on exhaustion. Do NOT restore the builtin pool or\n  raise `LV_MEM`. Re-test after a `fullclean` (RAM layout shifts).\n\n### [P2] Analyser bars rewrite position + colour every frame unconditionally \u2014 affects: THROUGHPUT\n- **Where:** `main/prop_ui.c` observer:\n  - SPECTRUM `2690-2704`: 24 bars x (`set_height` + `align` + `set_style_bg_color`) = ~72\n    LVGL calls/frame, every frame.\n  - CSI `2755-2769`: 32 bars x 3 = ~96 calls/frame.\n  - RF BAND `2714-2727`: 13 bars x 3 = ~39 calls/frame.\n- **Cost / mechanism:** Three problems. (1) `lv_obj_align()` runs every frame though each\n  bar's X never changes \u2014 only height does; re-aligning re-dirties the bbox needlessly.\n  (2) `set_style_bg_color()` is rewritten every frame though colour only changes at a\n  threshold (35/85), forcing a style invalidate + full-bar redraw each tick. (3)\n  `set_height` dirties old\u222anew bbox (unavoidable when value changes) but is multiplied by\n  24-32 bars all changing together \u2014 and with FX on (P1) each dirty bbox is then\n  ARGB-composited. The scanner trace already solved this with a shadow-compare\n  (`prop_ui.c:53-57, 2542-2557`, `s_wave_shadow`); the analysers don't use the pattern.\n- **Fix:** Apply the scanner's shadow-compare to the bar loops: cache last height + last\n  colour-band per bar; skip `set_height` when unchanged; drop the per-frame `lv_obj_align`\n  entirely (X is already set once in the build functions); only call `set_style_bg_color`\n  when the threshold band changes. RF BAND holds steady between scans so most frames become\n  no-ops.\n- **Estimated win:** Removes ~1/3 of calls (redundant align) + most colour invalidations;\n  RF BAND nearly free between scans. **[code-evident]**.\n- **Risk:** Low \u2014 pure update-elision, no visual change. Mirror the existing scanner shadow\n  pattern for maintainability.\n\n### [P2] Spectrum/CSI redraw at 20 Hz; can throttle to ~10 Hz \u2014 affects: THROUGHPUT\n- **Where:** observer SPECTRUM `2690` and CSI `2755` run every tick (~20 Hz); only the dB\n  readouts are throttled (`tick % 4`, `tick % 8`). HOME/VITALS/ABOUT already throttle the\n  whole block (`tick % 10`, `tick % 20`).\n- **Cost / mechanism:** Halving the bar-update rate halves the redraw work those screens\n  generate. At 10 Hz the decay ballistics still read fine on camera. Same lever HOME/VITALS\n  already pull.\n- **Fix:** Gate the SPECTRUM and CSI bar loops on `st->tick % 2 == 0` (10 Hz). Keep the\n  scanner at full rate (hero motion). Confirm decay constants still look smooth.\n- **Estimated win:** ~halves analyser-screen redraw load. **[needs on-device confirmation]**\n  that 10 Hz still looks good (likely, given the decay).\n- **Risk:** Slightly chunkier motion; revert per-screen. Do NOT drop the global refresh\n  period \u2014 documented dead end.\n\n### [P3] Second SW draw unit unused \u2014 second HP core idle for rendering \u2014 affects: THROUGHPUT\n- **Where:** `sdkconfig:4925` `CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1`.\n- **Cost / mechanism:** One draw unit = single-core software rendering; the second HP core\n  does no rendering. `=2` lets LVGL split a redraw across both cores.\n- **Fix:** `CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2`. **Couple with the affinity decision (P1):**\n  the second draw thread competes with radio tasks for the second core, so it only pays off\n  if those are pushed off it. Measure together.\n- **Estimated win:** up to ~2x on large redraws if the second core is free, less in\n  practice. **[needs on-device confirmation]** \u2014 can *hurt* consistency if it fights the\n  radio tasks, hence bundled with P1.\n- **Risk:** More internal RAM (second draw context + stack) \u2014 watch esp_hosted headroom.\n  Revert if variance worsens.\n\n### [P3] Partial draw buffers in internal SRAM (experiment) \u2014 affects: THROUGHPUT\n- **Where:** `bsp_illuminate.c:173,188` \u2014 full-screen buffer, `double_buffer=true`,\n  `buff_spiram=true`.\n- **Cost / mechanism:** Rendering into PSRAM is slower than into internal SRAM and adds\n  variance under contention. Full-screen x2 (~2.4 MB) can't fit internal RAM, but a partial\n  N-line buffer can, and this UI is partial-refresh with mostly small dirty regions \u2014 a fast\n  internal partial buffer can beat a slow full PSRAM one for those.\n- **Fix:** A/B a partial buffer (e.g. ~1/8 screen, x2) in internal SRAM vs the current full\n  PSRAM double-buffer. Experiment, not a guaranteed win (cost-model lists it untried).\n- **Estimated win:** unknown; plausibly meaningful for small-region updates. **[needs\n  on-device confirmation]**.\n- **Risk:** internal-RAM budget vs esp_hosted; revert if no improvement. Keep\n  `swap_bytes=false` and rev/PPA/`num_fbs` untouched (hard constraints).\n\n### [P3 / housekeeping] Stale FPS-HUD comment \u2014 not a perf bug, but misleads tuning\n- **Where:** `main/prop_ui.c:2908-2925` claims the HUD \"drops the refresh-timer period from\n  30 ms to 8 ms.\" No code path actually changes the refresh period when the HUD turns on\n  (`prop_ui_set_fps` only shows/hides the label; grep finds no `lv_timer_set_period` /\n  refresh-period write). The HUD is a pure passive counter. Real period is\n  `CONFIG_LV_DEF_REFR_PERIOD=33` (sdkconfig:4861), lvgl_port timer 5 ms.\n- **Why it matters:** anyone tuning will trust the comment and mis-attribute fps changes.\n  Fix the comment. Do NOT \"implement\" the 8 ms drop \u2014 dropping the period is the documented\n  dead end (no gain, network-sluggish).\n- **Risk:** none (doc fix).\n\n---\n\n## Suggested order of attack\n\n1. **Capture a real baseline.** Turn on the FPS HUD (DISPLAY panel \"FPS METER\" switch /\n   `fps_on` setting) and record steady-state fps AND swing on scanner/spectrum/csi/rfband,\n   FX-on and FX-off. You can't fix variance you can't see.\n2. **P1 CRT overlay policy** (cheap, no RAM risk): FX-off on the moving analysers, slow/drop\n   the refresh band. Re-measure. Clearest consistency win; isolates the ARGB recomposite cost.\n3. **P2 analyser update-elision** (`prop_ui.c` bar loops): drop per-frame `align`,\n   shadow-compare height + colour, throttle spectrum/CSI to 10 Hz. Pure software, no config\n   risk, mirrors the scanner pattern.\n4. **P1 core pinning** (variance lever): pin LVGL to one core, radios to the other. Measure\n   swing on spectrum (FFT contention) and csi.\n5. **P3 second draw unit** \u2014 flip `=2` in the SAME session as pinning (shared second core).\n   Keep only if both fps and variance improve.\n6. **P2 hybrid allocator** (`lv_port_mem.c`) \u2014 biggest throughput lever, riskiest\n   (boot-loop). Do last, after `fullclean`, re-verify boot + ~332 KB internal headroom.\n7. **P3 partial internal draw buffers** \u2014 final A/B experiment if more throughput is wanted.\n\nGroup for measurement: (4)+(5) together (shared core); (6) alone (boot risk); the rest\nindependent.\n\n## Measurement plan\n\nA/B with the on-device FPS HUD (counts real renders via `LV_EVENT_RENDER_READY`,\n`prop_ui.c:2931`):\n\n```bash\npython firmware/communicator/tools/prop.py state    # confirm reachable (comm-unit-7.local)\n\n# enable FPS HUD (setting key fps_on / DISPLAY panel switch), walk heavy screens ~10s each,\n# noting the SWING not just the average:\npython firmware/communicator/tools/prop.py shot scanner.png  --screen scanner  --wait\npython firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait\npython firmware/communicator/tools/prop.py shot csi.png      --screen csi      --wait\npython firmware/communicator/tools/prop.py shot rfband.png   --screen rfband   --wait\n\n# isolate the P1 recomposite cost: toggle the CRT overlay and re-walk the same screens\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"fx\",\"on\":false}'\n# ...repeat shots / HUD readings, FX off...\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"fx\",\"on\":true}'\n```\n\nFor each fix record per-screen (min, typical, max) fps over ~10 s, FX on and off. Priority\nis the SPREAD (max-min) shrinking, then typical rising. `/screenshot` reads the framebuffer\n(incl. FX overlay), so a quick visual diff confirms ballistics still look right after\nthrottling/elision changes.\n\n## Do NOT touch (cross-checked vs cost-model)\n\n- Don't restore the LVGL builtin pool / raise `LV_MEM` (esp_hosted mempool boot loop).\n- Don't change `CONFIG_ESP32P4_*REV*`, `swap_bytes` (keep false), or add a PPA/GPU path.\n- Don't call WiFi/SDIO under the LVGL lock; don't run canvas layer-draw/`lv_snapshot` from a\n  non-LVGL task under the lock.\n- Don't drop the global refresh period or force full-screen redraws \u2014 documented dead ends.\n- CPU 360 MHz, PSRAM 200 MHz HEX, `-O2`, FreeRTOS 1000 Hz are at the ceiling (confirmed in\n  sdkconfig) \u2014 not worth churning.\n"}], "grading": {"expectations": [{"text": "Prioritizes consistency fixes ahead of pure-throughput ones", "passed": true, "evidence": "Leads with consistency (CRT overlay + core pinning) per stated priority."}, {"text": "Identifies missing core affinity / unpinned tasks, with file:line", "passed": true, "evidence": "bsp_illuminate.c:159 affinity -1; all tasks plain xTaskCreate."}, {"text": "Names the PSRAM->hybrid LVGL allocator (lv_port_mem.c) lever", "passed": true, "evidence": "lv_port_mem.c:39-43 hybrid allocator named."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "14 file:line citations."}, {"text": "Avoids dead ends / constraint violations", "passed": true, "evidence": "No dead-end recommendations; even flagged the stale FPS-HUD refresh-period comment."}, {"text": "Includes a measurement plan using prop.py and the FPS HUD", "passed": true, "evidence": "Measurement section present (FPS HUD A/B)."}, {"text": "Enables the FPS HUD with the correct mechanism (not {cmd:fx,on})", "passed": false, "evidence": "Flagged the fx/HUD discrepancy but did not provide the correct {\"cmd\":\"fx\",\"fps\":true} command; used {cmd:fx,on}."}], "summary": {"pass_rate": 0.8571, "passed": 6, "failed": 1, "total": 7}}}, {"id": "eval-1-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "report.md", "type": "text", "content": "# Communicator framerate review \u2014 SPECTRUM screen\n\n## What's going on (short answer)\n\nThe home screen is essentially static, so LVGL invalidates almost nothing and the\nsoftware renderer coasts (~18 fps measured historically). The SPECTRUM screen does the\nopposite: every ~50 ms the engine observer mutates **all 24 bars** (height + align +\nbg-color, unconditionally), each mutation invalidates a tall rectangle, and the LVGL 9\nsoftware renderer then redraws those stripes \u2014 allocating its anti-alias / draw masks\nfrom **PSRAM** on every draw because the LVGL heap is routed entirely to PSRAM. That\nper-draw PSRAM allocation latency is the documented reason spectrum runs ~8 fps vs ~18\nstatic. The *stutter* on top of that is CPU contention: LVGL and all the radio/engine\ntasks run unpinned, so when a Wi-Fi/BLE/CSI task lands on LVGL's core mid-render a whole\nframe stalls \u2014 that's the swing you see as \"bars stutter.\"\n\nSo it is two distinct problems, in the user's priority order:\n1. **Consistency (stutter):** no core pinning \u2014 radio tasks collide with the renderer.\n2. **Throughput (crawl):** PSRAM draw-mask allocation + per-bar redraw work every frame.\n\n## Measured baseline\n\n**Static code review \u2014 not measured on hardware.** No device available in this\nenvironment (no `python` / no `comm-unit-7.local` to run `prop.py state` or toggle the\nFPS HUD), so I could not capture live per-screen FPS or frame-time swings. Findings below\nare tagged **code-evident** vs **needs on-device confirmation**. The expected numbers\n(~8 fps spectrum, ~18 fps static) come from the firmware's own cost model / CLAUDE.md, not\nfrom a measurement I took.\n\nThe measurement plan at the end is what to run on real hardware to A/B each fix.\n\n## Findings (ranked by frame-time impact; consistency first)\n\n### [P1] No core affinity \u2014 radio tasks stall the renderer (the stutter)\n- **Affects:** consistency (this is the cause of the \"bars stutter\")\n- **Where:**\n  - `peripheral/bsp_illuminate/bsp_illuminate.c:159` \u2014 LVGL port `task_affinity = -1`\n  - `main/prop_engine.c:302` \u2014 `animate_task` (the observer that drives the bars), unpinned\n  - `main/prop_csi.c:151`, `main/prop_ble.c:331`, `main/prop_net.c:240`,\n    `main/prop_mic.c:186` \u2014 CSI / BLE-prune / RSSI-poll / mic-FFT tasks, all unpinned\n- **Cost / mechanism:** With everything at `tskNO_AFFINITY`, FreeRTOS is free to schedule a\n  radio/SDIO task onto whichever HP core LVGL is rendering on. A software full-stripe redraw\n  is not preemptible into anything useful \u2014 the frame's wall-clock time balloons whenever it\n  shares a core, producing exactly the intermittent 18->6->18-style swing the user reports.\n  On SPECTRUM this is worst because the mic-FFT task (prio 5, same as the observer) and the\n  CSI task are both chatty.\n- **Fix:** Pin LVGL to one HP core and push background/radio tasks to the other.\n  - LVGL port: `bsp_illuminate.c:159` `task_affinity = 0`.\n  - Move the heavy/chatty producers to core 1: pass core 1 via `xTaskCreatePinnedToCore`\n    for `prop_anim` (engine/observer), `prop_mic`, `prop_csi`, `prop_ble` prune, `rssi`,\n    and the on-demand scan tasks. The observer itself does its LVGL work under the lock, so\n    keep it off LVGL's core so its *non-LVGL* work (FFT read, decay math) doesn't compete.\n  - Win: this is the single highest-value **consistency** fix \u2014 should largely remove the\n    sporadic hitches even before throughput improves. Confidence: high on the mechanism,\n    **needs on-device confirmation** of the exact win and of which task placement is best.\n- **Risk:** Pinning the wrong producer onto LVGL's core makes it worse; A/B with the HUD.\n  Does not violate any hard constraint. Pair this decision with the `DRAW_UNIT_CNT=2`\n  experiment below (they compete for the second core).\n\n### [P2] LVGL heap is 100% PSRAM \u2014 draw masks allocated from PSRAM every frame (the crawl)\n- **Affects:** throughput (this is *the* reason spectrum is ~8 fps vs ~18 static)\n- **Where:** `main/lv_port_mem.c:39` \u2014 `lv_malloc_core()` unconditionally\n  `heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)`\n- **Cost / mechanism:** LVGL 9 allocates line/shape anti-alias mask buffers via `lv_malloc`\n  *during drawing*. With the heap entirely in PSRAM, every bar redraw pays PSRAM allocation\n  + access latency, and PSRAM contention also adds frame-time variance. 24 bars redrawn each\n  frame multiplies that penalty.\n- **Fix (the named lever):** implement a **hybrid allocator** in `lv_port_mem.c` \u2014 route\n  small / short-lived allocations to internal SRAM (`MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT`)\n  with a PSRAM fallback for large buffers (e.g. threshold a few KB). Most draw masks are\n  small and short-lived, so they land in fast internal SRAM; big object/buffer allocations\n  still go to PSRAM. This is generally the biggest single **throughput** win available.\n  Win: plausibly closes much of the 8->18 gap on spectrum. Confidence: **code-evident that\n  the bottleneck exists; the size of the win needs on-device confirmation.**\n- **Risk (must respect):** Internal RAM is needed by esp_hosted's SDIO DMA mempool \u2014 there's\n  only ~332 KB internal free at runtime with all radio instruments live. The hybrid allocator\n  **must** keep a comfortable internal headroom and fall back to PSRAM under pressure.\n  **Do NOT** restore the LVGL builtin pool or raise `LV_MEM` \u2014 that starves esp_hosted into\n  the \"HS_MP / mempool: no mem\" boot loop (hard constraint). If Wi-Fi RAM gets tight, the\n  lever is `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`, not shrinking internal reserves.\n\n### [P3] SPECTRUM bars are restyled and re-aligned every frame with no shadow-compare\n- **Affects:** throughput (and some avoidable invalidation)\n- **Where:** `main/prop_ui.c:2690-2704` (`ui_observer`, the `PK_SPECTRUM` block)\n- **Cost / mechanism:** For all 24 bars, every frame the code calls `lv_obj_set_height`,\n  `lv_obj_align`, and `lv_obj_set_style_bg_color` \u2014 ~72 LVGL calls/frame \u2014 regardless of\n  whether the value changed. `lv_obj_align` is recomputed every frame even though each bar's\n  X position is fixed (only its height changes), and `set_style_bg_color` re-invalidates even\n  when the color bucket (mute/amber/alert) didn't change. Each height/color change invalidates\n  the bar's bounding box; redundant ones still cost an invalidate + redraw pass. The scanner\n  trace already avoids this with a 10-segment shadow-compare (`WAVE_SEGS`); spectrum doesn't.\n- **Fix:**\n  - Drop the per-frame `lv_obj_align`. The bars never move horizontally and they're\n    `LV_ALIGN_BOTTOM_LEFT`, so changing height alone keeps them anchored \u2014 set position once\n    in `build_spectrum_panel` (where it's already done at `prop_ui.c:1020`) and never re-align\n    in the observer.\n  - Shadow-compare each bar's last height and last color bucket; only call `set_height` /\n    `set_style_bg_color` when they actually change (cache in small static arrays alongside\n    `s_spec_decay`). With a slow decay many bars are unchanged frame-to-frame.\n  - Win: cuts LVGL call count and, more importantly, cuts redundant invalidations ->\n    less area redrawn per frame. Modest-to-moderate throughput gain; pairs well with P2.\n    Confidence: code-evident that the work is redundant; size **needs confirmation**.\n- **Risk:** Low. Keep the rise-instant/decay-slow ballistics intact (only skip work when the\n  computed height/color is unchanged). The bands read is already a benign race (`prop_mic.c:199`).\n\n### [P3] SPECTRUM refresh cadence is 20 Hz \u2014 likely faster than the camera needs\n- **Affects:** throughput\n- **Where:** `main/prop_engine.c:15` (`ANIM_PERIOD_MS = 50` -> 20 Hz observer);\n  spectrum block runs every observer tick (`prop_ui.c:2690`)\n- **Cost / mechanism:** The bars are redrawn 20x/s. HOME/VITALS already throttle with\n  `tick % N`; the dB readout in this same block already throttles (`tick % 4`,\n  `prop_ui.c:2705`) but the bars themselves do not. On camera, 8-10 Hz bar motion is\n  indistinguishable from 20 Hz, and halving the redraws halves the per-frame cost directly.\n- **Fix:** gate the bar update with `st->tick % 2 == 0` (-> 10 Hz) and re-check on hardware\n  whether it still looks alive. Cheapest possible throughput win; reversible one-liner.\n  Confidence: medium \u2014 depends on the look the user wants; **confirm visually on-device.**\n- **Risk:** Too aggressive a throttle makes the analyser look steppy; tune N by eye.\n\n### [P3 / experiment] Second SW draw unit to use both HP cores\n- **Affects:** throughput\n- **Where:** `sdkconfig:4925` `CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1`\n- **Cost / mechanism:** Only one core renders today. A second draw unit can parallelize the\n  software rasterization across both HP cores.\n- **Fix:** try `CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2`. **Coupled to P1** \u2014 it only helps if the\n  second core isn't saturated by the radio tasks, so decide it together with core affinity and\n  measure both arrangements. Confidence: experiment, **needs measurement.**\n- **Risk:** competes with radio tasks for core 1; could increase variance if those aren't\n  pinned sensibly. Measure consistency, not just average FPS.\n\n## Verified, not findings (don't churn these)\n\n- `full_refresh` is **off** (`bsp_illuminate.c:197-201`; `CONFIG_DISPLAY_LVGL_FULL_REFRESH`\n  not set) \u2014 partial refresh is active, as intended. Good.\n- `swap_bytes=false` (`bsp_illuminate.c:195`) \u2014 keep it; `true` paints the background magenta.\n- CPU 360 MHz, PSRAM 200 MHz, `-O2`, FreeRTOS 1000 Hz \u2014 all confirmed at the tuned ceiling\n  (`sdkconfig`); no headroom worth chasing there.\n- Dropping the refresh period was already tried and lifted nothing \u2014 not re-proposed.\n- The observer correctly **skips the SCANNER readout** when a panel is up (`prop_ui.c:2498`),\n  and the FPS HUD is an opaque child (not `lv_layer_top`) \u2014 both already correct.\n- `prop_net_get_rssi()` reads a cache (`prop_ui.c:2506`) \u2014 no WiFi/SDIO under the LVGL lock\n  on the spectrum path. Good.\n\n## Suggested order of attack\n\nCheapest-high-impact first; the user's priority is consistency, then throughput:\n\n1. **P1 core affinity** (consistency) \u2014 pin LVGL to core 0, radio/engine/mic/csi to core 1.\n   Biggest stutter fix, no constraint risk. Measure consistency first.\n2. **P3 spectrum observer cleanup** (`prop_ui.c:2690`) \u2014 remove per-frame `lv_obj_align`,\n   add height/color shadow-compare. Cheap, local, throughput + less invalidation.\n3. **P3 cadence throttle** \u2014 `tick % 2` on the bars. One line; confirm it still looks alive.\n4. **P2 hybrid allocator** (`lv_port_mem.c`) \u2014 the big throughput lever, but the riskiest\n   (internal-RAM budget). Do it after the cheap wins so you can isolate its effect, and watch\n   `heap_caps_get_free_size(MALLOC_CAP_INTERNAL)` stays well above the esp_hosted budget.\n5. **P3 experiment `DRAW_UNIT_CNT=2`** \u2014 only after P1; A/B both core arrangements.\n\nGroup **1 + 5** in one measurement pass (they interact). Measure **2, 3, 4** individually.\n\n## Measurement plan (run on real hardware \u2014 I could not)\n\n```bash\n# Confirm device reachable, then turn on the on-device FPS HUD (top-right amber readout)\npython firmware/communicator/tools/prop.py state\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"fx\",\"on\":true}'   # toggles FPS HUD\n\n# Baseline each screen BEFORE any change\npython firmware/communicator/tools/prop.py shot spectrum_base.png --screen spectrum --wait\npython firmware/communicator/tools/prop.py shot home_base.png     --screen home     --wait\n# Watch the HUD on spectrum for ~10 s: record steady FPS AND the swing (e.g. 18->6->18).\n```\n\nFor each change, rebuild/flash with the communicator-ui loop (`tools/dev.sh bf` /\n`dev.ps1 bf`), then re-capture spectrum with the HUD on and record:\n- **Steady-state FPS** on spectrum (throughput).\n- **Frame-time consistency** \u2014 watch the HUD ~10 s; note min/max swing, not just average.\n  This is the number that matters most for the stutter complaint.\n- **Touch/dial latency** \u2014 drive `{\"cmd\":\"input\",...}` while on spectrum and watch reaction\n  time (input is handled under the LVGL lock, so render stalls show up here too).\n\nA/B notes:\n- **P1 affinity / P3 DRAW_UNIT_CNT=2:** measure all four combos\n  (1 unit vs 2, pinned vs current) and compare *consistency* first, FPS second.\n- **P2 allocator:** after flashing, also log\n  `heap_caps_get_free_size(MALLOC_CAP_INTERNAL)` at runtime and confirm it stays well above\n  the esp_hosted budget (boot must not loop on \"HS_MP: mempool ... no mem\").\n- Leave the HUD a *passive* counter \u2014 do not force faster refresh (proven to lift nothing).\n"}], "grading": {"expectations": [{"text": "Identifies per-frame unconditional restyle/realign of spectrum bars, with file:line", "passed": true, "evidence": "prop_ui.c:2690-2704: set_height+align+bg_color on all 24 bars every 20Hz frame, no shadow-compare."}, {"text": "Names all-PSRAM allocator as ~8-vs-18 cause + hybrid lever", "passed": true, "evidence": "lv_port_mem.c:39; documented ~8 vs 18 fps; hybrid allocator recommended."}, {"text": "Recommends change-gating/shadow-compare (mirror scanner) and/or throttle", "passed": true, "evidence": "Mirror scanner shadow-compare; drop per-frame align; throttle cadence."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "19 file:line citations."}, {"text": "Board-specific (sw render, PSRAM, no GPU) not generic", "passed": true, "evidence": "Frames everything around software render + PSRAM, rev v1.3 no GPU."}, {"text": "Includes measurement / before-after method using the FPS HUD", "passed": true, "evidence": "## Measurement plan present."}], "summary": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6}}}, {"id": "eval-1-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "report.md", "type": "text", "content": "# Communicator framerate review \u2014 SPECTRUM screen stutter\n\n## TL;DR (the actual answer)\n\nThe spectrum screen is slow for **two compounding reasons**:\n\n1. **Throughput / why it's ~8 fps:** This board has no GPU/PPA on chip rev v1.3, so LVGL renders\n   everything in software (a full-screen redraw is ~250 ms). LVGL 9 allocates anti-alias draw\n   masks via `lv_malloc` *during* drawing, and the LVGL heap is routed entirely to PSRAM\n   (`lv_port_mem.c`). So every shape draw on a busy screen pays PSRAM allocation latency. The\n   static home screen barely draws, so it sits at ~18 fps; the spectrum screen redraws 24 tall\n   bars every frame and pays that allocation tax 24x a frame. This is the documented baseline gap\n   and the named highest-value lever (hybrid allocator) is **not yet implemented**.\n\n2. **The stutter specifically:** the spectrum observer code is the one instrument that does **not**\n   follow the change-gated update discipline the rest of the UI uses. It unconditionally rewrites\n   height + alignment + bg-color on all 24 bars every ~20 Hz frame, which forces a large invalidate\n   every frame even when a bar didn't move. On top of that, the mic FFT task spins up only on this\n   screen (~62 FFT/s, prio 5, unpinned) and lands on whichever core LVGL is rendering on \u2014 so frame\n   times *swing* rather than sitting at a steady low number. That swing is what reads as \"stutter.\"\n\nThis is a **static code review** \u2014 I do not have the device, so per-screen FPS is not measured live.\nFindings are marked code-evident vs. needs-measurement.\n\n## Measured baseline\n\nStatic review \u2014 not measured on hardware. Known from the cost model / firmware CLAUDE.md:\nspectrum ~8 fps, static screens ~18 fps; full-screen software render ~250 ms.\n\n## Findings (ranked by frame-time impact; consistency first per stated priority)\n\n### [P1] Spectrum bars are rewritten every frame with no change-gating\n- **Affects:** both (consistency + throughput), and is the cheapest high-value fix.\n- **Where:** `firmware/communicator/main/prop_ui.c:2690-2704` (`ui_observer`, the\n  `s_cur_kind == PK_SPECTRUM` block).\n- **Cost / mechanism:** Each of the 24 bars (`PROP_MIC_BANDS = 24`,\n  `firmware/communicator/main/include/prop_mic.h:20`) gets, every ~20 Hz tick, unconditionally:\n  - `lv_obj_set_height()` (2699)\n  - `lv_obj_align()` (2700-2701)\n  - `lv_obj_set_style_bg_color()` (2702-2703)\n\n  That's ~72 LVGL mutating calls/frame. `lv_obj_set_height` and `lv_obj_align` each invalidate the\n  **union of the old and new bounding box** of the object \u2014 so a bar that grew then shrank dirties a\n  tall amber column. With 24 bars spread across the panel width, the per-frame invalidated area\n  approaches the full bar field. Re-issuing `align` every frame (even when x never changes \u2014 only\n  height does) and re-setting `bg_color` (even when the color bucket didn't change) forces redraws\n  that produce no visible difference. Software rendering cost is ~linear in invalidated pixels, and\n  each redrawn bar also pays the PSRAM mask-alloc tax (see P2).\n\n  Contrast: the scanner trace right above this (`prop_ui.c:2540-2606`) is meticulously\n  change-gated \u2014 a 10-segment shadow-compare on the waveform plus per-write `if (changed)` /\n  `if (col != s_last_col)` guards, with a comment that the gating took the trace \"from ~14 fps\n  (full-track redraw) toward 60.\" Spectrum got none of that treatment.\n- **Fix (code-evident):** Shadow-compare each bar against its last drawn state and skip writes that\n  don't change anything:\n  - Keep a per-bar `int16_t s_spec_last_h[PROP_MIC_BANDS]` and only call `lv_obj_set_height` when\n    the new height differs (by >=1 px). When you change height, you do **not** also need\n    `lv_obj_align` every frame \u2014 the bars are bottom-aligned (`LV_ALIGN_BOTTOM_LEFT`) and the x\n    offset never changes, so the alignment is fixed at build time. Setting height alone keeps the\n    bottom edge anchored; drop the per-frame `lv_obj_align` entirely (it's redundant with\n    `BOTTOM_LEFT` alignment and is a second invalidate per bar).\n  - Track the last color *bucket* (mute/amber/alert) per bar and only call\n    `lv_obj_set_style_bg_color` when the bucket flips.\n  - Optionally quantize height to a few px (e.g. round to 4 px) so micro-jitter from the FFT doesn't\n    trigger a redraw every frame on otherwise-steady bars.\n- **Win estimate:** High confidence this removes a large share of per-frame invalidations on steady\n  audio and most of the redundant work on moving audio. Eliminating the per-frame `lv_obj_align`\n  alone roughly halves the invalidations. This is the single most direct fix for the stutter and\n  costs nothing structurally.\n- **Risk:** None against the hard constraints. Pure UI-thread change. Make sure decay still drives\n  visible motion (it will \u2014 the decay math is unchanged, only the *write* is gated).\n\n### [P1] No core pinning \u2014 mic FFT + radio tasks contend with LVGL mid-render\n- **Affects:** consistency (the swinging frame times \u2014 the user's #1 complaint).\n- **Where:** all tasks are unpinned (`task_affinity = -1` for the LVGL port in `bsp_illuminate.c`;\n  plain `xTaskCreate` with no `PinnedToCore` for: `mic_task`\n  `firmware/communicator/main/prop_mic.c:186` (prio 5, ~62 FFT/s), engine animate_task\n  `prop_engine.c:302` (prio 5, 20 Hz), `rssi` `prop_net.c:240`, `ble_prune` `prop_ble.c:331`,\n  `prop_csi` `prop_csi.c:151` (prio 4)).\n- **Cost / mechanism:** The mic FFT task only runs while the spectrum screen is open (it's the data\n  source for the bars). It does real DSP at prio 5 \u2014 the same priority as the engine task that\n  drives the observer. With no affinity, FreeRTOS migrates it freely; when it lands on the HP core\n  LVGL is rendering on, the in-progress software frame stalls until the FFT yields. That is the\n  classic cause of the 18->6->18 swing, and it explains why the stutter shows up *specifically* on\n  the spectrum screen (the FFT task is dormant elsewhere).\n- **Fix (plausible, needs on-device measurement):** Pin LVGL to one HP core and push the\n  background/radio/DSP tasks (mic FFT, engine, rssi, ble_prune, csi) to the other core via\n  `xTaskCreatePinnedToCore`. Set the LVGL port `task_affinity` in `bsp_illuminate.c` to a fixed core\n  (e.g. core 0) and pin the rest to core 1. This is the textbook fix for inconsistent frame times on\n  a dual-core software-rendered setup.\n- **Win estimate:** Medium-high confidence on consistency; should largely remove the swing. Smaller\n  effect on average FPS. Measure before/after with the FPS HUD on the spectrum screen over ~10 s.\n- **Risk:** Pinning all radio/SDIO work onto one core could throttle BLE/WiFi/CSI throughput if that\n  core saturates; verify the radio instruments still update. Do not let the pinned background core\n  starve esp_hosted's SDIO servicing. Re-measure CONTACTS/SIGNAL ENV after pinning.\n\n### [P2] LVGL draw-mask allocations come from PSRAM (the ~8 vs ~18 fps gap)\n- **Affects:** throughput (raises the spectrum ceiling).\n- **Where:** `firmware/communicator/main/lv_port_mem.c` (custom `lv_malloc` -> PSRAM, via\n  `CONFIG_LV_USE_CUSTOM_MALLOC`).\n- **Cost / mechanism:** Documented in the firmware CLAUDE.md \"Memory reality\" and the cost model:\n  LVGL 9 allocates line/shape anti-alias masks via `lv_malloc` during drawing. Routing the whole\n  LVGL heap to PSRAM means every bar/shape draw pays PSRAM allocation latency, and PSRAM contention\n  also adds frame-time variance. This is named as *the* reason spectrum is ~8 fps vs ~18 static.\n- **Fix (named lever, not yet done):** Implement a **hybrid allocator** in `lv_port_mem.c`: route\n  small / short-lived allocations to internal SRAM (`MALLOC_CAP_INTERNAL`) and fall back to PSRAM\n  only for large buffers. Keep generous internal-RAM headroom for esp_hosted.\n- **Win estimate:** Per the cost model this is usually the single biggest throughput win available\n  for the heavy screens. Confidence medium-high that it materially closes the 8->18 gap, but it\n  needs on-device measurement and careful RAM budgeting.\n- **Risk (must cross-check):** Internal RAM is needed by esp_hosted's SDIO DMA mempool \u2014 there's\n  ~332 KB internal free at runtime with all radio instruments live. The hybrid allocator must stay\n  well under that or it triggers the \"HS_MP: mempool create failed: no mem\" boot loop. **Do NOT**\n  restore the builtin pool or raise `LV_MEM` \u2014 both are settled regressions. This change is higher\n  risk than P1 and should be done with a size cap and a fallback path, and measured.\n\n### [P3] dB label/meter update is already throttled \u2014 leave it\n- **Where:** `prop_ui.c:2705-2708` \u2014 `st->tick % 4 == 0` gates the dB text + meter to ~5 Hz.\n- **Note:** This is correct and already cheap; no change needed. Mentioned so it isn't \"fixed\"\n  redundantly. The cost is in the 24 bars, not the dB readout.\n\n### [P3] Bars are 24 individual objects \u2014 possible structural follow-up\n- **Where:** `prop_ui.c:1016-1025` (build), `2693-2704` (update).\n- **Note:** 24 separate `lv_obj`s each invalidate independently. A future option (only if P1 doesn't\n  get it smooth enough) is to draw the whole bar field into a single canvas/custom-draw object so one\n  invalidate covers the field with one mask allocation, instead of 24. This is a larger rewrite;\n  treat it as a fallback, not a first move. Lower confidence it's needed once P1+P2 land.\n\n## Suggested order of attack\n\n1. **P1 \u2014 change-gate the spectrum bars** (`prop_ui.c:2690-2704`). Cheapest, no risk, directly\n   targets the stutter. Drop the per-frame `lv_obj_align`, shadow-compare height and color bucket.\n   Measure first \u2014 this alone may make it acceptable.\n2. **P1 \u2014 core pinning** (mic/engine/radio -> one core, LVGL -> the other). Targets the *swing*.\n   Measure consistency over ~10 s. Pair this with evaluating `LV_DRAW_SW_DRAW_UNIT_CNT=2` (second\n   draw unit only helps if the second core isn't saturated \u2014 so decide it together with pinning).\n3. **P2 \u2014 hybrid allocator** in `lv_port_mem.c`. Highest throughput ceiling but highest risk\n   (esp_hosted RAM). Do last, with size cap + measurement, watching for the mempool boot loop.\n\nGroup 1 first and re-measure before doing 2 and 3 \u2014 if gating the bars already lands a stable\nframe time, you may not need to touch the allocator at all.\n\n## Measurement plan (A/B each change with the on-device FPS HUD)\n\n```bash\n# confirm device reachable\npython firmware/communicator/tools/prop.py state\n\n# turn on the FPS HUD (top-right amber readout; also drops refresh period to 8 ms)\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"fx\",\"on\":true}'\n\n# capture the heavy screen and the baseline static screen\npython firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait\npython firmware/communicator/tools/prop.py shot home.png     --screen home     --wait\n```\n\nFor each change:\n- Open `spectrum`, watch the HUD for ~10 s with steady ambient sound and with a varying sound\n  (clap/voice). Record both the **average** FPS and the **swing** (min->max). The swing is the\n  number that matters for the stutter.\n- After P1 (bar gating): expect the swing to shrink and average to rise on steady audio.\n- After P2 (pinning): expect the swing to shrink further (fewer whole-frame stalls from the FFT\n  task), especially under varying sound when the FFT task is busiest.\n- After P3 (hybrid allocator): expect the average ceiling to rise; **also** re-open `ble` and `csi`\n  and confirm they still populate (RAM/contention regression check), and watch the boot log for\n  `HS_MP` mempool errors.\n\n## Constraints cross-checked (none of the above violates these)\n\n- P2 keeps the LVGL heap mostly in PSRAM with only small allocs internal \u2014 does not restore the\n  builtin pool or raise `LV_MEM`, and must leave esp_hosted internal-RAM headroom.\n- No change to `CONFIG_ESP32P4_*REV*`, `swap_bytes`, or the PPA/GPU path.\n- All bar updates remain on the LVGL task under the existing `lvgl_port_lock` in `ui_observer`\n  (`prop_ui.c:2487`); no WiFi/SDIO calls are added under the lock.\n"}], "grading": {"expectations": [{"text": "Identifies per-frame unconditional restyle/realign of spectrum bars, with file:line", "passed": true, "evidence": "prop_ui.c:2690-2704 unconditional rewrite of all 24 bars; pointless per-frame align."}, {"text": "Names all-PSRAM allocator as ~8-vs-18 cause + hybrid lever", "passed": true, "evidence": "PSRAM-resident heap; documented ~8 vs 18; hybrid lever (do last)."}, {"text": "Recommends change-gating/shadow-compare (mirror scanner) and/or throttle", "passed": true, "evidence": "Shadow-compare + drop align, cheapest zero-risk fix."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "12 file:line citations."}, {"text": "Board-specific (sw render, PSRAM, no GPU) not generic", "passed": true, "evidence": "Explains no-GPU software render, PSRAM draw-mask tax."}, {"text": "Includes measurement / before-after method using the FPS HUD", "passed": true, "evidence": "Measurement section with FPS HUD."}], "summary": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6}}}, {"id": "eval-2-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "report.md", "type": "text", "content": "# Communicator framerate review\n\nUser priority: **(1) consistent frame times first, (2) higher framerate.** The complaint \u2014\n\"laggy dial/touch + a hitch roughly once a second\" \u2014 points squarely at *consistency* (CPU\ncontention / periodic widget churn), which is where this review leads.\n\n## Measured baseline\n\n**Not measured on hardware \u2014 static code review only.** No physical device available, so I could\nnot run the FPS HUD or time touch latency. Findings are tagged **code-evident** (mechanism visible\nin source) vs **needs measurement** (plausible lever, must be A/B'd on-device). Measurement plan at\nthe end. Known baseline from the cost model (ground truth, not re-derived): whole-screen 1024x600\nsoftware render ~250 ms (~4 fps); heavy spectrum ~8 fps; static screens ~18 fps. No GPU/PPA on rev\nv1.3 \u2014 all compositing is the CPU.\n\nThe \"hitch roughly once a second\" is the most diagnostic clue: there is exactly one ~1 Hz background\nactor doing a blocking SDIO round-trip to the C6 (the RSSI poll), and it is **unpinned**. That is P1.\n\n## Findings (ranked by frame-time impact)\n\n### [P1] No core affinity \u2014 radio/background tasks share LVGL's core \u2014 affects: consistency (the #1 complaint)\n- Where:\n  - bsp_illuminate.c:159 \u2014 lvgl_cfg.task_affinity = -1 (LVGL render+input unpinned)\n  - prop_net.c:240 \u2014 xTaskCreate(rssi_task,...,3,NULL) unpinned, 1 Hz blocking esp_wifi_sta_get_ap_info() SDIO call (vTaskDelay(1000))\n  - prop_engine.c:302 \u2014 xTaskCreate(animate_task,...,5,NULL) unpinned, 20 Hz\n  - prop_ble.c:331 \u2014 xTaskCreate(prune_task,...,3,NULL) unpinned, ~2 Hz\n  - prop_csi.c:151 \u2014 xTaskCreate(csi_task,...,4,NULL) unpinned, ~15 Hz\n  - prop_mic.c:186 \u2014 xTaskCreate(mic_task,...,5,NULL) unpinned, ~10 Hz I2S+FFT\n  - NimBLE host pinned to core 0 (sdkconfig CONFIG_BT_NIMBLE_PINNED_TO_CORE_0=y) while LVGL floats.\n- Cost (mechanism): Software rendering saturates one HP core for a whole draw. An unpinned task\n  scheduled onto LVGL's core mid-render preempts and stalls the frame \u2014 textbook cause of swinging\n  frame times (cost model: \"main consistency liability\"). The 1 Hz RSSI poll is the smoking gun for\n  the once-a-second hitch: a blocking SDIO transaction to the C6 that stalls a frame at ~1 Hz cadence\n  when it lands on the render core \u2014 matches the user's description.\n- Fix: Pin LVGL render+input to core 1 (task_affinity=1 at bsp_illuminate.c:159); move the\n  background/radio tasks to core 0 via xTaskCreatePinnedToCore(...,0) (rssi, ble prune, csi, mic;\n  NimBLE already on 0). Blocking-SDIO tasks (rssi especially) MUST be off the render core.\n  Confidence: high it improves consistency (code-evident + cost model predicts); magnitude needs\n  measurement.\n- Risk: All radios + render on a 2-core part means core 0 carries WiFi+BLE+CSI+mic; if it saturates,\n  heavy-screen throughput could dip even as consistency improves \u2014 measure spectrum FPS. No hard\n  constraint violated (rssi already caches off the LVGL lock; keep it that way).\n\n### [P2] Hybrid LVGL allocator \u2014 kill per-draw PSRAM allocation latency \u2014 affects: throughput (also smooths variance)\n- Where: lv_port_mem.c:39 \u2014 lv_malloc_core() routes EVERY lv_malloc to PSRAM\n  (LV_PSRAM_CAPS = MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT). LVGL 9 allocates anti-alias mask buffers via\n  lv_malloc during drawing.\n- Cost (mechanism): every line/shape draw pays PSRAM allocation latency, and PSRAM contention adds\n  frame-time variance. Cost model names this as THE reason spectrum is ~8 vs ~18 fps \u2014 the single\n  biggest throughput lever; CLAUDE.md \"Memory reality\" names the exact fix.\n- Fix: Make lv_malloc_core/lv_realloc_core a hybrid allocator: try MALLOC_CAP_INTERNAL first for\n  small/short-lived allocs (draw masks ~1 KB), fall back to PSRAM for large buffers and on internal\n  pressure. Keep generous internal headroom for esp_hosted (budget: stay well under the ~332 KB\n  internal free at runtime with all radios live).\n- Win: plausibly closes much of the 8->18 fps gap on draw-heavy screens. Confidence: medium-high\n  (mechanism/fix documented; threshold + headroom need on-device tuning).\n- Risk: the constraint minefield. Do NOT restore the builtin pool or raise LV_MEM -> \"HS_MP:\n  mempool create failed: no mem\" boot loop. If WiFi RAM gets tight, the lever is\n  CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y, not shrinking reserves. Verify clean boot with all three\n  radio instruments live after the change.\n\n### [P3] Instrument bars update unconditionally every frame \u2014 affects: throughput (+ small steady-state hitch)\n- Where (no shadow-compare, unlike the scanner trace):\n  - SPECTRUM: prop_ui.c:2693-2704 \u2014 32 bars x (set_height + align + set_bg_color) every frame\n  - RF BAND: prop_ui.c:2715-2726 \u2014 same; data only changes on a (re)scan, so most frames are static yet still re-set/re-aligned\n  - SIGNAL ENV (CSI): prop_ui.c:2758-2769 \u2014 same pattern\n- Cost (mechanism): each set_height/align/bg_color write invalidates the bar's bbox, forcing a\n  recomposite (and CRT-overlay alpha-blend) of that region every frame whether or not it moved. The\n  scanner trace already solved this with a per-segment shadow-compare (prop_ui.c WAVE_SEGS,\n  ~2541-2557); these three don't. RF BAND is worst \u2014 its data is static between scans.\n- Fix: shadow-compare each bar's computed height/color, only write on change. lv_obj_align to a\n  fixed bottom-left X never changes after build \u2014 hoist it to build time (only height grows). For\n  RF BAND, gate the whole update on \"decay still settling OR new scan data\".\n- Win: cuts steady-state invalidation substantially (RF BAND -> ~zero when idle). Confidence: high\n  (direct analogue to the proven scanner-trace optimization).\n- Risk: low; pure render-area reduction. Verify bars still animate smoothly.\n\n### [P3] BLE contact list teardown/rebuild every ~400 ms \u2014 affects: consistency (periodic hitch) + throughput\n- Where: prop_ui.c:2747 \u2014 lv_obj_clean(s_ble_list) + full ble_add_row() rebuild inside the\n  st->tick % 8 == 0 block (~2.5 Hz). Each row is 4+ labels + a meter bar (ble_add_row, 1211-1246).\n- Cost (mechanism): whole widget-hierarchy teardown+recreate ~2.5x/s churns the heap and invalidates\n  the entire list bbox at once \u2014 a periodic hitch on CONTACTS, amplifying P2's allocation latency.\n- Fix: keep a fixed pool of row widgets (PROP_BLE_MAX, built once at panel build); diff+update text/\n  RSSI/distance/meter in place, hide unused rows. No clean/rebuild.\n- Win: removes the ~2.5 Hz hitch on CONTACTS. Confidence: high (mechanism clear). Scoped to the\n  CONTACTS screen.\n- Risk: low; mind the close_panel NULLing discipline (prop_ui.c:259) so the pool tears down with the panel.\n\n### [P3 / experiment] Second SW draw unit + partial internal-SRAM draw buffers \u2014 affects: throughput \u2014 needs measurement\n- Where: sdkconfig CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1 (single SW draw unit, ASM_NONE);\n  bsp_illuminate.c:188 buff_spiram=true (full-screen x2 double buffer in PSRAM, lines 173-175/187).\n- Lever: with two HP cores, a 2nd SW draw unit (=2) can parallelize rendering; rendering INTO\n  internal SRAM is far faster than PSRAM, and a partial N-line buffer fits internal RAM where the\n  full-screen x2 (~2.4 MB) cannot.\n- Fix (experiments, not guaranteed): (a) LV_DRAW_SW_DRAW_UNIT_CNT=2 \u2014 competes with radio tasks for\n  the 2nd core, so COUPLED to the P1 affinity decision; measure together (if all radios are on core 0\n  and LVGL on core 1, a 2nd draw unit has no free core). (b) A/B partial internal-SRAM draw buffers\n  vs the full-screen PSRAM buffers for the redraw sizes this UI produces.\n- Confidence: low without measurement.\n- Risk: keep swap_bytes=false and full_refresh/direct_mode off; watch internal-RAM headroom (interacts with P2).\n\n### [P3 / verify] CRT refresh band is a moving translucent ARGB8888 canvas \u2014 affects: throughput on every screen \u2014 needs measurement\n- Where: prop_fx.c:196-207 \u2014 1024x80 ARGB8888 canvas on lv_layer_top(), FLOATING, lv_obj_set_y\n  every 55 ms (band_tick, 159-170).\n- Cost (mechanism): it paints pixels directly into its own canvas buffer (correctly dodging the\n  layer-recomposite trap the FPS HUD hit \u2014 intended per cost model/CLAUDE.md), but it's still a\n  translucent 1024x80 stripe alpha-blended over the content ~18x/s. Author already bounds it thin\n  (80 px, prop_fx.c:49). Working as designed.\n- Fix: none recommended (don't break the look). For a max-FPS shot, turn the CRT overlay off\n  (fx off) to remove the per-frame alpha cost.\n- Confidence: mechanism code-evident; magnitude needs measurement (fx on vs off).\n- Risk: altering it changes the aesthetic \u2014 out of scope to \"fix\".\n\n## Already-maxed knobs \u2014 verified, not findings\nCPU 360 MHz, PSRAM 200 MHz HEX, -O2, FreeRTOS 1000 Hz all confirmed at ceiling in sdkconfig. Do NOT\nraise the CPU clock or drop the refresh period \u2014 the latter was tried and lifted nothing while making\nthe device network-sluggish (the FPS HUD already drops the period to 8 ms; passive counter on\npurpose, prop_ui.c:2908-2925). Forcing a full-screen redraw every frame is a known dead end (~4 fps).\n\n## Suggested order of attack\nConsistency first (the user's #1), cheapest-high-impact first:\n1. P1 core affinity \u2014 cheapest, biggest consistency win, directly targets the once-a-second hitch.\n   One line in bsp_illuminate.c + swap xTaskCreate->xTaskCreatePinnedToCore in the radio/sensor\n   files. Measure consistency before/after on a moving screen.\n2. P3 instrument-bar shadow-compare (RF BAND, then spectrum/CSI) + P3 BLE row pool \u2014 localized,\n   low-risk throughput+jitter wins mirroring the existing scanner-trace pattern. Group them.\n3. P2 hybrid allocator \u2014 biggest throughput lever, highest constraint risk; do it alone with boot/RAM\n   verification. Measure spectrum FPS before/after.\n4. P3 experiments (2nd draw unit / partial internal buffers) \u2014 only after P1 (shared core decision);\n   A/B individually.\nDo not bundle P2 with anything else \u2014 if it boot-loops, isolate it.\n\n## Measurement plan\nNOTE: the skill's example uses {\"cmd\":\"fx\",\"on\":true} to toggle the FPS HUD, but in THIS firmware\n`fx` toggles the CRT overlay; the FPS HUD is toggled by prop_ui_set_fps / the SETUP \"FPS METER\"\nswitch (persisted as fps_on, prop_ui.c:719,2970). Turn the HUD on via SETUP before measuring; use\nfx on/off separately to A/B the CRT-overlay cost.\n\n  cd firmware/communicator\n  python tools/prop.py state                 # confirm comm-unit-7.local reachable\n  # Per-screen baseline: open each, settle, read top-right FPS HUD over ~10 s. Watch the SWING.\n  python tools/prop.py shot base_spectrum.png --screen spectrum --wait\n  python tools/prop.py shot base_rfband.png   --screen rfband   --wait\n  python tools/prop.py shot base_ble.png      --screen ble      --wait\n  python tools/prop.py shot base_scanner.png  --screen scanner  --wait\n  # Isolate CRT-overlay cost (P3 fx): A/B same screen overlay on/off.\n  python tools/prop.py fx on 70\n  python tools/prop.py shot spec_fx_on.png  --screen spectrum --wait\n  python tools/prop.py fx off\n  python tools/prop.py shot spec_fx_off.png --screen spectrum --wait\n  # Touch/dial latency proxy:\n  curl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"input\",\"control\":\"selector\",\"arg\":\"cw\"}'\n  curl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"input\",\"control\":\"action\",\"arg\":\"press\"}'\n  # Rebuild+flash after EACH change, re-run the same captures to A/B:\n  ./tools/dev.sh bf -Port /dev/ttyUSB0       # (Windows: pwsh tools/dev.ps1 bf -Port COM7)\n\nA/B protocol: P1 -> watch the once-a-second hitch on the SCANNER/SPECTRUM HUD before vs after\npinning (should shrink/disappear). P3 -> compare RF BAND/spectrum/CONTACTS steady-state FPS + swing.\nP2 -> compare spectrum FPS (target the 8->18 gap) AND confirm clean boot with all radios live\n(/state shows ble:{count} and csi_live).\n\n## Cross-check against hard constraints (all fixes verified safe)\n- P2 keeps large buffers in PSRAM + leaves internal headroom \u2014 no builtin pool, no LV_MEM raise.\n- No fix introduces a WiFi/SDIO call under the LVGL lock; rssi/uplink stay cached off-lock.\n- swap_bytes=false, no PPA/GPU path, no CONFIG_ESP32P4_*REV* change, no canvas layer-draw/lv_snapshot\n  from a non-LVGL task.\n"}], "grading": {"expectations": [{"text": "Prioritizes consistency (variance) over average fps", "passed": true, "evidence": "Ranks P1 affinity/contention first; explicitly consistency-first."}, {"text": "Connects input/dial latency to the LVGL lock / render stall", "passed": false, "evidence": "Centered on rssi_task periodic hitch + affinity; did not explicitly tie dial/input latency to the LVGL lock hold (skill mentions it but the report didn't surface it)."}, {"text": "Identifies a plausible ~1Hz periodic cause, with file:line", "passed": true, "evidence": "rssi_task prop_net.c:240 \u2014 1 Hz blocking SDIO esp_wifi_sta_get_ap_info; matches the once-a-second hitch."}, {"text": "Recommends core affinity (pin LVGL vs radio tasks)", "passed": true, "evidence": "Pin LVGL to core 1, radios to core 0."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "18 file:line citations."}, {"text": "Includes a before/after measurement plan using the FPS HUD", "passed": true, "evidence": "Measurement plan present; also flagged the fx/HUD command discrepancy."}], "summary": {"pass_rate": 0.8333, "passed": 5, "failed": 1, "total": 6}}}, {"id": "eval-2-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "report.md", "type": "text", "content": "# Communicator framerate review\n\n## Measured baseline\n\n**Static review \u2014 not measured on hardware.** The device was unreachable from this environment\n(`python` is not on PATH and `comm-unit-7.local` did not answer), so I could not turn on the FPS HUD\nor A/B anything live. Every finding below is grounded in `file:line` and the known cost model; each\nis flagged **code-evident** vs **plausible, needs measurement**.\n\nKnown numbers (in-code comments + CLAUDE.md), used as ground truth:\n- Whole-screen 1024x600 software render ~250 ms (~4 fps); no GPU/PPA on rev v1.3.\n- Heavy spectrum screen ~8 fps, mostly-static screens ~18 fps.\n- LVGL heap is entirely in PSRAM (custom allocator), so per-draw AA-mask `lv_malloc` pays PSRAM latency.\n\nThe user's two symptoms map onto two distinct causes:\n1. \"Hitches roughly once a second\" -> a periodic 1 Hz background task (the RSSI poll) doing a\n   blocking SDIO round-trip on an unpinned core. Consistency problem (priority 1).\n2. \"Dial/touch feels laggy\" -> input is processed under the LVGL lock, so it queues behind the\n   render/observer; on heavy bar screens a frame can take 50-125 ms and the lock is held that long.\n\n---\n\n## Findings (ranked by frame-time impact)\n\n### [P1] Once-per-second SDIO RSSI poll on an unpinned core - affects: consistency\n- Where: `main/prop_net.c:510` `rssi_task`; `:515` `esp_wifi_sta_get_ap_info`; `:535`\n  `vTaskDelay(pdMS_TO_TICKS(1000))`. Created unpinned at `:240`\n  (`xTaskCreate(rssi_task,\"rssi\",4096,NULL,3,NULL)`).\n- Cost/mechanism: Exactly once a second this task makes a blocking SDIO transaction to the C6\n  (`esp_wifi_sta_get_ap_info` + `esp_wifi_sta_get_negotiated_phymode`). The 1000 ms cadence is a\n  dead-on match for \"hitches roughly once a second.\" Compounding: (a) the task is unpinned\n  (`task_affinity=-1` for LVGL too, `bsp_illuminate.c:159`), so the scheduler can run it on the same\n  HP core mid-software-render, stalling that frame; (b) the SDIO/C6 link is shared with NimBLE, so\n  the round-trip can contend and stretch. A ~10-40 ms stall landing on a render frame is precisely\n  the visible 1 Hz hitch.\n- Fix: Pin LVGL to one HP core, radios to the other. Set `task_affinity=0` in the `lvgl_port_cfg_t`\n  (`bsp_illuminate.c:157-161`); create `rssi_task`, BLE prune (`prop_ble.c:331`), CSI\n  (`prop_csi.c:151`), mic (`prop_mic.c:186`) with `xTaskCreatePinnedToCore(...,1)`.\n- Win/confidence: Removes the dominant source of the once-a-second hitch. High confidence on the\n  cause (cadence match + unpinned + SDIO). The cost model names unpinned radio<->LVGL tasks as \"the\n  main consistency liability.\" Highest-value consistency change.\n- Risk: Pinning all heavy work to core 1 could saturate it if you also enable a second draw unit\n  (P3) - decide together. Do NOT reduce poll cadence to \"fix\" this: the hitch is the stall on\n  render's core, not the poll frequency (cost model lists cadence churn as a dead end). SDIO must\n  stay off the LVGL lock (it already is).\n\n### [P1] Full-panel ARGB8888 CRT overlay on lv_layer_top() recomposited every frame - affects: both\n- Where: `main/prop_fx.c:178-207`. `s_canvas` is a 1024x600 ARGB8888 canvas on `lv_layer_top()`\n  (`:187-189`); `s_band` is an 80 px ARGB8888 band on the same top layer (`:199-207`) moving every\n  55 ms (`band_tick` `:159-170`, `FX_BAND_MS=55`).\n- Cost/mechanism: The canvas wash/scanlines are ARGB8888 with per-pixel alpha < 255\n  (`FX_WASH_OPA=20`, scanline `FX_SCAN_OPA=95`). Translucent content on `lv_layer_top` forces LVGL to\n  alpha-blend the overlay over screen content for every invalidated region - and ARGB8888 src-over\n  blend is pure CPU here (no PPA). So every widget redraw (each spectrum bar height change, each wave\n  segment, the band stripe) is paid twice: draw the widget, then composite the overlay stripe. The\n  cost model flags translucent `lv_layer_top` objects as a known trap (it watchdog-hung the FPS HUD);\n  the overlay is the deliberately-tolerated version of the same cost.\n- Fix: (1) Quantify first - capture spectrum FPS `fx` on vs off. If off recovers a lot, this is the\n  biggest throughput lever and the user picks the trade. (2) If keeping it: the band already\n  invalidates only its ~82 px stripe (good); the static canvas alpha is the expensive part. Lower\n  `FX_WASH_OPA`/scanline density to cut per-pixel blend cost. The cost is inherent to per-pixel\n  alpha, so the realistic knob is \"how strong / how much area.\"\n- Win/confidence: Plausible-to-strong, needs measurement. Code-evident that it doubles blend work\n  over every dirty region; magnitude is an on-device `fx` on/off A/B away.\n- Risk: `prop_fx` paints ARGB pixels directly on purpose (v9 canvas layer-draw deadlocks under the\n  lock) - don't move it off the LVGL task or re-add a translucent non-canvas top-layer object.\n\n### [P2] Hybrid LVGL allocator (small allocs -> internal SRAM) - affects: throughput\n- Where: `main/lv_port_mem.c:39` `lv_malloc_core` routes ALL `lv_malloc` to PSRAM\n  (`LV_PSRAM_CAPS = MALLOC_CAP_SPIRAM`).\n- Cost/mechanism: LVGL 9 allocates line/shape anti-alias mask buffers via `lv_malloc` during\n  drawing. With the heap 100% PSRAM, every line/bar/shape draw pays PSRAM allocation latency, and\n  PSRAM contention adds frame-time variance. The cost model names this as THE documented reason\n  spectrum is ~8 fps vs ~18 static - the biggest throughput lever not yet done.\n- Fix: Make `lv_malloc_core` hybrid: try `MALLOC_CAP_INTERNAL` first for small allocs (the transient\n  AA masks), fall back to `MALLOC_CAP_SPIRAM` for large buffers and on internal-OOM.\n  `lv_realloc_core`/`lv_free_core` already use `heap_caps_*` (free is cap-agnostic). Keep generous\n  internal headroom - ~332 KB internal free at runtime with all radios live; cap internal-routed\n  total well under that.\n- Win/confidence: Code-evident high-value throughput win for bar/line screens (the firmware's own\n  documented lever). Exact fps gain needs measurement.\n- Risk: Constraint-sensitive. Do NOT restore the LVGL builtin pool or raise `LV_MEM` - starves\n  esp_hosted's SDIO DMA mempool -> \"HS_MP: mempool create failed: no mem\" boot loop. The hybrid\n  allocator must always have a PSRAM fallback (never return NULL) and leave esp_hosted internal RAM\n  intact. Test a full `fullclean` boot with all radios on; watch internal-free in VITALS.\n\n### [P2] SPECTRUM / RF BAND / CSI rewrite every bar every frame, no shadow-compare - affects: both\n- Where: `main/prop_ui.c` `ui_observer`: SPECTRUM `:2690-2704` (32 bars), RF BAND `:2714-2727`, CSI\n  `:2755-2769`. Each bar does, unconditionally every frame, `lv_obj_set_height` + `lv_obj_align` +\n  `lv_obj_set_style_bg_color`.\n- Cost/mechanism: ~3 LVGL calls x N bars per 50 ms tick (spectrum ~96 calls/frame). Each\n  set_height/align invalidates old+new bbox; set_bg_color re-stamps style and invalidates again -\n  even when value, position and color band didn't change. With peak-hold decay, many bars are flat in\n  steady state, so much of this is wasted invalidation feeding the expensive blend + PSRAM-alloc\n  path. The scanner trace already solves this with a 10-segment shadow-compare\n  (`prop_ui.c:2538-2557`, `WAVE_SEGS`); these three screens don't.\n- Fix: Add the scanner's shadow-compare. Cache last height + last color-band per bar; call `set_*`\n  only on change. Bar x never changes - move `lv_obj_align` out of the per-frame loop (set once at\n  build). Re-aligning a fixed-x bar every frame is pure waste.\n- Win/confidence: Code-evident throughput + consistency win on the three sensor/spectrum screens (the\n  ones most likely on-screen when it \"hitches\"). Magnitude scales with how static bars are; measure\n  spectrum with live mic vs a quiet room.\n- Risk: Low. Mirror the proven scanner pattern; keep the peak-hold decay math, just gate the calls.\n\n### [P2] BLE contact list full teardown + rebuild every ~400 ms - affects: consistency (periodic hitch)\n- Where: `main/prop_ui.c:2731-2751` (`PK_BLE`, `st->tick % 8 == 0` ~2.5 Hz): `lv_obj_clean(s_ble_list)`\n  then `ble_add_row()` loop rebuilding the whole list.\n- Cost/mechanism: `lv_obj_clean` deletes the entire child hierarchy (each row = 4 labels + a meter\n  bar, `ble_add_row` `:1211-1246`) and recreates them - object alloc (PSRAM) + style init + layout\n  for every widget, ~2.5x/s. A periodic spike that invalidates the whole list region and churns the\n  PSRAM heap. Confined to the CONTACTS screen but a textbook periodic hitch.\n- Fix: Diff rows / update in place, or reuse a fixed pool of `PROP_BLE_MAX` pre-built row widgets:\n  set labels/meter for rows with data, hide the rest, never delete/recreate. Device set changes\n  slowly, so most refreshes touch only text.\n- Win/confidence: Code-evident consistency win on CONTACTS.\n- Risk: Low; track row widget pointers and guard them in `close_panel` like the others.\n\n### [P3] Single software draw unit - affects: throughput\n- Where: `sdkconfig` `CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1`; two HP cores available.\n- Cost/mechanism: All software rendering on one core; the second HP core is idle for draw. A second\n  draw unit parallelizes the blend/raster across both cores.\n- Fix: Try `CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2`. Coupled to P1 affinity - a second draw unit competes\n  with radios for the second core, so pin radios to one core and let the draw unit use the spare\n  cycles; measure both together.\n- Win/confidence: Plausible, needs measurement. Could raise throughput on heavy screens IF core 1\n  isn't already saturated by radios - which is why it pairs with P1.\n- Risk: If radios + second draw unit both pile on core 1, you trade hitches back in. Measure\n  consistency, not just average fps.\n\n### [P3] Partial draw buffers in internal SRAM - affects: throughput (experiment)\n- Where: `bsp_illuminate.c:173-189` - full-screen (`H_size*V_size`), double, `buff_spiram=true`.\n- Cost/mechanism: Rendering into PSRAM is far slower than into internal SRAM. Full-screen x2\n  (~2.4 MB) can't fit internal RAM (hence PSRAM), but a partial N-line buffer in internal SRAM can.\n  This UI mostly produces small dirty rects (partial-refresh mode), so partial internal buffers may\n  render those faster.\n- Fix: A/B a partial-refresh config: smaller per-buffer line count, `buff_spiram=false` (internal),\n  keep double-buffer. Watch internal-RAM headroom (esp_hosted budget).\n- Win/confidence: Plausible, untried - an experiment with a measurement plan, not a guaranteed win.\n  Depends on actual dirty-rect sizes.\n- Risk: Internal RAM is contended by esp_hosted; size conservatively. Keep `swap_bytes=false`.\n\n### Verified-OK (do not churn)\n- CPU 360 MHz (`ESP_DEFAULT_CPU_FREQ_MHZ_360`), PSRAM 200 MHz HEX (`SPIRAM_SPEED_200M`,\n  `SPIRAM_MODE_HEX`), compiler -O2 (`COMPILER_OPTIMIZATION_PERF`), FreeRTOS 1000 Hz - all near\n  ceiling; no headroom.\n- Board rev pinned (`ESP32P4_REV_MIN_100`, `ESP32P4_SELECTS_REV_LESS_V3`) - don't touch.\n- `swap_bytes=false` / `LV_COLOR_FORMAT_RGB565` correct - don't change.\n- Scanner waveform already uses segment shadow-compare (`prop_ui.c:2538-2557`) - the model to copy.\n- `ui_observer` already skips the scanner block unless `PK_NONE` is visible (`prop_ui.c:2498`);\n  HOME/VITALS/ABOUT throttle with `tick % N` - good.\n- FPS HUD is an opaque child, not a translucent top-layer object (`prop_ui.c:2917`) - correct.\n\n---\n\n## Suggested order of attack\n\nLead with consistency (user priority #1), cheapest-first:\n1. P1 core affinity - pin LVGL to core 0, radios (rssi/ble/csi/mic) to core 1\n   (`bsp_illuminate.c:159` + the `xTaskCreate` sites). Surgical; directly targets the 1 Hz hitch.\n2. P2 per-bar shadow-compare on SPECTRUM/RF/CSI (`prop_ui.c:2690/2714/2755`) and move bar\n   `lv_obj_align` out of the per-frame loop. Pure win, mirrors the scanner pattern.\n3. P2 BLE list diff-in-place (`prop_ui.c:2731`) - kills the CONTACTS periodic hitch.\n4. P2 hybrid allocator (`lv_port_mem.c:39`) - biggest throughput lever, constraint-sensitive; verify\n   boot + internal-RAM headroom with all radios on.\n5. Measure FX overlay cost (`fx` on vs off) to size the P1 overlay finding; decide the creative trade.\n6. P3 second draw unit + partial internal buffers - experiments, measured together with the affinity\n   choice (they fight for the same second core).\n\nGroup #1 + #6 in one measurement pass (they interact). Everything else is independent.\n\n---\n\n## Measurement plan\n\nHardware was not reachable here; run on the device (mDNS `comm-unit-7.local`). Enable the HUD, then\ncapture each heavy screen and watch the FPS readout over ~10 s for the SWING, not just the average.\n\n```bash\npython firmware/communicator/tools/prop.py state\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"fx\",\"on\":true}'\n\npython firmware/communicator/tools/prop.py shot spectrum.png --screen spectrum --wait\npython firmware/communicator/tools/prop.py shot rfband.png   --screen rfband   --wait\npython firmware/communicator/tools/prop.py shot csi.png      --screen csi      --wait\npython firmware/communicator/tools/prop.py shot ble.png      --screen ble      --wait\n\n# A/B the CRT overlay cost\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"fx\",\"on\":false}'\n\n# touch/dial latency on a heavy screen\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"ui\",\"screen\":\"spectrum\"}'\ncurl -s -X POST http://comm-unit-7.local/cmd -d '{\"cmd\":\"input\",\"control\":\"selector\",\"arg\":\"cw\"}'\n```\n\nFor each change record steady-state FPS AND the min/max swing per screen, before and after. The\nuser's bar is consistent frame times first, higher fps second - flattening an 18->6->18 swing to a\nsteady 12 is a win even if the average barely moves.\n"}], "grading": {"expectations": [{"text": "Prioritizes consistency (variance) over average fps", "passed": true, "evidence": "Leads with rssi_task/affinity consistency root cause per stated priority."}, {"text": "Connects input/dial latency to the LVGL lock / render stall", "passed": true, "evidence": "Ties input responsiveness to render-core stalls / lock holding."}, {"text": "Identifies a plausible ~1Hz periodic cause, with file:line", "passed": true, "evidence": "rssi_task prop_net.c:510-535 blocking SDIO every 1000 ms; cadence matches symptom."}, {"text": "Recommends core affinity (pin LVGL vs radio tasks)", "passed": true, "evidence": "Pin LVGL one core, radios the other."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "18 file:line citations."}, {"text": "Includes a before/after measurement plan using the FPS HUD", "passed": true, "evidence": "Exact prop.py/curl A/B commands."}], "summary": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6}}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "communicator-perf", "skill_path": "<path/to/skill>", "executor_model": "<model-name>", "analyzer_model": "<model-name>", "timestamp": "2026-06-21T18:43:35Z", "evals_run": [0, 1, 2], "runs_per_configuration": 3}, "runs": [{"eval_id": 0, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 0.8571, "passed": 6, "failed": 1, "total": 7, "time_seconds": 283.8, "tokens": 91511, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Prioritizes consistency fixes ahead of pure-throughput ones", "passed": true, "evidence": "Leads with [P1] core affinity tagged 'affects: consistency'; Order-of-attack runs baseline+affinity before throughput."}, {"text": "Identifies missing core affinity / unpinned tasks, with file:line", "passed": true, "evidence": "bsp_illuminate.c:159 task_affinity=-1 plus prop_net/ble/csi/mic/engine unpinned, named the main consistency liability."}, {"text": "Names the PSRAM->hybrid LVGL allocator (lv_port_mem.c) lever", "passed": true, "evidence": "lv_port_mem.c:39-43 all allocs to PSRAM; recommends hybrid allocator."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "17 file:line citations."}, {"text": "Avoids dead ends / constraint violations", "passed": true, "evidence": "Explicit hard-constraint list; flags refresh-period as a known dead end rather than recommending it."}, {"text": "Includes a measurement plan using prop.py and the FPS HUD", "passed": true, "evidence": "## Measurement plan with prop.py shot + HUD reads."}, {"text": "Enables the FPS HUD with the correct mechanism (not {cmd:fx,on})", "passed": false, "evidence": "Uses {\"cmd\":\"fx\",\"on\":true} to 'toggle the FPS HUD' \u2014 that calls prop_fx_set_enabled (CRT overlay, prop_api.c:108). Correct is {\"cmd\":\"fx\",\"fps\":true} (prop_api.c:117). Inherited from the skill."}], "notes": []}, {"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6, "time_seconds": 231.9, "tokens": 62629, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Identifies per-frame unconditional restyle/realign of spectrum bars, with file:line", "passed": true, "evidence": "prop_ui.c:2690-2704: set_height+align+bg_color on all 24 bars every 20Hz frame, no shadow-compare."}, {"text": "Names all-PSRAM allocator as ~8-vs-18 cause + hybrid lever", "passed": true, "evidence": "lv_port_mem.c:39; documented ~8 vs 18 fps; hybrid allocator recommended."}, {"text": "Recommends change-gating/shadow-compare (mirror scanner) and/or throttle", "passed": true, "evidence": "Mirror scanner shadow-compare; drop per-frame align; throttle cadence."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "19 file:line citations."}, {"text": "Board-specific (sw render, PSRAM, no GPU) not generic", "passed": true, "evidence": "Frames everything around software render + PSRAM, rev v1.3 no GPU."}, {"text": "Includes measurement / before-after method using the FPS HUD", "passed": true, "evidence": "## Measurement plan present."}], "notes": []}, {"eval_id": 2, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 0.8333, "passed": 5, "failed": 1, "total": 6, "time_seconds": 289.1, "tokens": 76361, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Prioritizes consistency (variance) over average fps", "passed": true, "evidence": "Ranks P1 affinity/contention first; explicitly consistency-first."}, {"text": "Connects input/dial latency to the LVGL lock / render stall", "passed": false, "evidence": "Centered on rssi_task periodic hitch + affinity; did not explicitly tie dial/input latency to the LVGL lock hold (skill mentions it but the report didn't surface it)."}, {"text": "Identifies a plausible ~1Hz periodic cause, with file:line", "passed": true, "evidence": "rssi_task prop_net.c:240 \u2014 1 Hz blocking SDIO esp_wifi_sta_get_ap_info; matches the once-a-second hitch."}, {"text": "Recommends core affinity (pin LVGL vs radio tasks)", "passed": true, "evidence": "Pin LVGL to core 1, radios to core 0."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "18 file:line citations."}, {"text": "Includes a before/after measurement plan using the FPS HUD", "passed": true, "evidence": "Measurement plan present; also flagged the fx/HUD command discrepancy."}], "notes": []}, {"eval_id": 0, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.8571, "passed": 6, "failed": 1, "total": 7, "time_seconds": 316.5, "tokens": 109471, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Prioritizes consistency fixes ahead of pure-throughput ones", "passed": true, "evidence": "Leads with consistency (CRT overlay + core pinning) per stated priority."}, {"text": "Identifies missing core affinity / unpinned tasks, with file:line", "passed": true, "evidence": "bsp_illuminate.c:159 affinity -1; all tasks plain xTaskCreate."}, {"text": "Names the PSRAM->hybrid LVGL allocator (lv_port_mem.c) lever", "passed": true, "evidence": "lv_port_mem.c:39-43 hybrid allocator named."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "14 file:line citations."}, {"text": "Avoids dead ends / constraint violations", "passed": true, "evidence": "No dead-end recommendations; even flagged the stale FPS-HUD refresh-period comment."}, {"text": "Includes a measurement plan using prop.py and the FPS HUD", "passed": true, "evidence": "Measurement section present (FPS HUD A/B)."}, {"text": "Enables the FPS HUD with the correct mechanism (not {cmd:fx,on})", "passed": false, "evidence": "Flagged the fx/HUD discrepancy but did not provide the correct {\"cmd\":\"fx\",\"fps\":true} command; used {cmd:fx,on}."}], "notes": []}, {"eval_id": 1, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6, "time_seconds": 213.7, "tokens": 62613, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Identifies per-frame unconditional restyle/realign of spectrum bars, with file:line", "passed": true, "evidence": "prop_ui.c:2690-2704 unconditional rewrite of all 24 bars; pointless per-frame align."}, {"text": "Names all-PSRAM allocator as ~8-vs-18 cause + hybrid lever", "passed": true, "evidence": "PSRAM-resident heap; documented ~8 vs 18; hybrid lever (do last)."}, {"text": "Recommends change-gating/shadow-compare (mirror scanner) and/or throttle", "passed": true, "evidence": "Shadow-compare + drop align, cheapest zero-risk fix."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "12 file:line citations."}, {"text": "Board-specific (sw render, PSRAM, no GPU) not generic", "passed": true, "evidence": "Explains no-GPU software render, PSRAM draw-mask tax."}, {"text": "Includes measurement / before-after method using the FPS HUD", "passed": true, "evidence": "Measurement section with FPS HUD."}], "notes": []}, {"eval_id": 2, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6, "time_seconds": 266.8, "tokens": 75795, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Prioritizes consistency (variance) over average fps", "passed": true, "evidence": "Leads with rssi_task/affinity consistency root cause per stated priority."}, {"text": "Connects input/dial latency to the LVGL lock / render stall", "passed": true, "evidence": "Ties input responsiveness to render-core stalls / lock holding."}, {"text": "Identifies a plausible ~1Hz periodic cause, with file:line", "passed": true, "evidence": "rssi_task prop_net.c:510-535 blocking SDIO every 1000 ms; cadence matches symptom."}, {"text": "Recommends core affinity (pin LVGL vs radio tasks)", "passed": true, "evidence": "Pin LVGL one core, radios the other."}, {"text": "Findings cite concrete file:line", "passed": true, "evidence": "18 file:line citations."}, {"text": "Includes a before/after measurement plan using the FPS HUD", "passed": true, "evidence": "Exact prop.py/curl A/B commands."}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 0.8968, "stddev": 0.0902, "min": 0.8333, "max": 1.0}, "time_seconds": {"mean": 268.2667, "stddev": 31.6057, "min": 231.9, "max": 289.1}, "tokens": {"mean": 76833.6667, "stddev": 14446.8004, "min": 62629, "max": 91511}}, "without_skill": {"pass_rate": {"mean": 0.9524, "stddev": 0.0825, "min": 0.8571, "max": 1.0}, "time_seconds": {"mean": 265.6667, "stddev": 51.4094, "min": 213.7, "max": 316.5}, "tokens": {"mean": 82626.3333, "stddev": 24164.4031, "min": 62613, "max": 109471}}, "delta": {"pass_rate": "-0.06", "time_seconds": "+2.6", "tokens": "-5793"}}, "notes": []}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

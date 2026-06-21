@@ -1,0 +1,8 @@
+{"expectations":[
+{"text":"Identifies per-frame unconditional restyle/realign of spectrum bars, with file:line","passed":true,"evidence":"prop_ui.c lines named; 72 LVGL calls/frame (24 bars x 3 ops) unconditional; no shadow-compare unlike scanner."},
+{"text":"Names all-PSRAM allocator as ~8-vs-18 cause and hybrid-allocator lever","passed":true,"evidence":"lv_port_mem.c PSRAM allocator named; ~8 fps spectrum vs ~18 static; hybrid allocator recommended."},
+{"text":"Recommends change-gating/shadow-compare (mirror scanner) or cadence throttle","passed":true,"evidence":"Shadow-compare explicitly recommended, mirroring scanner WAVE_SEGS pattern."},
+{"text":"Findings cite concrete file:line","passed":true,"evidence":"20 file:line citations."},
+{"text":"Board-specific findings (software render, PSRAM, no GPU) not generic LVGL","passed":true,"evidence":"All findings grounded in rev v1.3 no-GPU, PSRAM, dual-core P4."},
+{"text":"Includes a measurement plan using the FPS HUD","passed":true,"evidence":"Measurement plan with {\"cmd\":\"fx\",\"fps\":true} to enable HUD and prop.py shot commands."}
+],"summary":{"pass_rate":1.0,"passed":6,"failed":0,"total":6}}

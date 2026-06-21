@@ -1,0 +1,45 @@
+{
+  "expectations": [
+    {
+      "text": "Prioritizes consistency fixes ahead of pure-throughput ones",
+      "passed": true,
+      "evidence": "Leads with [P1] core affinity tagged 'affects: consistency'; Order-of-attack runs baseline+affinity before throughput."
+    },
+    {
+      "text": "Identifies missing core affinity / unpinned tasks, with file:line",
+      "passed": true,
+      "evidence": "bsp_illuminate.c:159 task_affinity=-1 plus prop_net/ble/csi/mic/engine unpinned, named the main consistency liability."
+    },
+    {
+      "text": "Names the PSRAM->hybrid LVGL allocator (lv_port_mem.c) lever",
+      "passed": true,
+      "evidence": "lv_port_mem.c:39-43 all allocs to PSRAM; recommends hybrid allocator."
+    },
+    {
+      "text": "Findings cite concrete file:line",
+      "passed": true,
+      "evidence": "17 file:line citations."
+    },
+    {
+      "text": "Avoids dead ends / constraint violations",
+      "passed": true,
+      "evidence": "Explicit hard-constraint list; flags refresh-period as a known dead end rather than recommending it."
+    },
+    {
+      "text": "Includes a measurement plan using prop.py and the FPS HUD",
+      "passed": true,
+      "evidence": "## Measurement plan with prop.py shot + HUD reads."
+    },
+    {
+      "text": "Enables the FPS HUD with the correct mechanism (not {cmd:fx,on})",
+      "passed": false,
+      "evidence": "Uses {\"cmd\":\"fx\",\"on\":true} to 'toggle the FPS HUD' \u2014 that calls prop_fx_set_enabled (CRT overlay, prop_api.c:108). Correct is {\"cmd\":\"fx\",\"fps\":true} (prop_api.c:117). Inherited from the skill."
+    }
+  ],
+  "summary": {
+    "pass_rate": 0.8571,
+    "passed": 6,
+    "failed": 1,
+    "total": 7
+  }
+}

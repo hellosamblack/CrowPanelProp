@@ -1,0 +1,9 @@
+{"expectations":[
+{"text":"Prioritizes consistency fixes ahead of pure-throughput ones","passed":true,"evidence":"Leads with CRT overlay + core pinning (consistency); allocator is later."},
+{"text":"Identifies missing core affinity / unpinned tasks, with file:line","passed":true,"evidence":"bsp_illuminate.c + task creates named; 8 affinity mentions, 24 file:line."},
+{"text":"Names the PSRAM->hybrid LVGL allocator (lv_port_mem.c) lever","passed":true,"evidence":"lv_port_mem.c and hybrid allocator mentioned."},
+{"text":"Findings cite concrete file:line","passed":true,"evidence":"24 file:line citations."},
+{"text":"Avoids dead ends / constraint violations","passed":true,"evidence":"No bad recommendations found; constraints respected."},
+{"text":"Includes a measurement plan using prop.py and the FPS HUD","passed":true,"evidence":"Measurement plan present with prop.py and HUD commands."},
+{"text":"FPS HUD enabled with correct command {cmd:fx,fps:true}","passed":true,"evidence":"Uses {\"cmd\":\"fx\",\"fps\":true} to enable HUD; {\"cmd\":\"fx\",\"on\"} used separately for CRT overlay A/B."}
+],"summary":{"pass_rate":1.0,"passed":7,"failed":0,"total":7}}

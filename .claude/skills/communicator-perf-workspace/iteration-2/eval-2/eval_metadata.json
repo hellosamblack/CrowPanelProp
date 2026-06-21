@@ -1,0 +1,13 @@
+{
+  "eval_id": 2,
+  "eval_name": "laggy-input-periodic-hitch",
+  "prompt": "The dial/touch input on the communicator feels laggy and the animation hitches roughly once a second. I want buttery-smooth, consistent frame times. Profile this and tell me what to change, ranked by impact.",
+  "assertions": [
+    {"text": "Prioritizes consistency (frame-time variance) over average fps in the ranking"},
+    {"text": "Connects input/dial latency to the LVGL lock / render stall"},
+    {"text": "Identifies a plausible ~1 Hz periodic cause (e.g. rssi_task blocking SDIO poll, or the BLE list teardown/rebuild) with file:line"},
+    {"text": "Recommends core affinity (pin LVGL vs radio/background tasks) as a consistency fix"},
+    {"text": "Findings cite concrete file:line references"},
+    {"text": "Includes a before/after measurement plan using the FPS HUD"}
+  ]
+}

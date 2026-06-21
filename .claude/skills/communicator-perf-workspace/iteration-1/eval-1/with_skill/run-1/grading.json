@@ -1,0 +1,40 @@
+{
+  "expectations": [
+    {
+      "text": "Identifies per-frame unconditional restyle/realign of spectrum bars, with file:line",
+      "passed": true,
+      "evidence": "prop_ui.c:2690-2704: set_height+align+bg_color on all 24 bars every 20Hz frame, no shadow-compare."
+    },
+    {
+      "text": "Names all-PSRAM allocator as ~8-vs-18 cause + hybrid lever",
+      "passed": true,
+      "evidence": "lv_port_mem.c:39; documented ~8 vs 18 fps; hybrid allocator recommended."
+    },
+    {
+      "text": "Recommends change-gating/shadow-compare (mirror scanner) and/or throttle",
+      "passed": true,
+      "evidence": "Mirror scanner shadow-compare; drop per-frame align; throttle cadence."
+    },
+    {
+      "text": "Findings cite concrete file:line",
+      "passed": true,
+      "evidence": "19 file:line citations."
+    },
+    {
+      "text": "Board-specific (sw render, PSRAM, no GPU) not generic",
+      "passed": true,
+      "evidence": "Frames everything around software render + PSRAM, rev v1.3 no GPU."
+    },
+    {
+      "text": "Includes measurement / before-after method using the FPS HUD",
+      "passed": true,
+      "evidence": "## Measurement plan present."
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 6,
+    "failed": 0,
+    "total": 6
+  }
+}

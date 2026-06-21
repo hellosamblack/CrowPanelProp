@@ -84,6 +84,10 @@ void app_main(void)
      * reboots and reflashes. */
     ESP_ERROR_CHECK(prop_settings_init());
 
+    /* Configurable I/O bench (digital/analog in+out on the header pins). Restores
+     * saved pin modes from NVS; needs nvs up (prop_settings_init ran nvs_flash_init). */
+    ESP_ERROR_CHECK(bsp_aio_init());
+
     /* Re-apply the saved backlight brightness (hardware_init lit it at 100%). */
     uint32_t brightness = 80;
     prop_settings_get_u32("brightness", &brightness, 80);

@@ -1,0 +1,40 @@
+{
+  "expectations": [
+    {
+      "text": "Identifies per-frame unconditional restyle/realign of spectrum bars, with file:line",
+      "passed": true,
+      "evidence": "prop_ui.c:2690-2704 unconditional rewrite of all 24 bars; pointless per-frame align."
+    },
+    {
+      "text": "Names all-PSRAM allocator as ~8-vs-18 cause + hybrid lever",
+      "passed": true,
+      "evidence": "PSRAM-resident heap; documented ~8 vs 18; hybrid lever (do last)."
+    },
+    {
+      "text": "Recommends change-gating/shadow-compare (mirror scanner) and/or throttle",
+      "passed": true,
+      "evidence": "Shadow-compare + drop align, cheapest zero-risk fix."
+    },
+    {
+      "text": "Findings cite concrete file:line",
+      "passed": true,
+      "evidence": "12 file:line citations."
+    },
+    {
+      "text": "Board-specific (sw render, PSRAM, no GPU) not generic",
+      "passed": true,
+      "evidence": "Explains no-GPU software render, PSRAM draw-mask tax."
+    },
+    {
+      "text": "Includes measurement / before-after method using the FPS HUD",
+      "passed": true,
+      "evidence": "Measurement section with FPS HUD."
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 6,
+    "failed": 0,
+    "total": 6
+  }
+}

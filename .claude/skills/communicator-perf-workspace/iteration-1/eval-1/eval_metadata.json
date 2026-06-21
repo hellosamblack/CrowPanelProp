@@ -1,0 +1,13 @@
+{
+  "eval_id": 1,
+  "eval_name": "spectrum-screen-crawls",
+  "prompt": "When I open the spectrum analyzer screen on the prop it drops to a crawl and the bars stutter, but the static home screen runs fine. What's going on, and how do I make the spectrum screen smooth?",
+  "assertions": [
+    {"text": "Identifies per-frame unconditional restyle/realign of all spectrum bars (no shadow-compare) in ui_observer, with file:line"},
+    {"text": "Names the all-PSRAM LVGL allocator as the documented ~8-vs-18 fps cause and points to the hybrid-allocator lever"},
+    {"text": "Recommends change-gating/shadow-compare (mirroring the scanner waveform) and/or cadence throttle for the bars"},
+    {"text": "Findings cite concrete file:line references"},
+    {"text": "Findings are board-specific (software render, PSRAM, no GPU) rather than generic LVGL tips"},
+    {"text": "Includes a measurement plan / before-after method using the FPS HUD"}
+  ]
+}

@@ -1,0 +1,363 @@
+{
+  "metadata": {
+    "skill_name": "communicator-perf",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-06-21T18:43:35Z",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.8571,
+        "passed": 6,
+        "failed": 1,
+        "total": 7,
+        "time_seconds": 283.8,
+        "tokens": 91511,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Prioritizes consistency fixes ahead of pure-throughput ones",
+          "passed": true,
+          "evidence": "Leads with [P1] core affinity tagged 'affects: consistency'; Order-of-attack runs baseline+affinity before throughput."
+        },
+        {
+          "text": "Identifies missing core affinity / unpinned tasks, with file:line",
+          "passed": true,
+          "evidence": "bsp_illuminate.c:159 task_affinity=-1 plus prop_net/ble/csi/mic/engine unpinned, named the main consistency liability."
+        },
+        {
+          "text": "Names the PSRAM->hybrid LVGL allocator (lv_port_mem.c) lever",
+          "passed": true,
+          "evidence": "lv_port_mem.c:39-43 all allocs to PSRAM; recommends hybrid allocator."
+        },
+        {
+          "text": "Findings cite concrete file:line",
+          "passed": true,
+          "evidence": "17 file:line citations."
+        },
+        {
+          "text": "Avoids dead ends / constraint violations",
+          "passed": true,
+          "evidence": "Explicit hard-constraint list; flags refresh-period as a known dead end rather than recommending it."
+        },
+        {
+          "text": "Includes a measurement plan using prop.py and the FPS HUD",
+          "passed": true,
+          "evidence": "## Measurement plan with prop.py shot + HUD reads."
+        },
+        {
+          "text": "Enables the FPS HUD with the correct mechanism (not {cmd:fx,on})",
+          "passed": false,
+          "evidence": "Uses {\"cmd\":\"fx\",\"on\":true} to 'toggle the FPS HUD' \u2014 that calls prop_fx_set_enabled (CRT overlay, prop_api.c:108). Correct is {\"cmd\":\"fx\",\"fps\":true} (prop_api.c:117). Inherited from the skill."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 231.9,
+        "tokens": 62629,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Identifies per-frame unconditional restyle/realign of spectrum bars, with file:line",
+          "passed": true,
+          "evidence": "prop_ui.c:2690-2704: set_height+align+bg_color on all 24 bars every 20Hz frame, no shadow-compare."
+        },
+        {
+          "text": "Names all-PSRAM allocator as ~8-vs-18 cause + hybrid lever",
+          "passed": true,
+          "evidence": "lv_port_mem.c:39; documented ~8 vs 18 fps; hybrid allocator recommended."
+        },
+        {
+          "text": "Recommends change-gating/shadow-compare (mirror scanner) and/or throttle",
+          "passed": true,
+          "evidence": "Mirror scanner shadow-compare; drop per-frame align; throttle cadence."
+        },
+        {
+          "text": "Findings cite concrete file:line",
+          "passed": true,
+          "evidence": "19 file:line citations."
+        },
+        {
+          "text": "Board-specific (sw render, PSRAM, no GPU) not generic",
+          "passed": true,
+          "evidence": "Frames everything around software render + PSRAM, rev v1.3 no GPU."
+        },
+        {
+          "text": "Includes measurement / before-after method using the FPS HUD",
+          "passed": true,
+          "evidence": "## Measurement plan present."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.8333,
+        "passed": 5,
+        "failed": 1,
+        "total": 6,
+        "time_seconds": 289.1,
+        "tokens": 76361,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Prioritizes consistency (variance) over average fps",
+          "passed": true,
+          "evidence": "Ranks P1 affinity/contention first; explicitly consistency-first."
+        },
+        {
+          "text": "Connects input/dial latency to the LVGL lock / render stall",
+          "passed": false,
+          "evidence": "Centered on rssi_task periodic hitch + affinity; did not explicitly tie dial/input latency to the LVGL lock hold (skill mentions it but the report didn't surface it)."
+        },
+        {
+          "text": "Identifies a plausible ~1Hz periodic cause, with file:line",
+          "passed": true,
+          "evidence": "rssi_task prop_net.c:240 \u2014 1 Hz blocking SDIO esp_wifi_sta_get_ap_info; matches the once-a-second hitch."
+        },
+        {
+          "text": "Recommends core affinity (pin LVGL vs radio tasks)",
+          "passed": true,
+          "evidence": "Pin LVGL to core 1, radios to core 0."
+        },
+        {
+          "text": "Findings cite concrete file:line",
+          "passed": true,
+          "evidence": "18 file:line citations."
+        },
+        {
+          "text": "Includes a before/after measurement plan using the FPS HUD",
+          "passed": true,
+          "evidence": "Measurement plan present; also flagged the fx/HUD command discrepancy."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.8571,
+        "passed": 6,
+        "failed": 1,
+        "total": 7,
+        "time_seconds": 316.5,
+        "tokens": 109471,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Prioritizes consistency fixes ahead of pure-throughput ones",
+          "passed": true,
+          "evidence": "Leads with consistency (CRT overlay + core pinning) per stated priority."
+        },
+        {
+          "text": "Identifies missing core affinity / unpinned tasks, with file:line",
+          "passed": true,
+          "evidence": "bsp_illuminate.c:159 affinity -1; all tasks plain xTaskCreate."
+        },
+        {
+          "text": "Names the PSRAM->hybrid LVGL allocator (lv_port_mem.c) lever",
+          "passed": true,
+          "evidence": "lv_port_mem.c:39-43 hybrid allocator named."
+        },
+        {
+          "text": "Findings cite concrete file:line",
+          "passed": true,
+          "evidence": "14 file:line citations."
+        },
+        {
+          "text": "Avoids dead ends / constraint violations",
+          "passed": true,
+          "evidence": "No dead-end recommendations; even flagged the stale FPS-HUD refresh-period comment."
+        },
+        {
+          "text": "Includes a measurement plan using prop.py and the FPS HUD",
+          "passed": true,
+          "evidence": "Measurement section present (FPS HUD A/B)."
+        },
+        {
+          "text": "Enables the FPS HUD with the correct mechanism (not {cmd:fx,on})",
+          "passed": false,
+          "evidence": "Flagged the fx/HUD discrepancy but did not provide the correct {\"cmd\":\"fx\",\"fps\":true} command; used {cmd:fx,on}."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 213.7,
+        "tokens": 62613,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Identifies per-frame unconditional restyle/realign of spectrum bars, with file:line",
+          "passed": true,
+          "evidence": "prop_ui.c:2690-2704 unconditional rewrite of all 24 bars; pointless per-frame align."
+        },
+        {
+          "text": "Names all-PSRAM allocator as ~8-vs-18 cause + hybrid lever",
+          "passed": true,
+          "evidence": "PSRAM-resident heap; documented ~8 vs 18; hybrid lever (do last)."
+        },
+        {
+          "text": "Recommends change-gating/shadow-compare (mirror scanner) and/or throttle",
+          "passed": true,
+          "evidence": "Shadow-compare + drop align, cheapest zero-risk fix."
+        },
+        {
+          "text": "Findings cite concrete file:line",
+          "passed": true,
+          "evidence": "12 file:line citations."
+        },
+        {
+          "text": "Board-specific (sw render, PSRAM, no GPU) not generic",
+          "passed": true,
+          "evidence": "Explains no-GPU software render, PSRAM draw-mask tax."
+        },
+        {
+          "text": "Includes measurement / before-after method using the FPS HUD",
+          "passed": true,
+          "evidence": "Measurement section with FPS HUD."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 266.8,
+        "tokens": 75795,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Prioritizes consistency (variance) over average fps",
+          "passed": true,
+          "evidence": "Leads with rssi_task/affinity consistency root cause per stated priority."
+        },
+        {
+          "text": "Connects input/dial latency to the LVGL lock / render stall",
+          "passed": true,
+          "evidence": "Ties input responsiveness to render-core stalls / lock holding."
+        },
+        {
+          "text": "Identifies a plausible ~1Hz periodic cause, with file:line",
+          "passed": true,
+          "evidence": "rssi_task prop_net.c:510-535 blocking SDIO every 1000 ms; cadence matches symptom."
+        },
+        {
+          "text": "Recommends core affinity (pin LVGL vs radio tasks)",
+          "passed": true,
+          "evidence": "Pin LVGL one core, radios the other."
+        },
+        {
+          "text": "Findings cite concrete file:line",
+          "passed": true,
+          "evidence": "18 file:line citations."
+        },
+        {
+          "text": "Includes a before/after measurement plan using the FPS HUD",
+          "passed": true,
+          "evidence": "Exact prop.py/curl A/B commands."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 0.8968,
+        "stddev": 0.0902,
+        "min": 0.8333,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 268.2667,
+        "stddev": 31.6057,
+        "min": 231.9,
+        "max": 289.1
+      },
+      "tokens": {
+        "mean": 76833.6667,
+        "stddev": 14446.8004,
+        "min": 62629,
+        "max": 91511
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.9524,
+        "stddev": 0.0825,
+        "min": 0.8571,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 265.6667,
+        "stddev": 51.4094,
+        "min": 213.7,
+        "max": 316.5
+      },
+      "tokens": {
+        "mean": 82626.3333,
+        "stddev": 24164.4031,
+        "min": 62613,
+        "max": 109471
+      }
+    },
+    "delta": {
+      "pass_rate": "-0.06",
+      "time_seconds": "+2.6",
+      "tokens": "-5793"
+    }
+  },
+  "notes": []
+}

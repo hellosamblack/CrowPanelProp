@@ -1,0 +1,8 @@
+{"expectations":[
+{"text":"Prioritizes consistency (frame-time variance) over average fps","passed":true,"evidence":"Leads with core affinity and rssi_task hitch; consistency stated as priority."},
+{"text":"Connects input/dial latency to the LVGL lock / render stall","passed":true,"evidence":"Input under LVGL lock; render stall causes input lag — connection made."},
+{"text":"Identifies a plausible ~1Hz periodic cause with file:line","passed":true,"evidence":"rssi_task 1 Hz SDIO call named with file:line."},
+{"text":"Recommends core affinity (pin LVGL vs radio/background tasks)","passed":true,"evidence":"Core pinning recommended with specific task assignments."},
+{"text":"Findings cite concrete file:line","passed":true,"evidence":"23 file:line citations."},
+{"text":"Includes a before/after measurement plan using the FPS HUD","passed":true,"evidence":"Measurement plan with correct {\"cmd\":\"fx\",\"fps\":true} HUD enable."}
+],"summary":{"pass_rate":1.0,"passed":6,"failed":0,"total":6}}

@@ -24,6 +24,10 @@ idf.py -C firmware/communicator -p /dev/ttyUSB0 flash
 ```
 Or use the helper: `./tools/dev.sh bf -Port /dev/ttyUSB0` or `./tools/dev.sh ota`. Board details: /dev/ttyUSB0.
 
+**After adding a new `main/*.c` file**, run `idf.py reconfigure` (or `dev.sh reconfigure` / `dev.ps1 reconfigure`)
+before building — `CMakeLists.txt` GLOBs `main/*.c` at configure time and won't pick up new files otherwise.
+Symptom: `undefined reference` link errors that disappear after a reconfigure.
+
 **Default WiFi (optional):** copy `wifi_secret.env.example` → `wifi_secret.env` (gitignored) and
 set `SSID=` / `PASS=`. `main/CMakeLists.txt` bakes them in as the *default* STA creds, applied only
 when NVS is empty (fresh flash / `erase-flash`); creds set later via SETUP→WI-FI or `/cmd wifi`
@@ -111,14 +115,12 @@ Palette + helpers are at the top of `prop_ui.c`:
 ## Memory reality (don't relearn the hard way)
 
 - **LVGL's heap is routed entirely to PSRAM** via a custom allocator (`main/lv_port_mem.c`,
-  `CONFIG_LV_USE_CUSTOM_MALLOC`). LVGL 9 allocates line/shape anti-alias masks via `lv_malloc`
-  *during drawing*, and the old 32 KB builtin internal pool exhausted on instrument screens → NULL →
-  store-fault in `draw_line_skew`. PSRAM removes that ceiling and leaves internal RAM for esp_hosted.
-  **Cost:** ~8 fps on the heavy spectrum screen (vs ~18 static) — a hybrid allocator (small allocs
-  internal, big draw masks PSRAM) is the tuning lever if framerate matters.
-- **Do not switch back to the builtin pool / raise `LV_MEM`** — it starves esp_hosted ("mempool: no
-  mem" boot loop). Other big buffers/assets also go in **PSRAM** (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`).
-  If WiFi RAM gets tight, the lever is `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`.
+  `CONFIG_LV_USE_CUSTOM_MALLOC`). Other big buffers/assets also go in **PSRAM**
+  (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`). If WiFi RAM gets tight, use
+  `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`. For framerate analysis and tuning levers (hybrid
+  allocator, core affinity, draw-buffer strategy), see the `communicator-perf` skill.
+- **Do not switch back to the builtin pool / raise `LV_MEM`** — it starves esp_hosted's SDIO DMA
+  mempool → "HS_MP / mempool: no mem" boot loop.
 - **Main task stack must be 8192** (`CONFIG_ESP_MAIN_TASK_STACK_SIZE`), not the IDF default 3584. Once
   BT/NimBLE is on, `app_main`'s bring-up (`nvs_flash_init` → partition mmap, then engine/UI/net/BLE)
   overruns 3584 B. The overrun does NOT print a clean "stack overflow" — it surfaces as
@@ -165,11 +167,8 @@ The C6 co-processor is mined for prop "sensor" data beyond plain WiFi — the th
   16 kHz / 16-bit / mono, `driver/i2s_pdm.h`. The root `readme.md` documents only audio-OUT
   (I2S LRCLK 21 / BCLK 22 / SDATA 23, amp ctrl 30); the input path came from
   `example/*/Lesson11-Playback_After_Recording/peripheral/bsp_mic/`. See the `board-mic-path` memory.
-- **LVGL heap lives in PSRAM** (custom allocator, see Memory reality) — the old 32 KB builtin pool
-  exhausted during v9 line drawing. Don't restore the builtin pool: esp_hosted's SDIO DMA mempool
-  needs the internal RAM ("HS_MP: mempool create failed: no mem" boot loop). Panels are still
-  **lazily built, one alive at a time** (`open_panel`/`close_panel` in `prop_ui.c`), which keeps the
-  object count and per-frame render cost down.
+- **LVGL heap lives in PSRAM** (see Memory reality). Panels are **lazily built, one alive at a time**
+  (`open_panel`/`close_panel` in `prop_ui.c`), which keeps the live object count and per-frame render cost down.
 
 ## API quick reference (for scripting/tests)
 
@@ -179,7 +178,8 @@ vitals scan spectrum rfband ble csi instruments sensors about`; `instruments`/`s
 are the rail submenus, the rest deep-link straight to a panel),
 `{"cmd":"input","control":"selector|tab|action","arg":"cw|ccw|press"|N}`
 (simulated dial/tab/action nav; boots to `home`),
-`{"cmd":"sens","value":0-100}`, `{"cmd":"fx","on":true,"value":0-100}`,
+`{"cmd":"sens","value":0-100}`, `{"cmd":"fx","on":true,"value":0-100}` (CRT overlay on/off + intensity),
+`{"cmd":"fx","fps":true}` (toggle FPS HUD — separate from the overlay),
 `{"cmd":"led","name":"alert","on":true}`, `{"cmd":"status","value":"..."}`,
 `{"cmd":"channel","value":"..."}`, `{"cmd":"wifi","ssid":"..","pass":"..","remember":true}`.
 `GET /state` JSON (scene/status/channel/link/sensitivity/channel_pos/ip/version/leds,

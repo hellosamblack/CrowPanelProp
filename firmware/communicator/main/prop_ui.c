@@ -1,4 +1,4 @@
-/* prop_ui — cassette-futurism LVGL readout, driven by prop_engine state. */
+/* prop_ui - cassette-futurism LVGL readout, driven by prop_engine state. */
 #include "prop_ui.h"
 #include "prop_engine.h"
 #include "prop_net.h"
@@ -9,9 +9,11 @@
 #include "prop_csi.h"
 #include "prop_content.h"
 #include "bsp_io.h"
+#include "bsp_aio.h"
 #include "bsp_illuminate.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <ctype.h>
 #include <math.h>
 #include <time.h>
@@ -37,7 +39,7 @@
 /* SCAN_W is the CONTENT width (right of the rail). All panels/readouts lay out
  * relative to this, so redefining it here insets every screen with no per-panel edits. */
 #define SCAN_W (SCREEN_W - RAIL_W)
-#define SCAN_TRACK_Y 330        /* taller, lower trace — the hero waveform */
+#define SCAN_TRACK_Y 330        /* taller, lower trace - the hero waveform */
 #define SCAN_TRACK_H 160
 
 static lv_obj_t *s_status_label;
@@ -103,7 +105,7 @@ static bool s_connect_pending;      /* awaiting connect result for status text *
 static bool s_pass_shown;
 
 /* ---- Setup/instrument screens: lazily built, ONE alive at a time ---------
- * LVGL's heap (LV_MEM, 32 KB) cannot grow — esp_hosted's SDIO DMA mempool needs
+ * LVGL's heap (LV_MEM, 32 KB) cannot grow - esp_hosted's SDIO DMA mempool needs
  * the internal RAM, so a bigger LV_MEM boot-loops ("HS_MP: mempool ... no mem").
  * Therefore panels are NOT all pre-built: exactly one is alive at a time, built
  * on navigation and torn down on leave. This caps LVGL usage at "main screen +
@@ -120,15 +122,17 @@ typedef enum {
     PK_ARTICLE,    /* a single archive entry */
     PK_CASSETTE,   /* cassette deck (stub) */
     PK_INSIGHTS,   /* insight engine (stub) */
+    PK_IO,         /* I/O bench overview (grid of pin boxes) */
+    PK_IO_PIN,     /* I/O bench single-pin config page (s_io_pin) */
 } panel_kind_t;
 
 static lv_obj_t *s_root;          /* the CONTENT container (panels are built on it) */
 static lv_obj_t *s_rail_strip;    /* persistent icon nav rail on the real screen (left edge) */
-static bool s_ui_ready;           /* true once boot build is done — gates screen transitions */
+static bool s_ui_ready;           /* true once boot build is done - gates screen transitions */
 static lv_obj_t *s_cur_panel;     /* the one live setup panel, or NULL (main) */
 static panel_kind_t s_cur_kind;
 
-/* Live value readouts updated by panels / the observer — valid ONLY while the
+/* Live value readouts updated by panels / the observer - valid ONLY while the
  * owning panel is the current one (NULLed on teardown). */
 static lv_obj_t *s_disp_bright_val, *s_audio_vol_val;
 static lv_obj_t *s_fx_scan_val, *s_fx_phos_val, *s_fx_vign_val, *s_fx_refr_val;
@@ -165,6 +169,33 @@ static lv_obj_t *s_csi_bars[PROP_CSI_BINS];
 static lv_obj_t *s_csi_status;
 static float s_csi_decay[PROP_CSI_BINS];   /* UI-side peak-hold / decay */
 
+/* I/O BENCH (PK_IO overview grid + PK_IO_PIN single-pin config). One panel alive at a
+ * time; these widget pointers belong to whichever IO panel is current and are NULLed on
+ * teardown. s_io_pin selects which pin the config page edits. */
+#define IO_MAX 24
+/* Overview grid (PK_IO): per-pin box widgets. */
+static lv_obj_t *s_io_box[IO_MAX];     /* box container */
+static lv_obj_t *s_io_val[IO_MAX];     /* big pin-number label */
+static lv_obj_t *s_io_sub[IO_MAX];     /* state text under the number */
+static lv_obj_t *s_io_fill[IO_MAX];    /* analog fill rectangle */
+static int       s_io_last[IO_MAX];    /* last-painted state key, to skip redundant repaints */
+/* Single-pin config page (PK_IO_PIN): live widgets for the one pin being edited. */
+static int       s_io_pin;             /* index of the pin shown by PK_IO_PIN */
+static lv_obj_t *s_pin_read;           /* digital level / analog raw+% readout label */
+static lv_obj_t *s_pin_fill;           /* analog-in meter fill */
+static lv_obj_t *s_pin_edges;          /* interrupt edge-count label */
+static lv_obj_t *s_pin_aout;           /* analog-out readout label */
+static lv_obj_t *s_pin_slider;         /* analog-out slider */
+static lv_obj_t *s_pin_entry;          /* analog-out numeric entry */
+static char s_io_err[64];              /* one-shot error banner for the config page */
+
+/* Overview grid geometry: 17 pins as boxes, 6 across, 3 rows, no scroll. Sized to
+ * fill the content area below the title (SCAN_W wide, ~600 tall). */
+#define IO_COLS  6
+#define IO_GAP   10
+#define IO_BOX_W 143
+#define IO_BOX_H 150
+
 /* Builders + lifecycle (defined below). */
 static lv_obj_t *build_home_panel(lv_obj_t *parent);
 static lv_obj_t *build_menu_panel(lv_obj_t *parent);
@@ -185,6 +216,8 @@ static lv_obj_t *build_cassette_panel(lv_obj_t *parent);
 static lv_obj_t *build_insights_panel(lv_obj_t *parent);
 static lv_obj_t *build_instruments_panel(lv_obj_t *parent);
 static lv_obj_t *build_sensors_panel(lv_obj_t *parent);
+static lv_obj_t *build_io_panel(lv_obj_t *parent);
+static lv_obj_t *build_io_pin_panel(lv_obj_t *parent);
 static void wifi_panel_opened(void);
 static void start_signal_scan(void);
 static void start_rfband_scan(void);
@@ -225,11 +258,11 @@ static int s_rail_sel;                 /* highlighted function on the console */
 static int s_archive_section;          /* current ARCHIVE tab (0..prop_section_count-1) */
 static int s_archive_entry;            /* selected entry within the section */
 
-/* Console (PK_HOME) live readouts — valid only while PK_HOME is the live panel. */
+/* Console (PK_HOME) live readouts - valid only while PK_HOME is the live panel. */
 static lv_obj_t *s_home_clock, *s_home_temp, *s_home_link;
 static lv_obj_t *s_rail_btns[RAIL_COUNT];   /* rail rows, for dial highlighting */
 
-/* ARCHIVE browser widgets — valid only while PK_ARCHIVE is live. */
+/* ARCHIVE browser widgets - valid only while PK_ARCHIVE is live. */
 static lv_obj_t *s_arch_tabs[8];        /* section tab buttons (>= prop_section_count) */
 static lv_obj_t *s_arch_rows[16];       /* entry rows, for dial highlighting */
 static int s_arch_row_count;
@@ -260,12 +293,18 @@ static void close_panel(void)
     s_csi_status = NULL;
     for (int i = 0; i < PROP_CSI_BINS; i++) s_csi_bars[i] = NULL;
     s_home_clock = NULL; s_home_temp = NULL; s_home_link = NULL;
-    /* s_rail_btns are the persistent rail cells on the real screen — NOT children
+    /* s_rail_btns are the persistent rail cells on the real screen - NOT children
      * of the torn-down panel, so they survive close_panel and are never nulled. */
     for (int i = 0; i < (int)(sizeof(s_arch_tabs) / sizeof(s_arch_tabs[0])); i++) s_arch_tabs[i] = NULL;
     for (int i = 0; i < (int)(sizeof(s_arch_rows) / sizeof(s_arch_rows[0])); i++) s_arch_rows[i] = NULL;
     s_arch_row_count = 0;
     s_article_scroll = NULL;
+    for (int i = 0; i < IO_MAX; i++) {
+        s_io_box[i] = NULL; s_io_val[i] = NULL; s_io_sub[i] = NULL;
+        s_io_fill[i] = NULL; s_io_last[i] = -1;
+    }
+    s_pin_read = NULL; s_pin_fill = NULL; s_pin_edges = NULL;
+    s_pin_aout = NULL; s_pin_slider = NULL; s_pin_entry = NULL;
     s_connect_pending = false;
 }
 
@@ -277,7 +316,8 @@ static void rail_sync(panel_kind_t kind)
     panel_kind_t want = kind;
     switch (kind) {
         case PK_WIFI: case PK_DISPLAY: case PK_AUDIO:
-        case PK_LEDS: case PK_ABOUT: case PK_MENU: want = PK_MENU; break;
+        case PK_LEDS: case PK_ABOUT: case PK_MENU:
+        case PK_IO: case PK_IO_PIN: want = PK_MENU; break;
         case PK_ARTICLE: want = PK_ARCHIVE; break;
         /* Instruments + sensors live under their group; the bare scanner readout
          * (PK_NONE) belongs to INSTRUMENTS too. */
@@ -324,7 +364,9 @@ static void open_panel(panel_kind_t kind)
         case PK_ARTICLE: s_cur_panel = build_article_panel(s_root); break;
         case PK_CASSETTE: s_cur_panel = build_cassette_panel(s_root); break;
         case PK_INSIGHTS: s_cur_panel = build_insights_panel(s_root); break;
-        default: break;    /* PK_NONE: no panel — the SCANNER readout shows through */
+        case PK_IO:       s_cur_panel = build_io_panel(s_root); break;
+        case PK_IO_PIN:   s_cur_panel = build_io_pin_panel(s_root); break;
+        default: break;    /* PK_NONE: no panel - the SCANNER readout shows through */
     }
     s_cur_kind = kind;
     if (kind == PK_WIFI) {
@@ -720,7 +762,7 @@ static lv_obj_t *build_display_panel(lv_obj_t *parent)
     return p;
 }
 
-/* LEDS: discrete lamps (on/off only) — per-lamp toggles + a lamp test. */
+/* LEDS: discrete lamps (on/off only) - per-lamp toggles + a lamp test. */
 static void led_sw_cb(lv_event_t *e)
 {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
@@ -855,7 +897,7 @@ static lv_obj_t *build_vitals_panel(lv_obj_t *parent)
     s_vit_cell   = kit_meter_row(b, "CELL",      &s_vit_cell_bar);
     s_vit_uptime = kit_meter_row(b, "UPTIME",    NULL);
 
-    /* UPLINK dossier — info about the AP this unit is associated with (cached by
+    /* UPLINK dossier - info about the AP this unit is associated with (cached by
      * prop_net's background poll; updated live by the observer). */
     lv_obj_t *uphdr = lv_label_create(b);
     lv_label_set_text(uphdr, "UPLINK");
@@ -1033,7 +1075,7 @@ static lv_obj_t *build_spectrum_panel(lv_obj_t *parent)
 
 /* ---- RF BAND instrument (2.4 GHz channel occupancy bar chart) -------------
  * A WiFi-derived "sensor": one bar per channel (1..13), height = how busy/strong
- * that channel is. Pure reuse of the scan path (prop_net_scan_channels) — no new
+ * that channel is. Pure reuse of the scan path (prop_net_scan_channels) - no new
  * radio config. A background scan fills the cached histogram; the observer renders
  * the bars with the same peak-hold ballistics as the mic SPECTRUM. */
 
@@ -1248,7 +1290,7 @@ static void ble_add_row(int i, const prop_ble_dev_t *d)
 }
 
 /* ---- SIGNAL ENVIRONMENT instrument (WiFi CSI, or synthetic fallback) -------
- * Per-subcarrier channel amplitude as a dense bar field — the RF "texture" of the
+ * Per-subcarrier channel amplitude as a dense bar field - the RF "texture" of the
  * room. Driven by prop_csi, which serves real CSI when frames are arriving and a
  * synthetic RSSI-variance trace otherwise; the header reports which is live. */
 
@@ -1304,7 +1346,7 @@ static lv_obj_t *build_csi_panel(lv_obj_t *parent)
 
 #define RAIL_CELL_H (600 / RAIL_COUNT)
 
-/* lv_line keeps a pointer to its points (no copy) — each polyline needs a live
+/* lv_line keeps a pointer to its points (no copy) - each polyline needs a live
  * buffer. The rail is built once, so one buffer per glyph is enough. */
 static lv_point_precise_t s_ic_scan[9];
 static lv_point_precise_t s_ic_vit[6];
@@ -1460,7 +1502,7 @@ static void recolor_cell(lv_obj_t *cell, lv_color_t col)
 }
 
 /* Light the cursor cell (glyph inverts to dark on an amber fill); others sit as
- * muted glyphs on transparent — camera-legible, matches the old rail. */
+ * muted glyphs on transparent - camera-legible, matches the old rail. */
 static void set_rail_highlight(void)
 {
     for (int i = 0; i < RAIL_COUNT; i++) {
@@ -1689,7 +1731,7 @@ static uint32_t title_hash(const char *s)
     return h;
 }
 
-/* A framed inset box — the common visual container. */
+/* A framed inset box - the common visual container. */
 static lv_obj_t *visual_frame(lv_obj_t *p, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h)
 {
     lv_obj_t *b = lv_obj_create(p);
@@ -1749,7 +1791,7 @@ static lv_obj_t *vis_caption(lv_obj_t *p, const char *txt)
     return l;
 }
 
-/* CLIMATE — a diurnal thermal trace (oscilloscope/recorder character). */
+/* CLIMATE - a diurnal thermal trace (oscilloscope/recorder character). */
 static void vis_climate(lv_obj_t *p, const prop_entry_t *en)
 {
     vis_caption(p, "THERMAL CYCLE  //  24H DIURNAL");
@@ -1795,7 +1837,7 @@ static void vis_climate(lv_obj_t *p, const prop_entry_t *en)
     }
 }
 
-/* MAP — a survey map of the territory: a faint graticule, dune-field contours, the
+/* MAP - a survey map of the territory: a faint graticule, dune-field contours, the
  * escarpment ridge, labelled region markers linked by a trail, a compass rose and
  * a scale bar, with the current region marked. Drawn from primitives, no assets. */
 static void vis_map(lv_obj_t *p, int entry, const prop_entry_t *en)
@@ -1898,7 +1940,7 @@ static void vis_map(lv_obj_t *p, int entry, const prop_entry_t *en)
     lv_obj_align(co, LV_ALIGN_TOP_RIGHT, -34, 94);
 }
 
-/* WILDLIFE — a bio-scan dossier: a reticle portrait + a stat block. */
+/* WILDLIFE - a bio-scan dossier: a reticle portrait + a stat block. */
 static void vis_wildlife(lv_obj_t *p, const prop_entry_t *en)
 {
     vis_caption(p, "SPECIMEN DOSSIER  //  BIO-SCAN");
@@ -1932,7 +1974,7 @@ static void vis_wildlife(lv_obj_t *p, const prop_entry_t *en)
     }
 }
 
-/* PLANTS — a field-guide plate: a drawn cactus + spec tags. */
+/* PLANTS - a field-guide plate: a drawn cactus + spec tags. */
 static void vis_plants(lv_obj_t *p, const prop_entry_t *en)
 {
     vis_caption(p, "FIELD PLATE  //  FLORA SPECIMEN");
@@ -2085,6 +2127,469 @@ static lv_obj_t *build_insights_panel(lv_obj_t *parent)
 }
 
 /* Global SETUP menu (its own lazily-built panel). Rows open sub-panels by kind. */
+/* ======================= I/O BENCH (PK_IO / PK_IO_PIN) ===================
+ * Overview is a one-page grid of pin boxes (number inside, coloured by state).
+ * Tapping a box opens a single-pin config page exposing the full GPIO option set
+ * (mode, pull-up/down, drive strength, edge interrupt) plus level/analog controls.
+ * bsp_aio owns all the hardware + NVS persistence; this is a pure view over it. */
+
+static void back_to_io_cb(lv_event_t *e) { (void)e; open_panel(PK_IO); }
+
+static const char *io_mode_name(aio_mode_t m)
+{
+    switch (m) {
+        case AIO_DIGITAL_IN:  return "DIGITAL IN";
+        case AIO_DIGITAL_OUT: return "DIGITAL OUT";
+        case AIO_ANALOG_IN:   return "ANALOG IN";
+        case AIO_ANALOG_OUT:  return "ANALOG OUT";
+        default:              return "?";
+    }
+}
+
+/* Candidate modes a pin can take, in dropdown order (ANALOG IN only on ADC pins). */
+static aio_mode_t io_candidate(int pin, int sel)
+{
+    int n = 0;
+    for (int m = 0; m < AIO_MODE_COUNT; m++) {
+        if (m == AIO_ANALOG_IN && !bsp_aio_info(pin)->adc_ok) continue;
+        if (n == sel) return (aio_mode_t)m;
+        n++;
+    }
+    return AIO_DIGITAL_IN;
+}
+static int io_sel_of(int pin, aio_mode_t mode)
+{
+    int n = 0;
+    for (int m = 0; m < AIO_MODE_COUNT; m++) {
+        if (m == AIO_ANALOG_IN && !bsp_aio_info(pin)->adc_ok) continue;
+        if (m == (int)mode) return n;
+        n++;
+    }
+    return 0;
+}
+
+static void io_aout_text(int idx, char *buf, size_t n)
+{
+    int pct = bsp_aio_get_aout(idx);
+    if (bsp_aio_get_volts_pref(idx)) snprintf(buf, n, "%.2f V", (double)bsp_aio_volts(pct));
+    else                             snprintf(buf, n, "%d%%", pct);
+}
+
+static lv_obj_t *io_btn(lv_obj_t *parent, const char *txt, lv_coord_t w, lv_event_cb_t cb, void *ud)
+{
+    lv_obj_t *b = lv_btn_create(parent);
+    lv_obj_set_size(b, w, 50);
+    style_btn(b);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ud);
+    lv_obj_t *l = lv_label_create(b);
+    lv_label_set_text(l, txt);
+    lv_obj_center(l);
+    return b;
+}
+
+/* ---- overview box paint ---- */
+
+/* Tapping a box opens its single-pin config page. */
+static void io_box_tap_cb(lv_event_t *e)
+{
+    s_io_pin = (int)(intptr_t)lv_event_get_user_data(e);
+    open_panel(PK_IO_PIN);
+}
+
+/* A small int capturing everything io_box_paint draws, so the observer repaints a box
+ * only when its state actually changes. */
+static int io_box_key(int i)
+{
+    aio_mode_t m = bsp_aio_get_mode(i);
+    int v = 0;
+    if (m == AIO_ANALOG_IN)       { int raw = 0, pct = 0; if (bsp_aio_read_ain(i, &raw, &pct) == ESP_OK) v = pct; }
+    else if (m == AIO_ANALOG_OUT) { v = bsp_aio_get_aout(i); }
+    else                          { v = (bsp_aio_read_level(i) > 0); }   /* DI / DO */
+    return (int)m * 1000 + v;
+}
+
+/* Paint one overview box: border by direction (thin/muted input, thick/amber output,
+ * hairline dim when disabled), fill/colour by value. Safe from build and the observer. */
+static void io_box_paint(int i)
+{
+    lv_obj_t *box = s_io_box[i];
+    if (!box || !s_io_val[i] || !s_io_sub[i] || !s_io_fill[i]) return;
+    aio_mode_t m = bsp_aio_get_mode(i);
+    bool analog = (m == AIO_ANALOG_IN || m == AIO_ANALOG_OUT);
+    bool out = aio_is_output(m) || m == AIO_ANALOG_OUT;
+
+    /* Border encodes direction: thin muted = input, thick amber = output. */
+    lv_obj_set_style_border_color(box, out ? COL_AMBER : COL_MUTE, 0);
+    lv_obj_set_style_border_width(box, out ? 4 : 2, 0);
+    lv_obj_add_flag(s_io_fill[i], LV_OBJ_FLAG_HIDDEN);
+
+    if (analog) {
+        int pct = io_box_key(i) % 1000;
+        lv_obj_set_style_bg_color(box, COL_PANEL_ITEM, 0);
+        lv_obj_clear_flag(s_io_fill[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_bg_color(s_io_fill[i], COL_DIM, 0);
+        int inner = IO_BOX_H - 2 * (out ? 4 : 2);
+        lv_obj_set_height(s_io_fill[i], pct * inner / 100);
+        lv_obj_align(s_io_fill[i], LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_style_text_color(s_io_val[i], COL_AMBER, 0);
+        char sub[16];
+        if (m == AIO_ANALOG_OUT && bsp_aio_get_volts_pref(i))
+            snprintf(sub, sizeof(sub), "%.2fV", (double)bsp_aio_volts(pct));
+        else
+            snprintf(sub, sizeof(sub), "%d%%", pct);
+        lv_label_set_text(s_io_sub[i], sub);
+        lv_obj_set_style_text_color(s_io_sub[i], COL_AMBER, 0);
+    } else {   /* a plain digital GPIO mode */
+        int lvl = bsp_aio_read_level(i) > 0;
+        lv_obj_set_style_bg_color(box, lvl ? COL_AMBER : COL_PANEL_ITEM, 0);
+        lv_color_t fg = lvl ? COL_BG : COL_MUTE;   /* invert text when the box lights up */
+        lv_obj_set_style_text_color(s_io_val[i], fg, 0);
+        lv_label_set_text(s_io_sub[i], lvl ? "HI" : "LO");
+        lv_obj_set_style_text_color(s_io_sub[i], fg, 0);
+    }
+}
+
+/* ---- single-pin config-page callbacks (operate on s_io_pin) ---- */
+static void io_rebuild_async(void *u) { (void)u; if (s_cur_kind == PK_IO_PIN) open_panel(PK_IO_PIN); }
+
+static void io_mode_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    aio_mode_t m = io_candidate(pin, lv_dropdown_get_selected(lv_event_get_target(e)));
+    esp_err_t err = bsp_aio_set_mode(pin, m);
+    if (err != ESP_OK) {
+        snprintf(s_io_err, sizeof(s_io_err), "%s",
+                 err == ESP_ERR_NO_MEM ? "no free PWM channel" : esp_err_to_name(err));
+    }
+    lv_async_call(io_rebuild_async, NULL);   /* mode change restructures the page */
+}
+
+static void io_pull_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    bsp_aio_set_pull(pin, (aio_pull_t)lv_dropdown_get_selected(lv_event_get_target(e)));
+}
+static void io_filter_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    bsp_aio_set_filter(pin, lv_dropdown_get_selected(lv_event_get_target(e)));
+}
+static void io_drive_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    bsp_aio_set_drive(pin, lv_dropdown_get_selected(lv_event_get_target(e)));
+}
+static void io_irq_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    bsp_aio_set_irq(pin, (aio_irq_t)lv_dropdown_get_selected(lv_event_get_target(e)));
+    lv_async_call(io_rebuild_async, NULL);   /* show/hide the edge-count row */
+}
+static void io_edges_reset_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    bsp_aio_reset_edges(pin);
+    if (s_pin_edges) lv_label_set_text(s_pin_edges, "0");
+}
+static void io_od_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    bsp_aio_set_od(pin, lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+static void io_atten_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    bsp_aio_set_atten(pin, lv_dropdown_get_selected(lv_event_get_target(e)));
+}
+static void io_freq_cb(lv_event_t *e)
+{
+    bsp_aio_set_freq(lv_dropdown_get_selected(lv_event_get_target(e)));
+}
+static void io_dout_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    bsp_aio_set_dout(pin, lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+static void io_volts_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    bsp_aio_set_volts_pref(pin, lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+    if (s_pin_aout) { char b[24]; io_aout_text(pin, b, sizeof(b)); lv_label_set_text(s_pin_aout, b); }
+}
+
+/* Apply a new analog-out duty and keep slider / entry / readout in sync. */
+static void io_aout_apply(int pin, int pct, bool sync_entry)
+{
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    bsp_aio_set_aout(pin, pct);
+    if (s_pin_slider) lv_slider_set_value(s_pin_slider, pct, LV_ANIM_OFF);
+    if (sync_entry && s_pin_entry) { char b[8]; snprintf(b, sizeof(b), "%d", pct); lv_textarea_set_text(s_pin_entry, b); }
+    if (s_pin_aout) { char b[24]; io_aout_text(pin, b, sizeof(b)); lv_label_set_text(s_pin_aout, b); }
+}
+static void io_slider_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    io_aout_apply(pin, lv_slider_get_value(lv_event_get_target(e)), true);
+}
+static void io_entry_cb(lv_event_t *e)
+{
+    int pin = (int)(intptr_t)lv_event_get_user_data(e);
+    io_aout_apply(pin, atoi(lv_textarea_get_text(lv_event_get_target(e))), false);
+}
+static void io_step_cb(lv_event_t *e)
+{
+    intptr_t p = (intptr_t)lv_event_get_user_data(e);
+    int pin = (int)(p >> 1);
+    io_aout_apply(pin, bsp_aio_get_aout(pin) + ((p & 1) ? 5 : -5), true);
+}
+
+/* A muted one-line explanation under a setting (sits tight to its control). */
+static void io_cap(lv_obj_t *b, const char *txt)
+{
+    lv_obj_t *l = lv_label_create(b);
+    lv_label_set_text(l, txt);
+    lv_obj_set_width(l, LV_PCT(100));
+    lv_obj_set_style_text_color(l, COL_MUTE, 0);
+    lv_obj_set_style_text_opa(l, LV_OPA_70, 0);
+}
+
+/* A tight setting block: control + caption with a small gap, so a setting reads as one
+ * unit and the body's larger gap separates one setting from the next. */
+static lv_obj_t *io_setting(lv_obj_t *b)
+{
+    lv_obj_t *c = lv_obj_create(b);
+    lv_obj_remove_style_all(c);
+    lv_obj_set_width(c, LV_PCT(100));
+    lv_obj_set_height(c, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(c, 2, 0);
+    return c;
+}
+
+/* A labelled dropdown row: "LABEL ....... [dropdown]". Returns the dropdown. */
+static lv_obj_t *io_dd_row(lv_obj_t *b, const char *label, const char *opts, int sel,
+                           lv_event_cb_t cb, int pin)
+{
+    lv_obj_t *row = kit_row(b);
+    lv_obj_t *l = lv_label_create(row);
+    lv_label_set_text(l, label);
+    lv_obj_set_style_text_color(l, COL_AMBER, 0);
+    lv_obj_t *dd = lv_dropdown_create(row);
+    lv_dropdown_set_options(dd, opts);
+    lv_dropdown_set_selected(dd, sel);
+    lv_obj_set_width(dd, 250);
+    style_field(dd);
+    lv_obj_add_event_cb(dd, cb, LV_EVENT_VALUE_CHANGED, (void *)(intptr_t)pin);
+    return dd;
+}
+
+/* Setting = control + caption, grouped tightly. */
+static lv_obj_t *io_set_dd(lv_obj_t *b, const char *label, const char *opts, int sel,
+                           lv_event_cb_t cb, int pin, const char *cap)
+{
+    lv_obj_t *c = io_setting(b);
+    lv_obj_t *dd = io_dd_row(c, label, opts, sel, cb, pin);
+    io_cap(c, cap);
+    return dd;
+}
+static lv_obj_t *io_set_sw(lv_obj_t *b, const char *label, bool on, lv_event_cb_t cb,
+                           int pin, const char *cap)
+{
+    lv_obj_t *c = io_setting(b);
+    lv_obj_t *sw = kit_switch_row(c, label, on, cb, (void *)(intptr_t)pin);
+    io_cap(c, cap);
+    return sw;
+}
+static lv_obj_t *io_set_info(lv_obj_t *b, const char *key, const char *val, const char *cap)
+{
+    lv_obj_t *c = io_setting(b);
+    lv_obj_t *v = kit_info_row(c, key, val);
+    io_cap(c, cap);
+    return v;
+}
+
+/* Overview: every pin as a box on one page. Number inside; border = direction
+ * (thin/muted input, thick/amber output); digital boxes light amber when HIGH;
+ * analog boxes fill from the bottom in proportion to their value. Tap to configure. */
+static lv_obj_t *build_io_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "I/O BENCH", back_to_menu_cb);
+
+    lv_obj_t *grid = lv_obj_create(p);
+    lv_obj_remove_style_all(grid);
+    lv_obj_set_size(grid, IO_COLS * IO_BOX_W + (IO_COLS - 1) * IO_GAP,
+                    3 * IO_BOX_H + 2 * IO_GAP);
+    lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 76);
+    lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(grid, IO_GAP, 0);
+    lv_obj_set_style_pad_row(grid, IO_GAP, 0);
+
+    int count = bsp_aio_count();
+    for (int i = 0; i < count && i < IO_MAX; i++) {
+        const aio_pin_t *pin = bsp_aio_info(i);
+
+        lv_obj_t *box = lv_obj_create(grid);
+        lv_obj_set_size(box, IO_BOX_W, IO_BOX_H);
+        lv_obj_set_style_radius(box, 0, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(box, io_box_tap_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        s_io_box[i] = box;
+
+        lv_obj_t *fill = lv_obj_create(box);   /* analog fill, behind the text */
+        lv_obj_remove_style_all(fill);
+        lv_obj_set_width(fill, LV_PCT(100));
+        lv_obj_set_height(fill, 0);
+        lv_obj_align(fill, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+        s_io_fill[i] = fill;
+
+        lv_obj_t *num = lv_label_create(box);
+        lv_label_set_text(num, pin->label + 2);   /* strip "IO" prefix */
+        lv_obj_set_style_text_font(num, FONT_STATUS, 0);
+        lv_obj_align(num, LV_ALIGN_CENTER, 0, -10);
+        s_io_val[i] = num;
+
+        lv_obj_t *sub = lv_label_create(box);
+        lv_label_set_text(sub, "");
+        lv_obj_align(sub, LV_ALIGN_BOTTOM_MID, 0, -8);
+        s_io_sub[i] = sub;
+
+        s_io_last[i] = io_box_key(i);
+        io_box_paint(i);
+    }
+    return p;
+}
+
+/* Single-pin config page: the full GPIO option set for one pin + its live readout. */
+static lv_obj_t *build_io_pin_panel(lv_obj_t *parent)
+{
+    int i = s_io_pin;
+    const aio_pin_t *pin = bsp_aio_info(i);
+    aio_mode_t m = bsp_aio_get_mode(i);
+
+    lv_obj_t *p = make_panel(parent, pin->label, back_to_io_cb);
+    lv_obj_t *b = kit_body(p);
+    /* Tight setting-to-setting gap so every config page fits without scrolling
+     * (each setting groups its own control + caption with a 2px gap; see io_setting). */
+    lv_obj_set_style_pad_row(b, 8, 0);
+
+    if (s_io_err[0]) {
+        lv_obj_t *err = lv_label_create(b);
+        lv_label_set_text(err, s_io_err);
+        lv_obj_set_style_text_color(err, COL_ALERT, 0);
+        s_io_err[0] = '\0';
+    }
+
+    /* Build a capability-filtered mode option list. */
+    char opts[96]; size_t off = 0; opts[0] = '\0';
+    for (int mm = 0; mm < AIO_MODE_COUNT; mm++) {
+        if (mm == AIO_ANALOG_IN && !pin->adc_ok) continue;
+        off += snprintf(opts + off, sizeof(opts) - off, "%s%s", off ? "\n" : "", io_mode_name((aio_mode_t)mm));
+    }
+    io_set_dd(b, "MODE", opts, io_sel_of(i, m), io_mode_cb, i,
+              pin->adc_ok ? "How this pin behaves (ADC-capable: analog in available)."
+                          : "How this pin behaves: read it or drive it.");
+
+    if (m == AIO_DIGITAL_IN) {
+        io_set_dd(b, "PULL", "NONE\nPULL-UP\nPULL-DOWN", bsp_aio_get_pull(i), io_pull_cb, i,
+                  "Internal resistor that sets the level when nothing drives the pin.");
+        io_set_dd(b, "INTERRUPT", "OFF\nRISING\nFALLING\nANY EDGE", bsp_aio_get_irq(i), io_irq_cb, i,
+                  "Count signal edges on the pin in the background.");
+        if (bsp_aio_get_irq(i) != AIO_IRQ_OFF) {
+            char ec[12]; snprintf(ec, sizeof(ec), "%lu", (unsigned long)bsp_aio_get_edges(i));
+            s_pin_edges = kit_info_row(b, "EDGES", ec);
+            kit_list_row(b, "RESET EDGE COUNT", io_edges_reset_cb, (void *)(intptr_t)i);
+        }
+        s_pin_read = io_set_info(b, "LEVEL", bsp_aio_read_level(i) > 0 ? "HIGH" : "LOW",
+                                 "Live pin reading.");
+
+    } else if (m == AIO_DIGITAL_OUT) {
+        io_set_sw(b, "OPEN-DRAIN", bsp_aio_get_od(i), io_od_cb, i,
+                  "On: only pulls LOW, releases HIGH (for shared/I2C-style lines).");
+        io_set_dd(b, "STRENGTH", "WEAK ~5mA\nMEDIUM ~10mA\nDEFAULT ~20mA\nSTRONG ~40mA",
+                  bsp_aio_get_drive(i), io_drive_cb, i, "How hard the pin drives - its max output current.");
+        io_set_dd(b, "PULL", "NONE\nPULL-UP\nPULL-DOWN", bsp_aio_get_pull(i), io_pull_cb, i,
+                  "Internal resistor; in open-drain it can act as the bus pull-up.");
+        io_set_sw(b, "OUTPUT", bsp_aio_get_dout(i), io_dout_cb, i,
+                  "The level to drive: on = HIGH, off = LOW.");
+        s_pin_read = io_set_info(b, "LEVEL", bsp_aio_read_level(i) > 0 ? "HIGH" : "LOW",
+                                 "Actual line, read back from the pin.");
+
+    } else if (m == AIO_ANALOG_IN) {
+        io_set_dd(b, "RANGE", "0 dB ~1.1V\n2.5 dB ~1.5V\n6 dB ~2.2V\n12 dB ~3.3V",
+                  bsp_aio_get_atten(i), io_atten_cb, i, "Full-scale input voltage (ADC attenuation).");
+        io_set_dd(b, "FILTER", "OFF\nLIGHT\nMEDIUM\nHEAVY", bsp_aio_get_filter(i), io_filter_cb, i,
+                  "Smooths a noisy signal (IIR low-pass) - more = slower, steadier.");
+        lv_obj_t *meter = io_setting(b);
+        s_pin_read = kit_meter_row(meter, "INPUT", &s_pin_fill);
+        int raw = 0, pct = 0;
+        if (bsp_aio_read_ain(i, &raw, &pct) == ESP_OK) {
+            char v[28]; snprintf(v, sizeof(v), "%d  %d%%  %.2fV",
+                                 raw, pct, (double)(bsp_aio_ain_vmax(i) * raw / 4095.0f));
+            lv_label_set_text(s_pin_read, v);
+            kit_set_meter(s_pin_fill, pct, COL_AMBER);
+        }
+        io_cap(meter, "Live reading: raw count, % of range, approx volts.");
+
+    } else {   /* AIO_ANALOG_OUT */
+        /* Number keyboard for the duty entry, hidden until the field is focused. */
+        s_keyboard = lv_keyboard_create(p);
+        lv_keyboard_set_mode(s_keyboard, LV_KEYBOARD_MODE_NUMBER);
+        lv_obj_set_size(s_keyboard, SCAN_W, 300);
+        lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+        style_keyboard(s_keyboard);
+        lv_obj_add_flag(s_keyboard, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(s_keyboard, kb_done_cb, LV_EVENT_READY, NULL);
+        lv_obj_add_event_cb(s_keyboard, kb_done_cb, LV_EVENT_CANCEL, NULL);
+
+        /* PWM frequency - one preset shared by every analog-out pin. */
+        char fopts[64]; size_t fo = 0; fopts[0] = '\0';
+        for (int k = 0; k < AIO_FREQ_COUNT; k++) {
+            uint32_t hz = bsp_aio_freq_hz(k);
+            if (hz >= 1000) fo += snprintf(fopts + fo, sizeof(fopts) - fo, "%s%u kHz", fo ? "\n" : "", (unsigned)(hz / 1000));
+            else            fo += snprintf(fopts + fo, sizeof(fopts) - fo, "%s%u Hz",  fo ? "\n" : "", (unsigned)hz);
+        }
+        io_set_dd(b, "PWM FREQ", fopts, bsp_aio_get_freq(), io_freq_cb, i,
+                  "Switching rate - shared by all analog-out pins.");
+        io_set_sw(b, "SHOW VOLTS", bsp_aio_get_volts_pref(i), io_volts_cb, i,
+                  "Display the level as nominal volts (duty x 3.3V) instead of %.");
+
+        lv_obj_t *outset = io_setting(b);
+        char rd[24]; io_aout_text(i, rd, sizeof(rd));
+        s_pin_aout = kit_info_row(outset, "OUTPUT", rd);
+        io_cap(outset, "Duty cycle - slider, type a value, or step +/-5%.");
+
+        s_pin_slider = lv_slider_create(b);
+        lv_obj_set_width(s_pin_slider, LV_PCT(100));
+        lv_slider_set_range(s_pin_slider, 0, 100);
+        lv_slider_set_value(s_pin_slider, bsp_aio_get_aout(i), LV_ANIM_OFF);
+        kit_style_slider(s_pin_slider);
+        lv_obj_add_event_cb(s_pin_slider, io_slider_cb, LV_EVENT_VALUE_CHANGED, (void *)(intptr_t)i);
+
+        lv_obj_t *ctl = kit_row(b);
+        io_btn(ctl, LV_SYMBOL_MINUS, 70, io_step_cb, (void *)(intptr_t)(i << 1));
+        lv_obj_t *ta = lv_textarea_create(ctl);
+        lv_textarea_set_one_line(ta, true);
+        lv_textarea_set_accepted_chars(ta, "0123456789");
+        lv_textarea_set_max_length(ta, 3);
+        char db[8]; snprintf(db, sizeof(db), "%d", bsp_aio_get_aout(i));
+        lv_textarea_set_text(ta, db);
+        lv_obj_set_width(ta, 140);
+        style_field(ta);
+        lv_obj_add_event_cb(ta, ta_focus_cb, LV_EVENT_FOCUSED, NULL);
+        lv_obj_add_event_cb(ta, io_entry_cb, LV_EVENT_VALUE_CHANGED, (void *)(intptr_t)i);
+        s_pin_entry = ta;
+        io_btn(ctl, LV_SYMBOL_PLUS, 70, io_step_cb, (void *)(intptr_t)((i << 1) | 1));
+    }
+    return p;
+}
+
 static lv_obj_t *build_menu_panel(lv_obj_t *parent)
 {
     /* SETUP holds CONFIGURATION only; instruments (VITALS/SCAN/SPECTRUM) live on
@@ -2095,12 +2600,13 @@ static lv_obj_t *build_menu_panel(lv_obj_t *parent)
     kit_list_row(b, "DISPLAY", menu_open_cb, (void *)(intptr_t)PK_DISPLAY);
     kit_list_row(b, "AUDIO",   menu_open_cb, (void *)(intptr_t)PK_AUDIO);
     kit_list_row(b, "LEDS",    menu_open_cb, (void *)(intptr_t)PK_LEDS);
+    kit_list_row(b, "I/O BENCH", menu_open_cb, (void *)(intptr_t)PK_IO);
     kit_list_row(b, "ABOUT",   menu_open_cb, (void *)(intptr_t)PK_ABOUT);
     return m;
 }
 
 /* INSTRUMENTS group: the unit's own readouts. Rows open the full-screen instruments
- * (which BACK to here). Keeps the rail uncluttered — see the SENSORS twin below. */
+ * (which BACK to here). Keeps the rail uncluttered - see the SENSORS twin below. */
 static lv_obj_t *build_instruments_panel(lv_obj_t *parent)
 {
     lv_obj_t *m = make_panel(parent, "INSTRUMENTS", back_to_home_cb);
@@ -2124,7 +2630,7 @@ static lv_obj_t *build_sensors_panel(lv_obj_t *parent)
 }
 
 /* Signal level is measured in quarter-cells. The gauge deliberately never tops
- * out (cassette-futurism: a perfect reading is suspicious) — SIG_QMAX is one
+ * out (cassette-futurism: a perfect reading is suspicious) - SIG_QMAX is one
  * quarter short of completely full. */
 #define SIG_CELL  16          /* px per square */
 #define SIG_GAP   5           /* px between squares */
@@ -2264,7 +2770,7 @@ static void build_channel_gauge(lv_obj_t *parent, lv_coord_t y)
 }
 
 /* ---- SENS (receiver gain) meter ---------------------------------------------
- * "SENS [====    ] 65%" — reflects the sensitivity the web slider drives, which
+ * "SENS [====    ] 65%" - reflects the sensitivity the web slider drives, which
  * scales the live waveform amplitude. */
 #define SENS_W 220
 #define SENS_H 22
@@ -2326,7 +2832,7 @@ static void build_screen(void)
     s_root = scr;   /* lazily-built panels are created on this content container */
 
     /* Title bar (this root screen is the SCANNER instrument; the console home is
-     * an overlay panel shown on top of it by default — see the open_panel(PK_HOME)
+     * an overlay panel shown on top of it by default - see the open_panel(PK_HOME)
      * at the end of this function). */
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text(title, "SCANNER  //  UNIT-7");
@@ -2353,7 +2859,7 @@ static void build_screen(void)
     s_sig_box = build_signal_meter(scr);
     lv_obj_align_to(s_sig_box, s_link_label, LV_ALIGN_OUT_LEFT_MID, -16, 0);
 
-    /* IP on the second header line — kept above the y=64 divider so it isn't clipped. */
+    /* IP on the second header line - kept above the y=64 divider so it isn't clipped. */
     s_ip_label = lv_label_create(scr);
     lv_label_set_text(s_ip_label, "");
     lv_obj_set_style_text_color(s_ip_label, COL_MUTE, 0);
@@ -2491,7 +2997,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
     /* The whole SCANNER readout below lives on the root screen. Every other screen
      * is a full-screen OPAQUE panel built on top of it (PK_HOME is the default
      * landing screen), so when one is up this readout is completely obscured.
-     * Repainting it at 20 Hz then is pure waste — worse, each invisible
+     * Repainting it at 20 Hz then is pure waste - worse, each invisible
      * lv_line_set_points() invalidation forces LVGL to recomposite that stripe, and
      * with the CRT overlay on, to software-alpha-blend the overlay over it. Skip the
      * entire block unless the bare scanner is the visible screen. */
@@ -2524,7 +3030,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         lv_color_t status_col = alert ? COL_ALERT : COL_AMBER;
 
         /* Plot the engine's recorder trail across the scanner track. The UI owns no
-         * waveform logic — it just maps the signed columns to screen coordinates. */
+         * waveform logic - it just maps the signed columns to screen coordinates. */
         lv_coord_t cw = lv_obj_get_content_width(s_scan_track);
         lv_coord_t ch = lv_obj_get_content_height(s_scan_track);
         if (cw <= 1) cw = SCAN_W - 52;
@@ -2558,7 +3064,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
 
         /* Every per-frame style/text write below is gated on an actual change. The
          * big STANDBY headline re-rasterizing each tick (it's large AA text) was the
-         * real cost behind the ~73 ms frames — far more than the waveform. In steady
+         * real cost behind the ~73 ms frames - far more than the waveform. In steady
          * state only the blip (4 px) and one wave segment now invalidate. */
 
         /* The bright blip rides the write head; when SIGNAL_ACQUIRED freezes the
@@ -2638,7 +3144,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
 
     /* Refresh the VITALS instrument (~2 Hz) only while it's the live panel. */
     if (s_cur_kind == PK_VITALS && s_vit_temp && (st->tick % 10 == 0)) {
-        /* LVGL's printf has no %f support — format floats with stdio snprintf. */
+        /* LVGL's printf has no %f support - format floats with stdio snprintf. */
         char fbuf[24];
         float t = read_core_temp();
         if (t > -500.0f) {
@@ -2726,7 +3232,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
-    /* Rebuild the BLE contact list (throttled ~2.5 Hz — the device set changes
+    /* Rebuild the BLE contact list (throttled ~2.5 Hz - the device set changes
      * slowly and a full rebuild churns widgets). */
     if (s_cur_kind == PK_BLE && s_ble_list && (st->tick % 8 == 0)) {
         int cnt = 0, named = 0, known = 0;
@@ -2786,7 +3292,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
     }
 
     /* While a connection attempt is in flight, reflect its real outcome in the
-     * setup panel status — but only while the WiFi panel is still the live one. */
+     * setup panel status - but only while the WiFi panel is still the live one. */
     if (s_connect_pending && s_cur_kind == PK_WIFI && s_setup_status) {
         prop_sta_state_t s = prop_net_sta_state();
         if (s == STA_CONNECTED) {
@@ -2797,6 +3303,35 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         } else if (s == STA_FAILED) {
             lv_label_set_text(s_setup_status, "Failed - check password");
             s_connect_pending = false;
+        }
+    }
+
+    /* I/O BENCH live readouts (~4 Hz). Overview: repaint a box only when its state key
+     * changes. Config page: refresh the one pin's level/analog/edge-count readouts. */
+    if (s_cur_kind == PK_IO && (st->tick % 5 == 0)) {
+        int count = bsp_aio_count();
+        for (int i = 0; i < count && i < IO_MAX; i++) {
+            if (!s_io_box[i]) continue;
+            int key = io_box_key(i);
+            if (key != s_io_last[i]) { s_io_last[i] = key; io_box_paint(i); }
+        }
+    } else if (s_cur_kind == PK_IO_PIN && (st->tick % 5 == 0)) {
+        int i = s_io_pin;
+        aio_mode_t m = bsp_aio_get_mode(i);
+        if (aio_is_digital(m) && s_pin_read) {
+            label_set_text_cached(s_pin_read, bsp_aio_read_level(i) > 0 ? "HIGH" : "LOW");
+        } else if (m == AIO_ANALOG_IN && s_pin_read) {
+            int raw = 0, pct = 0;
+            if (bsp_aio_read_ain(i, &raw, &pct) == ESP_OK) {
+                char v[28]; snprintf(v, sizeof(v), "%d  %d%%  %.2fV",
+                                     raw, pct, (double)(bsp_aio_ain_vmax(i) * raw / 4095.0f));
+                label_set_text_cached(s_pin_read, v);
+                if (s_pin_fill) kit_set_meter(s_pin_fill, pct, COL_AMBER);
+            }
+        }
+        if (s_pin_edges) {
+            char ec[12]; snprintf(ec, sizeof(ec), "%lu", (unsigned long)bsp_aio_get_edges(i));
+            label_set_text_cached(s_pin_edges, ec);
         }
     }
 
@@ -2827,6 +3362,14 @@ void prop_ui_goto(const char *screen)
     else if (strcmp(screen, "archive") == 0) open_panel(PK_ARCHIVE);
     else if (strcmp(screen, "cassette") == 0) open_panel(PK_CASSETTE);
     else if (strcmp(screen, "insights") == 0) open_panel(PK_INSIGHTS);
+    else if (strcmp(screen, "io") == 0)       open_panel(PK_IO);
+    /* Per-pin deep-link for the screenshot loop: "io27" opens the IO27 config page. */
+    else if (strncmp(screen, "io", 2) == 0 && isdigit((unsigned char)screen[2])) {
+        int gpio = atoi(screen + 2);
+        for (int i = 0; i < bsp_aio_count(); i++) {
+            if (bsp_aio_info(i)->gpio == gpio) { s_io_pin = i; open_panel(PK_IO_PIN); break; }
+        }
+    }
     lvgl_port_unlock();
     ESP_LOGI(UI_TAG, "goto screen: %s", screen);
 }
@@ -2835,7 +3378,7 @@ void prop_ui_goto(const char *screen)
  * The author's nav model, decoupled from hardware: the web portal drives this
  * today via /cmd {"cmd":"input",...}; bsp_io will route the real knobs/switches
  * here once they're wired. Navigation lives in the view (this module), mirroring
- * prop_ui_goto — the engine stays a pure behavior model. */
+ * prop_ui_goto - the engine stays a pure behavior model. */
 
 /* SELECTOR rotation: context-dependent. */
 static void nav_select_move(int dir)
@@ -2912,9 +3455,9 @@ void prop_ui_input(const char *control, int arg)
  * can run up to ~60 fps. It deliberately does NOT force a full-screen redraw every
  * frame: a whole-screen software render at 1024x600 takes ~250 ms (≈4 fps) and
  * saturates the CPU, so forcing it is counter-productive. The counter therefore
- * reflects real render activity — high during motion, low when the screen is idle.
+ * reflects real render activity - high during motion, low when the screen is idle.
  *
- * The HUD is an OPAQUE child of the active screen, NOT lv_layer_top — a
+ * The HUD is an OPAQUE child of the active screen, NOT lv_layer_top - a
  * translucent top-layer object made LVGL recomposite the whole layer each frame
  * and thrashed lv_mem_buf_get into a watchdog hang.
  *

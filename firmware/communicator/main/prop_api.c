@@ -8,6 +8,7 @@
 #include "prop_csi.h"
 #include "prop_settings.h"
 #include "bsp_io.h"
+#include "bsp_aio.h"
 #include "bsp_illuminate.h"   /* panel_handle + H_size/V_size for the framebuffer grab */
 #include <string.h>
 #include <strings.h>   /* strcasecmp */
@@ -168,6 +169,36 @@ static esp_err_t dispatch_command(const char *json, int len)
                 err = prop_net_set_sta_credentials(ssid->valuestring,
                                                    cJSON_IsString(pass) ? pass->valuestring : "",
                                                    rem);
+            }
+        } else if (strcmp(c, "io") == 0) {
+            /* I/O bench control for headless testing/screenshots:
+             * {"cmd":"io","gpio":N,"mode":"di|do|ai|ao","value":M}
+             * value sets the digital-out level (0/1) or analog-out duty % (0..100). */
+            const cJSON *gpio = cJSON_GetObjectItem(root, "gpio");
+            const cJSON *mode = cJSON_GetObjectItem(root, "mode");
+            const cJSON *value = cJSON_GetObjectItem(root, "value");
+            if (cJSON_IsNumber(gpio)) {
+                int idx = -1;
+                for (int i = 0; i < bsp_aio_count(); i++) {
+                    if (bsp_aio_info(i)->gpio == gpio->valueint) { idx = i; break; }
+                }
+                if (idx >= 0) {
+                    err = ESP_OK;
+                    if (cJSON_IsString(mode)) {
+                        const char *m = mode->valuestring;
+                        aio_mode_t mm =
+                            (strcasecmp(m, "do") == 0 || strcasecmp(m, "output") == 0 ||
+                             strcasecmp(m, "out") == 0 || strcasecmp(m, "dout") == 0)  ? AIO_DIGITAL_OUT :
+                            (strcasecmp(m, "ai") == 0 || strcasecmp(m, "ain") == 0)    ? AIO_ANALOG_IN   :
+                            (strcasecmp(m, "ao") == 0 || strcasecmp(m, "aout") == 0)   ? AIO_ANALOG_OUT  :
+                                                                                        AIO_DIGITAL_IN;
+                        err = bsp_aio_set_mode(idx, mm);
+                    }
+                    if (err == ESP_OK && cJSON_IsNumber(value)) {
+                        if (aio_is_output(bsp_aio_get_mode(idx)))            err = bsp_aio_set_dout(idx, value->valueint != 0);
+                        else if (bsp_aio_get_mode(idx) == AIO_ANALOG_OUT)   err = bsp_aio_set_aout(idx, value->valueint);
+                    }
+                }
             }
         }
     }

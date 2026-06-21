@@ -1,0 +1,8 @@
+{"expectations":[
+{"text":"Prioritizes consistency (frame-time variance) over average fps","passed":true,"evidence":"Explicitly consistency-first; affinity/contention is P1; throughput is secondary."},
+{"text":"Connects input/dial latency to the LVGL lock / render stall","passed":true,"evidence":"prop_ui_input acquires lvgl_port_lock; render stall = input lag — explicitly stated."},
+{"text":"Identifies a plausible ~1Hz periodic cause with file:line","passed":true,"evidence":"rssi_task (prop_net.c) blocking SDIO every 1000 ms named as ~1 Hz hitch; file:line present."},
+{"text":"Recommends core affinity (pin LVGL vs radio/background tasks)","passed":true,"evidence":"LVGL pinned to one core, radio tasks to other; specific task names and file:line."},
+{"text":"Findings cite concrete file:line","passed":true,"evidence":"20 file:line citations."},
+{"text":"Includes a before/after measurement plan using the FPS HUD","passed":true,"evidence":"Measurement plan with {\"cmd\":\"fx\",\"fps\":true} for HUD; before/after prop.py shots."}
+],"summary":{"pass_rate":1.0,"passed":6,"failed":0,"total":6}}

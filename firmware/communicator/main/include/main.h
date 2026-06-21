@@ -13,6 +13,7 @@
 #include "bsp_illuminate.h"
 #include "bsp_i2c.h"
 #include "bsp_io.h"
+#include "bsp_aio.h"
 
 /* Prop modules */
 #include "prop_settings.h"

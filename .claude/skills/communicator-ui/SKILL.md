@@ -12,19 +12,29 @@ deeper architecture; this skill is the *how to iterate* checklist.
 
 ## 1. Build + flash (ESP-IDF 6.0.1, not on PATH)
 
+**Windows (PowerShell):**
 ```powershell
 pwsh firmware/communicator/tools/dev.ps1 bf -Port COM7    # build + flash (one shot)
 ```
-
 Or raw (activates IDF + forces UTF-8 to dodge the component-manager emoji crash):
-
 ```powershell
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
 idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
 idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
 ```
 
-**Added a new `main/*.c`?** run `dev.ps1 reconfigure` (or `idf.py reconfigure`) once —
+**Linux / Debian (Bash):**
+```bash
+./firmware/communicator/tools/dev.sh bf -Port /dev/ttyUSB0   # build + flash (one shot)
+```
+Or raw:
+```bash
+. ~/.local/esp/esp-idf/export.sh
+idf.py -C firmware/communicator build
+idf.py -C firmware/communicator -p /dev/ttyUSB0 flash
+```
+
+**Added a new `main/*.c`?** run `dev.ps1 reconfigure` / `dev.sh reconfigure` (or `idf.py reconfigure`) once —
 `CMakeLists.txt` GLOBs sources and won't see the new file until you re-glob (you'll get
 an `undefined reference` link error otherwise). New driver header → add its component to
 `REQUIRES` in `main/CMakeLists.txt` (e.g. `esp_driver_tsens`, `esp_driver_i2s`).
