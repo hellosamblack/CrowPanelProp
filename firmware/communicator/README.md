@@ -56,11 +56,32 @@ Command schema: see the top of [main/include/prop_api.h](main/include/prop_api.h
 
 ### WiFi OTA (code changes, still no USB)
 
+**CLI (recommended)** — build + push in one command:
+
+```powershell
+pwsh tools/dev.ps1 ota                          # defaults to comm-unit-7.local
+pwsh tools/dev.ps1 ota -DeviceHost 172.17.2.167 # explicit IP fallback
+```
+
+**Browser** — open `http://comm-unit-7.local/`, scroll to **FIRMWARE UPDATE**, pick the
+`.bin` (usually `build/communicator.bin`), click **UPLOAD**. A progress percentage appears
+and the page reports "done — rebooting…" when the device is switching over.
+
+**Raw curl** (if you prefer):
+
 ```bash
 idf.py build
 curl -X POST "http://<ip>/ota?token=prop-ota-2024" --data-binary @build/communicator.bin
-# device validates, sets boot partition, reboots into the new firmware
 ```
+
+**Rollback safety:** the bootloader is configured with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`.
+A freshly-OTA'd image boots as `PENDING_VERIFY`; `app_main` calls
+`esp_ota_mark_app_valid_cancel_rollback()` after the full stack is up. If the new image
+crashes before reaching that point the bootloader automatically reverts to the previous
+partition on the next reset — no USB reflash required.
+
+**Confirm the update landed:** `GET /state` includes a `"version"` field (from `git
+describe`), and the web console state line shows `v<version>`.
 
 Change `PROP_OTA_TOKEN` in [main/include/prop_api.h](main/include/prop_api.h) and the AP password in
 [main/include/prop_net.h](main/include/prop_net.h) before any real deployment.

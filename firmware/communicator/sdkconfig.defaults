@@ -29,6 +29,12 @@ CONFIG_SPIRAM=y
 CONFIG_HTTPD_WS_SUPPORT=y
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 
+# OTA rollback: on a fresh OTA boot the app is PENDING_VERIFY. If it doesn't call
+# esp_ota_mark_app_valid_cancel_rollback() before the next reset the bootloader reverts
+# to the previous partition. app_main calls this after full bring-up succeeds, so a
+# bad image that crashes before that point auto-reverts without needing a USB reflash.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
 # FreeRTOS tick at 1 kHz for smooth animation timing.
 CONFIG_FREERTOS_HZ=1000
 

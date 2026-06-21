@@ -15,7 +15,8 @@ idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
 idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
 ```
 
-Or use the helper: `pwsh tools/dev.ps1 bf -Port COM7` (build+flash). Board enumerates on **COM7**
+Or use the helper: `pwsh tools/dev.ps1 bf -Port COM7` (build+flash) or
+`pwsh tools/dev.ps1 ota` (build + push over WiFi to `comm-unit-7.local`). Board enumerates on **COM7**
 (CH341 driver). Target is `esp32p4`; the board is **chip rev v1.3** and config already pins the
 pre-v3 silicon line — don't touch `CONFIG_ESP32P4_*REV*` or it won't boot. See `../../` memory
 `idf6-migration` for the full list of 6.0/board quirks (cJSON, driver split, esp_lcd API, C6 SDIO pins).

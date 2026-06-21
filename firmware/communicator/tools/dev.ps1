@@ -9,14 +9,18 @@
     pwsh firmware/communicator/tools/dev.ps1 bf      -Port COM7   # build + flash
     pwsh firmware/communicator/tools/dev.ps1 bfw     -Port COM7   # build + flash + wait until API answers
     pwsh firmware/communicator/tools/dev.ps1 monitor -Port COM7
+    pwsh firmware/communicator/tools/dev.ps1 ota                  # build + OTA push to mDNS host
+    pwsh firmware/communicator/tools/dev.ps1 ota    -DeviceHost 172.17.2.167   # explicit IP
 
   After flashing, drive/inspect the UI with tools/prop.py (see the communicator-ui skill):
     python tools/prop.py shot out.png --screen spectrum --wait
 #>
 param(
-  [ValidateSet("build", "flash", "bf", "bfw", "monitor", "reconfigure")]
+  [ValidateSet("build", "flash", "bf", "bfw", "monitor", "reconfigure", "ota")]
   [string]$Action = "build",
-  [string]$Port = "COM7"
+  [string]$Port = "COM7",
+  [string]$DeviceHost = "comm-unit-7.local",
+  [string]$Token = "prop-ota-2024"
 )
 
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"
@@ -32,4 +36,14 @@ switch ($Action) {
   "bfw"         { idf.py -C $proj build; if ($LASTEXITCODE -eq 0) { idf.py -C $proj -p $Port flash; if ($LASTEXITCODE -eq 0) { python "$PSScriptRoot\prop.py" wait } } }
   "monitor"     { idf.py -C $proj -p $Port monitor }
   "reconfigure" { idf.py -C $proj reconfigure }
+  "ota" {
+    idf.py -C $proj build
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $bin = "$proj\build\communicator.bin"
+    $url = "http://$DeviceHost/ota?token=$Token"
+    Write-Host "OTA: pushing $bin -> $url"
+    $resp = Invoke-WebRequest -Method Post -InFile $bin -Uri $url -TimeoutSec 120 -UseBasicParsing
+    Write-Host "OTA: $($resp.Content)"
+    Write-Host "OTA: device is rebooting into new firmware"
+  }
 }

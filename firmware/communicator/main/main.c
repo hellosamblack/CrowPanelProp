@@ -5,6 +5,7 @@
  * the screen UI, WiFi, and the live control API.
  */
 #include "main.h"
+#include "esp_ota_ops.h"
 
 static esp_ldo_channel_handle_t ldo3;
 static esp_ldo_channel_handle_t ldo4;
@@ -122,6 +123,11 @@ void app_main(void)
             MAIN_ERROR("control API failed to start: %s", esp_err_to_name(api_err));
         }
     }
+
+    /* Full bring-up complete: mark this OTA image valid so the bootloader won't
+     * roll back to the previous partition on the next reset. Harmless on factory
+     * boots; essential after an OTA update (image starts as PENDING_VERIFY). */
+    esp_ota_mark_app_valid_cancel_rollback();
 
     MAIN_INFO("ready — AP '%s', console at http://<ip>/", PROP_AP_SSID);
 

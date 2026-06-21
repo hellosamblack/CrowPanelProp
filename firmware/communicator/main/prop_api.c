@@ -18,6 +18,7 @@
 #include "esp_http_server.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
+#include "esp_app_desc.h"
 #include "esp_lvgl_port.h"
 #include "esp_cache.h"        /* invalidate the PSRAM framebuffer cache before reading it */
 #include "lvgl.h"
@@ -44,6 +45,7 @@ static char *state_to_json(void)
     cJSON_AddNumberToObject(root, "sensitivity", st.sensitivity);
     cJSON_AddNumberToObject(root, "channel_pos", st.chan_pos);
     cJSON_AddStringToObject(root, "ip", ip);
+    cJSON_AddStringToObject(root, "version", esp_app_get_description()->version);
     cJSON *leds = cJSON_AddArrayToObject(root, "leds");
     for (int i = 0; i < LED_COUNT; i++) {
         cJSON *led = cJSON_CreateObject();
@@ -338,11 +340,20 @@ static const char s_console_html[] =
 "#st{margin:16px;font-size:20px;white-space:pre}"
 "#sens{margin:18px auto;max-width:520px;border:2px solid #e0b000;padding:14px}"
 "#sens label{font-size:18px}#sr{width:100%;accent-color:#e0b000;height:28px}"
+"input[type=text],input[type=file]{background:#222;color:#e0b000;border:1px solid #6b5300;padding:6px 8px;margin:4px;font:inherit}"
+"#ota{margin:20px auto;max-width:520px;border:1px solid #6b5300;padding:14px}"
+"#ota-st{margin:8px 0;font-size:14px;color:#6b5300}"
 "</style></head><body><h2>PROP CUE BOARD</h2><div id=st>connecting...</div>"
 "<div id=nav><b>CONSOLE</b><br></div>"
 "<div id=scenes><b>SCANNER SCENES</b><br></div>"
 "<div id=sens><label>SENSITIVITY <span id=sv>--</span>%</label><br>"
-"<input id=sr type=range min=0 max=100 value=65></div><script>"
+"<input id=sr type=range min=0 max=100 value=65></div>"
+"<div id=ota><b>FIRMWARE UPDATE</b><br>"
+"<input id=tok type=text value='prop-ota-2024' size=18 title='OTA token'>"
+"<input id=bin type=file accept=.bin>"
+"<button onclick='doOta()'>UPLOAD</button>"
+"<div id=ota-st></div></div>"
+"<script>"
 "var ws=new WebSocket('ws://'+location.host+'/ws');"
 "var scenes=['IDLE','SCANNING','SIGNAL_ACQUIRED','COMMS','ALERT'];"
 "var d=document.getElementById('scenes');scenes.forEach(function(s){var b=document.createElement('button');"
@@ -358,9 +369,20 @@ static const char s_console_html[] =
 "if(n-st>50){st=n;sendSens()}};"   /* throttle drags to ~20/s */
 "sr.onchange=function(){drag=false;sendSens()};"   /* always send the final value */
 "ws.onmessage=function(e){var o=JSON.parse(e.data);document.getElementById('st').textContent="
-"'SCENE: '+o.scene+'\\nSTATUS: '+o.status+'\\n'+o.channel+'\\nLINK:'+o.link+'  IP:'+o.ip;"
+"'SCENE: '+o.scene+'\\nSTATUS: '+o.status+'\\n'+o.channel+'\\nLINK:'+o.link+'  IP:'+o.ip+'  v'+o.version;"
 "if(o.sensitivity!=null&&!drag){sr.value=o.sensitivity;sv.textContent=o.sensitivity}};"
 "ws.onopen=function(){ws.send(JSON.stringify({cmd:'next_scene'}));ws.send(JSON.stringify({cmd:'scene',value:'IDLE'}))};"
+"function doOta(){"
+"var f=document.getElementById('bin').files[0];"
+"if(!f){document.getElementById('ota-st').textContent='select a .bin file first';return;}"
+"var tok=document.getElementById('tok').value;"
+"var st=document.getElementById('ota-st');"
+"var xhr=new XMLHttpRequest();"
+"xhr.open('POST','/ota?token='+encodeURIComponent(tok));"
+"xhr.upload.onprogress=function(e){if(e.lengthComputable)st.textContent='uploading '+Math.round(e.loaded/e.total*100)+'%';};"
+"xhr.onload=function(){try{var r=JSON.parse(xhr.responseText);st.textContent=r.ok?'done \\u2014 rebooting…':'error';}catch(e){st.textContent='HTTP '+xhr.status+': '+xhr.responseText;}};"
+"xhr.onerror=function(){st.textContent='upload failed';};"
+"xhr.send(f);}"
 "</script></body></html>";
 
 static esp_err_t root_get_handler(httpd_req_t *req)
