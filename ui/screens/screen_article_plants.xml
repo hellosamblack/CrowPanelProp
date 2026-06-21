@@ -1,0 +1,90 @@
+<!--
+  ARTICLE (PLANTS motif) — archive entry rendered as a field-guide plate.
+  Mirrors build_article_panel() + vis_plants() in main/prop_ui.c.
+
+  Section = PLANTS, entry = SAGUARO. The motif is a drawn columnar cactus (ground
+  line, trunk, two arms, a bloom) in a square plate beside three spec chips
+  (HEIGHT / WATER / BLOOM). Drawn from primitives, no image assets.
+  Plate is VIS_H x VIS_H = 168 square at x=30 y=116; chips start x=228.
+-->
+<screen>
+    <styles>
+        <style name="panel"    bg_color="#col_bg" border_color="#col_amber" border_width="2" radius="0" pad_all="0" />
+        <style name="btn_back" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="title"    text_color="#col_amber" text_font="font_head" />
+        <style name="entry"    text_color="#col_amber" text_font="font_head" />
+        <style name="caption"  text_color="#col_mute"  text_font="font_body" />
+        <style name="frame"    bg_color="#col_panel_item" bg_opa="255" border_color="#col_dim" border_width="2" radius="0" pad_all="0" />
+        <style name="ground"   bg_color="#col_dim"   bg_opa="255" border_width="0" radius="0" />
+        <style name="cactus"   bg_color="#col_amber" bg_opa="255" border_width="0" radius="0" />
+        <style name="bloom"    bg_color="#col_amber" bg_opa="255" border_width="0" radius="100" />
+        <!-- Spec chip -->
+        <style name="chip"     bg_color="#col_panel_item" bg_opa="255" border_color="#col_dim" border_width="1" radius="0" pad_all="0" />
+        <style name="chip_tag" text_color="#col_mute"  text_font="font_body" />
+        <style name="chip_val" text_color="#col_amber" text_font="font_body" />
+        <style name="body"     text_color="#col_amber" text_font="font_body" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <nav_rail/>
+
+        <lv_obj width="948" height="600" align="top_right">
+            <style name="panel" />
+
+            <lv_button width="130" height="40" align="top_left" x="20" y="12">
+                <style name="btn_back" />
+                <lv_label text="&lt; BACK" />
+            <screen_create_event screen="screen_archive" trigger="clicked" />
+            </lv_button>
+
+            <lv_label text="PLANTS" align="top_mid" y="18"><style name="title" /></lv_label>
+            <lv_label text="SAGUARO" align="top_left" x="30" y="64"><style name="entry" /></lv_label>
+            <lv_label text="FIELD PLATE  //  FLORA SPECIMEN" align="top_left" x="30" y="94"><style name="caption" /></lv_label>
+
+            <!-- Field plate (square, 168) with drawn cactus -->
+            <lv_obj width="168" height="168" align="top_left" x="30" y="116">
+                <style name="frame" />
+                <!-- Ground line -->
+                <lv_obj width="136" height="2" align="top_left" x="14" y="146"><style name="ground" /></lv_obj>
+                <!-- Trunk -->
+                <lv_obj width="14" height="98" align="top_left" x="74" y="46"><style name="cactus" /></lv_obj>
+                <!-- Left arm -->
+                <lv_obj width="28" height="12" align="top_left" x="48" y="92"><style name="cactus" /></lv_obj>
+                <lv_obj width="12" height="40" align="top_left" x="48" y="64"><style name="cactus" /></lv_obj>
+                <!-- Right arm -->
+                <lv_obj width="26" height="12" align="top_left" x="86"  y="78"><style name="cactus" /></lv_obj>
+                <lv_obj width="12" height="40" align="top_left" x="100" y="50"><style name="cactus" /></lv_obj>
+                <!-- Bloom -->
+                <lv_obj width="14" height="14" align="top_left" x="74" y="37"><style name="bloom" /></lv_obj>
+            </lv_obj>
+
+            <!-- Spec chips (HEIGHT / WATER / BLOOM) -->
+            <lv_obj width="690" height="38" align="top_left" x="228" y="124">
+                <style name="chip" />
+                <lv_label text="HEIGHT" align="left_mid" x="12" y="0"><style name="chip_tag" /></lv_label>
+                <lv_label text="1 - 12 m" align="right_mid" x="-12" y="0"><style name="chip_val" /></lv_label>
+            </lv_obj>
+            <lv_obj width="690" height="38" align="top_left" x="228" y="174">
+                <style name="chip" />
+                <lv_label text="WATER" align="left_mid" x="12" y="0"><style name="chip_tag" /></lv_label>
+                <lv_label text="LOW" align="right_mid" x="-12" y="0"><style name="chip_val" /></lv_label>
+            </lv_obj>
+            <lv_obj width="690" height="38" align="top_left" x="228" y="224">
+                <style name="chip" />
+                <lv_label text="BLOOM" align="left_mid" x="12" y="0"><style name="chip_tag" /></lv_label>
+                <lv_label text="NIGHT" align="right_mid" x="-12" y="0"><style name="chip_val" /></lv_label>
+            </lv_obj>
+
+            <!-- Scrollable body -->
+            <lv_obj width="888" height="272" align="top_left" x="30" y="312"
+                    style_bg_opa="0" style_border_width="0" style_pad_all="0">
+                <lv_label width="848" long_mode="wrap" align="top_left" x="0" y="0"
+                          text="A giant columnar cactus that stores tons of water in pleated, expandable tissue. Shallow roots spread wide to capture rare rainfall fast. Grows slowly over centuries; its night-opening flowers feed bats and insects.">
+                    <style name="body" />
+                </lv_label>
+            </lv_obj>
+
+        </lv_obj>
+    </view>
+</screen>

@@ -1,0 +1,97 @@
+<!--
+  ARTICLE (WILDLIFE motif) — archive entry rendered as a bio-scan dossier.
+  Mirrors build_article_panel() + vis_wildlife() in main/prop_ui.c.
+
+  Section = WILDLIFE, entry = FENNEC FOX. The motif is a square reticle portrait
+  (crosshair + concentric range rings + two amber "eye" dots) beside a stat block
+  of four meters (SIZE / THREAT / ACTIVITY / WATER NEED). Drawn from primitives.
+  Portrait is VIS_H x VIS_H = 168 square at x=30 y=116; stats start x=228.
+-->
+<screen>
+    <styles>
+        <style name="panel"    bg_color="#col_bg" border_color="#col_amber" border_width="2" radius="0" pad_all="0" />
+        <style name="btn_back" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="title"    text_color="#col_amber" text_font="font_head" />
+        <style name="entry"    text_color="#col_amber" text_font="font_head" />
+        <style name="caption"  text_color="#col_mute"  text_font="font_body" />
+        <style name="lbl"      text_color="#col_amber" text_font="font_body" />
+        <style name="frame"    bg_color="#col_panel_item" bg_opa="255" border_color="#col_dim" border_width="2" radius="0" pad_all="0" />
+        <style name="cross"    bg_color="#col_dim" bg_opa="255" border_width="0" radius="0" />
+        <!-- Range ring: transparent fill, dim circular outline -->
+        <style name="ring"     bg_opa="0" border_color="#col_dim" border_width="2" radius="100" />
+        <!-- Eye: filled amber circle -->
+        <style name="eye"      bg_color="#col_amber" bg_opa="255" border_width="0" radius="100" />
+        <style name="meter_track" bg_color="#col_panel_item" bg_opa="255" border_color="#col_dim" border_width="2" radius="0" />
+        <style name="meter_fill"  bg_color="#col_amber" bg_opa="255" border_width="0" radius="0" />
+        <style name="body"     text_color="#col_amber" text_font="font_body" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <nav_rail/>
+
+        <lv_obj width="948" height="600" align="top_right">
+            <style name="panel" />
+
+            <lv_button width="130" height="40" align="top_left" x="20" y="12">
+                <style name="btn_back" />
+                <lv_label text="&lt; BACK" />
+            <screen_create_event screen="screen_archive" trigger="clicked" />
+            </lv_button>
+
+            <lv_label text="WILDLIFE" align="top_mid" y="18"><style name="title" /></lv_label>
+            <lv_label text="FENNEC FOX" align="top_left" x="30" y="64"><style name="entry" /></lv_label>
+            <lv_label text="SPECIMEN DOSSIER  //  BIO-SCAN" align="top_left" x="30" y="94"><style name="caption" /></lv_label>
+
+            <!-- Reticle portrait (square, 168) -->
+            <lv_obj width="168" height="168" align="top_left" x="30" y="116">
+                <style name="frame" />
+                <!-- Crosshair -->
+                <lv_obj width="1" height="152" align="center" x="0" y="0"><style name="cross" /></lv_obj>
+                <lv_obj width="152" height="1" align="center" x="0" y="0"><style name="cross" /></lv_obj>
+                <!-- Concentric range rings (centred) -->
+                <lv_obj width="116" height="116" align="center"><style name="ring" /></lv_obj>
+                <lv_obj width="80"  height="80"  align="center"><style name="ring" /></lv_obj>
+                <!-- Nocturnal eyes (amber dots) -->
+                <lv_obj width="18" height="18" align="center" x="-16" y="-8"><style name="eye" /></lv_obj>
+                <lv_obj width="18" height="18" align="center" x="16"  y="-8"><style name="eye" /></lv_obj>
+            </lv_obj>
+
+            <!-- Stat block (SIZE / THREAT / ACTIVITY / WATER NEED) -->
+            <!-- SIZE 35% -->
+            <lv_label text="SIZE" align="top_left" x="228" y="122"><style name="lbl" /></lv_label>
+            <lv_obj width="510" height="18" align="top_left" x="378" y="122">
+                <style name="meter_track" />
+                <lv_obj width="178" height="10" align="left_mid" x="0" y="0"><style name="meter_fill" /></lv_obj>
+            </lv_obj>
+            <!-- THREAT 15% -->
+            <lv_label text="THREAT" align="top_left" x="228" y="162"><style name="lbl" /></lv_label>
+            <lv_obj width="510" height="18" align="top_left" x="378" y="162">
+                <style name="meter_track" />
+                <lv_obj width="76" height="10" align="left_mid" x="0" y="0"><style name="meter_fill" /></lv_obj>
+            </lv_obj>
+            <!-- ACTIVITY 80% -->
+            <lv_label text="ACTIVITY" align="top_left" x="228" y="202"><style name="lbl" /></lv_label>
+            <lv_obj width="510" height="18" align="top_left" x="378" y="202">
+                <style name="meter_track" />
+                <lv_obj width="408" height="10" align="left_mid" x="0" y="0"><style name="meter_fill" /></lv_obj>
+            </lv_obj>
+            <!-- WATER NEED 10% -->
+            <lv_label text="WATER NEED" align="top_left" x="228" y="242"><style name="lbl" /></lv_label>
+            <lv_obj width="510" height="18" align="top_left" x="378" y="242">
+                <style name="meter_track" />
+                <lv_obj width="51" height="10" align="left_mid" x="0" y="0"><style name="meter_fill" /></lv_obj>
+            </lv_obj>
+
+            <!-- Scrollable body -->
+            <lv_obj width="888" height="272" align="top_left" x="30" y="312"
+                    style_bg_opa="0" style_border_width="0" style_pad_all="0">
+                <lv_label width="848" long_mode="wrap" align="top_left" x="0" y="0"
+                          text="A small nocturnal canid with oversized ears that shed heat and locate prey underground. Dens by day to escape the surface heat; needs almost no free water, drawing moisture from its food. Wary but not aggressive.">
+                    <style name="body" />
+                </lv_label>
+            </lv_obj>
+
+        </lv_obj>
+    </view>
+</screen>

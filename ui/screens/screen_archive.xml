@@ -39,18 +39,23 @@
                 <style name="title" />
             </lv_label>
 
-            <!-- Section tabs (CLIMATE active) -->
+            <!-- Section tabs (CLIMATE active). Each opens that section's article motif:
+                 CLIMATE thermal trace / MAP survey chart / WILDLIFE bio-scan / PLANTS plate. -->
             <lv_button width="150" height="40" align="top_left" x="40"  y="70">
                 <style name="tab_on" /><lv_label text="CLIMATE" align="center" />
+                <screen_create_event screen="screen_article" trigger="clicked" />
             </lv_button>
             <lv_button width="150" height="40" align="top_left" x="200" y="70">
                 <style name="tab" /><lv_label text="MAP" align="center" />
+                <screen_create_event screen="screen_article_map" trigger="clicked" />
             </lv_button>
             <lv_button width="150" height="40" align="top_left" x="360" y="70">
                 <style name="tab" /><lv_label text="WILDLIFE" align="center" />
+                <screen_create_event screen="screen_article_wildlife" trigger="clicked" />
             </lv_button>
             <lv_button width="150" height="40" align="top_left" x="520" y="70">
                 <style name="tab" /><lv_label text="PLANTS" align="center" />
+                <screen_create_event screen="screen_article_plants" trigger="clicked" />
             </lv_button>
 
             <!-- Entry rows for the active (CLIMATE) section. First row is dial-selected. -->
@@ -58,10 +63,13 @@
                 <style name="row_on" /><lv_label text="THERMAL PROFILE" align="left_mid" x="18" />
             <screen_create_event screen="screen_article" trigger="clicked" /></lv_button>
             <lv_button width="868" height="52" align="top_left" x="40" y="188">
-                <style name="row" /><lv_label text="WIND &amp; DUST" align="left_mid" x="18" />
+                <style name="row" /><lv_label text="SEASONS" align="left_mid" x="18" />
             <screen_create_event screen="screen_article" trigger="clicked" /></lv_button>
             <lv_button width="868" height="52" align="top_left" x="40" y="248">
-                <style name="row" /><lv_label text="WATER CYCLE" align="left_mid" x="18" />
+                <style name="row" /><lv_label text="WIND &amp; DUST" align="left_mid" x="18" />
+            <screen_create_event screen="screen_article" trigger="clicked" /></lv_button>
+            <lv_button width="868" height="52" align="top_left" x="40" y="308">
+                <style name="row" /><lv_label text="WATER TABLE" align="left_mid" x="18" />
             <screen_create_event screen="screen_article" trigger="clicked" /></lv_button>
 
         </lv_obj>

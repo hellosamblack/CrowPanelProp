@@ -2,10 +2,14 @@
   ARTICLE — a single archive entry: a per-section visual band + scrollable body.
   Mirrors build_article_panel() + vis_climate() in main/prop_ui.c.
 
-  This XML shows the CLIMATE motif (a diurnal thermal trace in a framed inset).
-  The firmware draws one of four motifs by section (CLIMATE trace / MAP survey chart /
-  WILDLIFE bio-scan / PLANTS field plate) procedurally from the entry title; only the
-  CLIMATE variant is mocked here as the representative layout.
+  This XML is the CLIMATE motif (a diurnal thermal trace in a framed inset).
+  The firmware draws one of four motifs by section, procedurally from the entry
+  title; each is mocked as its own screen:
+    CLIMATE  -> screen_article          (this file, thermal trace)
+    MAP      -> screen_article_map       (survey chart)
+    WILDLIFE -> screen_article_wildlife  (bio-scan dossier)
+    PLANTS   -> screen_article_plants    (field plate)
+  The ARCHIVE section tabs open the matching motif.
 
   Bands: VIS_Y=116  VIS_H=168  VIS_BODY_Y=312. The title (section name) is in the
   header; the entry title sits at y=64; the visual caption at y=94.

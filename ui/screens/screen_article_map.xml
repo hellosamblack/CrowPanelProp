@@ -1,0 +1,113 @@
+<!--
+  ARTICLE (MAP motif) — archive entry rendered as a survey chart.
+  Mirrors build_article_panel() + vis_map() in main/prop_ui.c.
+
+  Section = MAP, entry = THE GREAT ERG. The motif is a sector chart: a faint
+  lat/long graticule, dune-field contour lines (west), the escarpment ridge (east),
+  four region markers linked by a survey trail (the active one crosshaired), a
+  compass rose and a scale bar. Drawn from primitives, no image assets.
+  Bands: VIS_Y=116 VIS_H=168 VIS_BODY_Y=312.
+-->
+<screen>
+    <styles>
+        <style name="panel"    bg_color="#col_bg" border_color="#col_amber" border_width="2" radius="0" pad_all="0" />
+        <style name="btn_back" bg_color="#col_panel_item" border_color="#col_amber" border_width="1" radius="0" text_color="#col_amber" text_font="font_body" shadow_width="0" />
+        <style name="title"    text_color="#col_amber" text_font="font_head" />
+        <style name="entry"    text_color="#col_amber" text_font="font_head" />
+        <style name="caption"  text_color="#col_mute"  text_font="font_body" />
+        <style name="dim"      text_color="#col_dim"   text_font="font_body" />
+        <style name="frame"    bg_color="#col_panel_item" bg_opa="255" border_color="#col_dim" border_width="2" radius="0" pad_all="0" />
+        <style name="grid"     bg_color="#col_dim"   bg_opa="255" border_width="0" radius="0" />
+        <style name="mute_bar" bg_color="#col_mute"  bg_opa="255" border_width="0" radius="0" />
+        <style name="amber_bar" bg_color="#col_amber" bg_opa="255" border_width="0" radius="0" />
+        <style name="body"     text_color="#col_amber" text_font="font_body" />
+    </styles>
+
+    <view style_bg_color="#col_bg">
+
+        <nav_rail/>
+
+        <lv_obj width="948" height="600" align="top_right">
+            <style name="panel" />
+
+            <lv_button width="130" height="40" align="top_left" x="20" y="12">
+                <style name="btn_back" />
+                <lv_label text="&lt; BACK" />
+            <screen_create_event screen="screen_archive" trigger="clicked" />
+            </lv_button>
+
+            <lv_label text="MAP" align="top_mid" y="18"><style name="title" /></lv_label>
+            <lv_label text="THE GREAT ERG" align="top_left" x="30" y="64"><style name="entry" /></lv_label>
+
+            <lv_label text="SECTOR CHART  //  SURVEY MAP" align="top_left" x="30" y="94"><style name="caption" /></lv_label>
+            <lv_label text="THE GREAT ERG   //   GRID 06.2 / 28.4" align="top_right" x="-34" y="94"><style name="caption" /></lv_label>
+
+            <!-- Survey chart inset -->
+            <lv_obj width="888" height="168" align="top_left" x="30" y="116">
+                <style name="frame" />
+
+                <!-- Lat/long graticule -->
+                <lv_obj width="1" height="164" align="left_mid" x="111" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="222" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="333" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="444" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="555" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="666" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="1" height="164" align="left_mid" x="777" y="0"><style name="grid" /></lv_obj>
+                <lv_obj width="884" height="1" align="top_mid" y="55"><style name="grid" /></lv_obj>
+                <lv_obj width="884" height="1" align="top_mid" y="110"><style name="grid" /></lv_obj>
+
+                <!-- Dune-field contours (west half), dim wavy lines -->
+                <lv_line style_line_color="#col_dim" style_line_width="2"
+                         points="(35 48) (80 43) (125 51) (170 45) (215 52) (260 46) (305 51) (350 45) (395 50) (440 46) (480 49)" />
+                <lv_line style_line_color="#col_dim" style_line_width="2"
+                         points="(35 74) (80 80) (125 72) (170 79) (215 71) (260 78) (305 72) (350 79) (395 73) (440 78) (480 74)" />
+                <lv_line style_line_color="#col_dim" style_line_width="2"
+                         points="(35 102) (80 97) (125 104) (170 98) (215 105) (260 99) (305 104) (350 98) (395 103) (440 99) (480 102)" />
+
+                <!-- The escarpment ridge (east edge), bold mute line -->
+                <lv_line style_line_color="#col_mute" style_line_width="3"
+                         points="(660 8) (650 30) (668 52) (654 74) (670 96) (656 118) (672 140) (660 158)" />
+
+                <!-- Survey trail linking the four region markers (dim) -->
+                <lv_line style_line_color="#col_dim" style_line_width="1"
+                         points="(141 69) (371 118) (707 74) (265 131)" />
+
+                <!-- Region markers: 1 active (amber + crosshair), others mute -->
+                <!-- You-are-here crosshair for marker 1 -->
+                <lv_obj width="1" height="164" align="left_mid" x="141" y="0"><style name="amber_bar" /></lv_obj>
+                <lv_obj width="884" height="1" align="top_mid" y="69"><style name="amber_bar" /></lv_obj>
+                <lv_obj width="10" height="10" align="top_left" x="136" y="64"><style name="amber_bar" /></lv_obj>
+                <lv_label text="1" align="top_left" x="150" y="61" style_text_color="#col_amber" style_text_font="font_body" />
+                <lv_obj width="8" height="8" align="top_left" x="367" y="114"><style name="mute_bar" /></lv_obj>
+                <lv_label text="2" align="top_left" x="379" y="110" style_text_color="#col_mute" style_text_font="font_body" />
+                <lv_obj width="8" height="8" align="top_left" x="703" y="70"><style name="mute_bar" /></lv_obj>
+                <lv_label text="3" align="top_left" x="715" y="66" style_text_color="#col_mute" style_text_font="font_body" />
+                <lv_obj width="8" height="8" align="top_left" x="261" y="127"><style name="mute_bar" /></lv_obj>
+                <lv_label text="4" align="top_left" x="273" y="123" style_text_color="#col_mute" style_text_font="font_body" />
+
+                <!-- Compass rose (top-right inside frame) -->
+                <lv_obj width="2" height="32" align="top_left" x="841" y="16"><style name="mute_bar" /></lv_obj>
+                <lv_obj width="32" height="2" align="top_left" x="826" y="31"><style name="mute_bar" /></lv_obj>
+                <lv_obj width="2" height="8"  align="top_left" x="841" y="10"><style name="amber_bar" /></lv_obj>
+                <lv_label text="N" align="top_left" x="837" y="-2" style_text_color="#col_amber" style_text_font="font_body" />
+
+                <!-- Scale bar (bottom-left inside frame) -->
+                <lv_obj width="96" height="2" align="top_left" x="16" y="146"><style name="mute_bar" /></lv_obj>
+                <lv_obj width="2" height="8"  align="top_left" x="16"  y="142"><style name="mute_bar" /></lv_obj>
+                <lv_obj width="2" height="8"  align="top_left" x="112" y="142"><style name="mute_bar" /></lv_obj>
+                <lv_label text="0       100 KM" align="top_left" x="14" y="128" style_text_color="#col_dim" style_text_font="font_body" />
+            </lv_obj>
+
+            <!-- Scrollable body -->
+            <lv_obj width="888" height="272" align="top_left" x="30" y="312"
+                    style_bg_opa="0" style_border_width="0" style_pad_all="0">
+                <lv_label width="848" long_mode="wrap" align="top_left" x="0" y="0"
+                          text="A vast sea of wind-built dunes, some cresting 200 m. Trackless and shifting; navigation relies on celestial fixes and buried marker cairns. No permanent water across its interior.">
+                    <style name="body" />
+                </lv_label>
+            </lv_obj>
+
+        </lv_obj>
+    </view>
+</screen>
