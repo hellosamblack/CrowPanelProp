@@ -4,6 +4,8 @@
 #include "prop_net.h"
 #include "prop_ui.h"
 #include "prop_fx.h"
+#include "prop_ble.h"
+#include "prop_csi.h"
 #include "prop_settings.h"
 #include "bsp_io.h"
 #include "bsp_illuminate.h"   /* panel_handle + H_size/V_size for the framebuffer grab */
@@ -46,6 +48,22 @@ static char *state_to_json(void)
     cJSON_AddNumberToObject(root, "channel_pos", st.chan_pos);
     cJSON_AddStringToObject(root, "ip", ip);
     cJSON_AddStringToObject(root, "version", esp_app_get_description()->version);
+
+    /* Radio-sensor telemetry (continuously cached, so cheap to read here). The RF
+     * BAND channel histogram is panel-driven (on-demand scan) and not included. */
+    if (prop_ble_available()) {
+        int ble_count = 0, ble_named = 0, ble_known = 0;
+        int8_t ble_strong = 0;
+        prop_ble_get_summary(&ble_count, &ble_strong, &ble_named, &ble_known);
+        cJSON *ble = cJSON_AddObjectToObject(root, "ble");
+        cJSON_AddNumberToObject(ble, "count", ble_count);
+        cJSON_AddNumberToObject(ble, "strongest", ble_strong);
+        cJSON_AddNumberToObject(ble, "known", ble_known);
+    }
+    if (prop_csi_available()) {
+        cJSON_AddBoolToObject(root, "csi_live", prop_csi_is_live());
+    }
+
     cJSON *leds = cJSON_AddArrayToObject(root, "leds");
     for (int i = 0; i < LED_COUNT; i++) {
         cJSON *led = cJSON_CreateObject();

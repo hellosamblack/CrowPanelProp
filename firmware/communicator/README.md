@@ -26,13 +26,26 @@ and the screen, so they never drift out of sync.
 
 ## Build & flash
 
-Requires **ESP-IDF ≥ 5.4.2**. Use the VS Code ESP-IDF extension terminal, or `export.ps1` from your IDF install.
+Requires **ESP-IDF ≥ 5.4.2** (v6.0.1 recommended).
 
-```bash
+**Windows:**
+Use the VS Code ESP-IDF extension terminal, or `export.ps1` from your IDF install:
+```powershell
 idf.py set-target esp32p4
 idf.py build
-idf.py -p <PORT> flash monitor     # first flash over USB (UART0); needs CH341 driver
+idf.py -p <PORT> flash monitor     # first flash over USB (UART0)
 ```
+Or run the helper: `pwsh tools/dev.ps1 bf -Port COM7`
+
+**Linux / Debian:**
+Source your `export.sh` script to activate the environment:
+```bash
+. ~/.local/esp/esp-idf/export.sh
+idf.py set-target esp32p4
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+Or run the helper: `./tools/dev.sh bf -Port /dev/ttyUSB0`
 
 The `espressif/button`, display, and WiFi components download automatically on first build
 (declared in the `idf_component.yml` files).
@@ -58,9 +71,16 @@ Command schema: see the top of [main/include/prop_api.h](main/include/prop_api.h
 
 **CLI (recommended)** — build + push in one command:
 
+**Windows (PowerShell):**
 ```powershell
 pwsh tools/dev.ps1 ota                          # defaults to comm-unit-7.local
 pwsh tools/dev.ps1 ota -DeviceHost 172.17.2.167 # explicit IP fallback
+```
+
+**Linux / Debian (Bash):**
+```bash
+./tools/dev.sh ota                              # defaults to comm-unit-7.local
+./tools/dev.sh ota -DeviceHost 172.17.2.167     # explicit IP fallback
 ```
 
 **Browser** — open `http://comm-unit-7.local/`, scroll to **FIRMWARE UPDATE**, pick the

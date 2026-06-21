@@ -24,12 +24,44 @@
  * "<PROP_HOSTNAME>.local" instead of a hunt-the-IP-in-the-serial-log dance. */
 #define PROP_HOSTNAME    "comm-unit-7"
 
+/* PHY generation of an AP / link, coarsest-useful granularity. */
+typedef enum {
+    PROP_PHY_11B, PROP_PHY_11G, PROP_PHY_11N, PROP_PHY_11AC, PROP_PHY_11AX,
+} prop_phy_t;
+
+/* Short label for a PHY generation, e.g. "WiFi 6". */
+const char *prop_phy_label(prop_phy_t phy);
+
 /* One discovered access point (from prop_net_scan). */
 typedef struct {
     char    ssid[33];
+    uint8_t bssid[6];   /* AP MAC; first 3 bytes = OUI -> vendor */
     int8_t  rssi;       /* dBm; higher (closer to 0) is stronger */
+    uint8_t channel;    /* primary 2.4 GHz channel */
+    prop_phy_t phy;     /* highest PHY the AP advertises */
+    char    sec[8];     /* security: "OPEN"/"WEP"/"WPA"/"WPA2"/"WPA3"/"OWE"/"ENT" */
     bool    secured;    /* true if it needs a password (authmode != OPEN/OWE) */
+    bool    ftm;        /* AP advertises FTM responder (round-trip ranging capable) */
 } prop_ap_t;
+
+/* Vendor label for a MAC's OUI (first 3 bytes), e.g. "UBIQUITI", or NULL if the
+ * prefix isn't in the curated table. Real OUI assignment, partial coverage (flavour,
+ * not an exhaustive IEEE database) — mirrors the BLE Company-ID table. */
+const char *prop_net_oui_vendor(const uint8_t mac[6]);
+
+/* The unit's own uplink (cached ~1 Hz by a background task; cheap to read). */
+typedef struct {
+    bool    connected;
+    char    ssid[33];
+    uint8_t bssid[6];
+    int8_t  rssi;
+    uint8_t channel;
+    char    phy[20];    /* negotiated PHY label, e.g. "WiFi 6 / HE20" */
+    char    country[4]; /* regulatory country code, e.g. "US" */
+} prop_uplink_t;
+
+/* Copy the cached uplink dossier (info about the AP we're associated with). */
+void prop_net_get_uplink(prop_uplink_t *out);
 
 /* STA association progress, for UI feedback. */
 typedef enum {
@@ -48,6 +80,14 @@ esp_err_t prop_net_init(void);
  * thread. Pattern mirrors the factory Setting app (esp_wifi_scan_start +
  * esp_wifi_scan_get_ap_records). */
 int prop_net_scan(prop_ap_t *out, int max);
+
+/* Blocking 2.4 GHz channel-occupancy scan (~2 s). Runs the same active scan as
+ * prop_net_scan but folds the results into a per-channel occupancy histogram:
+ * out[ch] (ch 1..13) gets a 0..100 index weighted by AP RSSI (strong/multiple APs
+ * read taller; out[0] and out[13]+ are unused/edge). Returns the raw AP count, or
+ * -1 on error. Call from a task, NOT the LVGL thread. */
+#define PROP_NET_CHAN_SLOTS 14
+int prop_net_scan_channels(uint8_t out[PROP_NET_CHAN_SLOTS]);
 
 /* Apply new STA credentials and reconnect. If `remember` is true they are also
  * persisted to NVS (survive reboot/reflash); if false the connection is for this

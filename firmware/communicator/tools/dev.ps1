@@ -18,7 +18,7 @@
 param(
   [ValidateSet("build", "flash", "bf", "bfw", "monitor", "reconfigure", "ota")]
   [string]$Action = "build",
-  [string]$Port = "COM7",
+  [string]$Port = $null,
   [string]$DeviceHost = "comm-unit-7.local",
   [string]$Token = "prop-ota-2024"
 )
@@ -26,6 +26,20 @@ param(
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
+
+if ($null -eq $Port -or $Port -eq "") {
+  try {
+    $portDevice = Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -like "*CH340*" -or $_.Caption -like "*CH340*" -or $_.Name -like "*CH341*" } | Select-Object -First 1
+    if ($portDevice -and $portDevice.Name -match '\((COM\d+)\)') {
+        $Port = $Matches[1]
+        Write-Host "Auto-detected CH340 port: $Port"
+    } else {
+        $Port = "COM7"
+    }
+  } catch {
+    $Port = "COM7"
+  }
+}
 
 $proj = Split-Path $PSScriptRoot -Parent
 

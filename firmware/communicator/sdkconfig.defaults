@@ -38,6 +38,12 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # FreeRTOS tick at 1 kHz for smooth animation timing.
 CONFIG_FREERTOS_HZ=1000
 
+# Main task stack: the IDF default (3584 B) is too tight once BT/NimBLE is enabled —
+# app_main's bring-up (nvs_flash_init -> partition mmap, then engine/UI/net/BLE init)
+# overruns it, and the overrun surfaces as the cryptic
+# "esp_task_stack_is_sane_cache_disabled" assert during the first flash op. Give it room.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
 # ESP32-C6 WiFi co-processor link (esp_hosted over SDIO). These pins are specific
 # to the CrowPanel Advance V1.0 board (from the Lesson17 reference config): 1-bit
 # SDIO on slot 1, slave reset on GPIO32. esp_hosted's defaults (reset GPIO54) do
@@ -69,6 +75,26 @@ CONFIG_LV_COLOR_DEPTH_16=y
 # LVGL snapshot: lets the firmware capture the screen to a buffer for the
 # /screenshot HTTP endpoint (remote visual verification during UI development).
 CONFIG_LV_USE_SNAPSHOT=y
+
+# BLE via the C6 controller (CONTACT SIGNATURES instrument). The C6 esp_hosted
+# slave already runs the BLE controller; the P4 runs the NimBLE host and routes HCI
+# to the C6 over the shared SDIO link (VHCI — no extra pins). NimBLE is lighter than
+# Bluedroid. Roles trimmed to scan-only (observer/central) to keep internal RAM —
+# esp_hosted's SDIO DMA mempool + WiFi already make it tight. If this triggers the
+# "HS_MP: mempool create failed: no mem" boot loop, the lever is
+# CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y (push WiFi/LWIP buffers to PSRAM), NOT
+# shrinking LV_MEM. Reference: esp_hosted host_nimble_bleprph_host_only_vhci example.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_CONTROLLER_DISABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=n
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_TRANSPORT_UART=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
+CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y
 
 # Route LVGL's heap to PSRAM via a custom allocator (main/lv_port_mem.c). LVGL 9 draws
 # line/shape anti-alias masks through lv_malloc; the 32 KB builtin INTERNAL pool can't be

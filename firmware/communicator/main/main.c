@@ -122,6 +122,19 @@ void app_main(void)
         if (api_err != ESP_OK) {
             MAIN_ERROR("control API failed to start: %s", esp_err_to_name(api_err));
         }
+
+        /* BLE scan (CONTACT SIGNATURES) — the C6 hosts the controller, sharing the
+         * SDIO link WiFi just brought up. NON-fatal: if the controller/host won't
+         * come up (or RAM is tight) the panel shows "BLE OFFLINE" and the rest runs. */
+        esp_err_t ble_err = prop_ble_init();
+        if (ble_err != ESP_OK) {
+            MAIN_ERROR("BLE unavailable (%s) — CONTACTS will show offline",
+                       esp_err_to_name(ble_err));
+        }
+
+        /* WiFi CSI (SIGNAL ENVIRONMENT) — best-effort real CSI from the C6, with a
+         * synthetic RSSI-driven fallback baked in, so it never fails the prop. */
+        prop_csi_init();
     }
 
     /* Full bring-up complete: mark this OTA image valid so the bootloader won't

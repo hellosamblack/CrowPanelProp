@@ -160,6 +160,74 @@ def _pop_opt(args, name):
     return None
 
 
+def detect_port():
+    # 1. Windows: Query via PowerShell Get-CimInstance for CH340 / CH341
+    if os.name == "nt":
+        try:
+            import subprocess
+            cmd = 'Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -like "*CH340*" -or $_.Caption -like "*CH340*" -or $_.Name -like "*CH341*" } | Select-Object -First 1 -ExpandProperty Name'
+            out = subprocess.run(["powershell.exe", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=5)
+            m = re.search(r'\((COM\d+)\)', out.stdout)
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
+        return "COM7"
+
+    # 2. Native Linux (and usbipd in WSL): Check /dev/serial/by-id for 1a86 / CH340 / CH341
+    by_id_dir = "/dev/serial/by-id"
+    if os.path.exists(by_id_dir):
+        for name in os.listdir(by_id_dir):
+            if any(k in name.lower() for k in ["1a86", "ch340", "ch341"]):
+                target = os.path.realpath(os.path.join(by_id_dir, name))
+                if os.path.exists(target):
+                    return target
+
+    # 3. Native Linux (and usbipd in WSL): Check /sys/class/tty/ttyUSB* or ttyACM* devices via sysfs (vendor ID 1a86)
+    import glob
+    for path in glob.glob("/sys/class/tty/ttyUSB*") + glob.glob("/sys/class/tty/ttyACM*"):
+        try:
+            device_path = os.path.realpath(os.path.join(path, "device"))
+            usb_dev_path = os.path.dirname(device_path)
+            vendor_path = os.path.join(usb_dev_path, "idVendor")
+            if os.path.exists(vendor_path):
+                with open(vendor_path, "r") as f:
+                    vendor = f.read().strip()
+                if vendor == "1a86":
+                    dev_name = os.path.basename(path)
+                    return f"/dev/{dev_name}"
+        except Exception:
+            pass
+
+    # 4. Check if we are running in WSL (WSL fallback to Windows COM mapping)
+    is_wsl = False
+    try:
+        if os.path.exists("/proc/version"):
+            with open("/proc/version", "r") as f:
+                if "microsoft" in f.read().lower():
+                    is_wsl = True
+    except Exception:
+        pass
+
+    if is_wsl:
+        try:
+            import subprocess
+            # Use PowerShell to find the COM port on Windows host, then map COMx to /dev/ttySx
+            cmd = 'Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -like "*CH340*" -or $_.Caption -like "*CH340*" -or $_.Name -like "*CH341*" } | Select-Object -First 1 -ExpandProperty Name'
+            out = subprocess.run(["powershell.exe", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=5)
+            m = re.search(r'\(COM(\d+)\)', out.stdout)
+            if m:
+                return f"/dev/ttyS{m.group(1)}"
+        except Exception:
+            pass
+
+    # 5. Linux fallbacks
+    for p in ["/dev/ttyUSB0", "/dev/ttyACM0"]:
+        if os.path.exists(p):
+            return p
+    return "/dev/ttyUSB0"
+
+
 def main():
     args = sys.argv[1:]
     if not args:
@@ -196,7 +264,7 @@ def main():
         shot(host, out, screen, scene, do_wait,
              tuple(int(v) for v in crop.split(",")) if crop else None, zoom)
     elif cmd == "trace":
-        trace(_pop_opt(rest, "--port") or "COM7", int(_pop_opt(rest, "--seconds") or 12))
+        trace(_pop_opt(rest, "--port") or detect_port(), int(_pop_opt(rest, "--seconds") or 12))
     elif cmd == "decode":
         decode(rest)
     else:

@@ -5,6 +5,8 @@
 #include "prop_settings.h"
 #include "prop_fx.h"
 #include "prop_mic.h"
+#include "prop_ble.h"
+#include "prop_csi.h"
 #include "prop_content.h"
 #include "bsp_io.h"
 #include "bsp_illuminate.h"
@@ -111,7 +113,9 @@ typedef enum {
     PK_NONE = 0,   /* no panel: the bare SCANNER readout on the root screen */
     PK_HOME,       /* the in-world console (default landing screen) */
     PK_MENU, PK_WIFI, PK_DISPLAY, PK_AUDIO, PK_LEDS, PK_ABOUT, PK_VITALS,
-    PK_SCAN, PK_SPECTRUM,
+    PK_SCAN, PK_SPECTRUM, PK_RFBAND, PK_BLE, PK_CSI,
+    PK_INSTRUMENTS,   /* submenu: SCANNER / SIGNAL SCAN / SPECTRUM / VITALS */
+    PK_SENSORS,       /* submenu: RF BAND / CONTACTS / SIGNAL ENV */
     PK_ARCHIVE,    /* data-archive browser (tabs = sections) */
     PK_ARTICLE,    /* a single archive entry */
     PK_CASSETTE,   /* cassette deck (stub) */
@@ -133,6 +137,7 @@ static lv_obj_t *s_about_ip, *s_about_uptime;
 /* VITALS instrument live readouts (valid only while PK_VITALS is current). */
 static lv_obj_t *s_vit_temp, *s_vit_ram, *s_vit_uptime, *s_vit_cell;
 static lv_obj_t *s_vit_temp_bar, *s_vit_ram_bar, *s_vit_cell_bar;
+static lv_obj_t *s_vit_up_net, *s_vit_up_ap, *s_vit_up_link;   /* UPLINK dossier rows */
 
 /* SIGNAL SCAN instrument (valid only while PK_SCAN is current). */
 static lv_obj_t *s_sig_list, *s_sig_status;
@@ -142,6 +147,23 @@ static volatile bool s_sig_scanning;
 static lv_obj_t *s_spec_bars[PROP_MIC_BANDS];
 static lv_obj_t *s_spec_db, *s_spec_db_bar, *s_spec_status;
 static float s_spec_decay[PROP_MIC_BANDS];   /* peak-hold / slow decay (UI-side) */
+
+/* RF BAND instrument (2.4 GHz channel occupancy; valid only while PK_RFBAND is current). */
+#define RF_CHANNELS 13                      /* 2.4 GHz channels 1..13 */
+static lv_obj_t *s_rf_bars[RF_CHANNELS];
+static lv_obj_t *s_rf_status;
+static uint8_t s_rf_chan[PROP_NET_CHAN_SLOTS]; /* cached histogram (filled by the scan task) */
+static float s_rf_decay[RF_CHANNELS];          /* UI-side rise/decay ballistics */
+static volatile bool s_rf_scanning;
+
+/* BLE CONTACT SIGNATURES instrument (valid only while PK_BLE is current). */
+static lv_obj_t *s_ble_summary;   /* header: N CONTACTS / strongest dBm */
+static lv_obj_t *s_ble_list;      /* scrolling contact rows */
+
+/* SIGNAL ENVIRONMENT (CSI) instrument (valid only while PK_CSI is current). */
+static lv_obj_t *s_csi_bars[PROP_CSI_BINS];
+static lv_obj_t *s_csi_status;
+static float s_csi_decay[PROP_CSI_BINS];   /* UI-side peak-hold / decay */
 
 /* Builders + lifecycle (defined below). */
 static lv_obj_t *build_home_panel(lv_obj_t *parent);
@@ -154,12 +176,18 @@ static lv_obj_t *build_about_panel(lv_obj_t *parent);
 static lv_obj_t *build_vitals_panel(lv_obj_t *parent);
 static lv_obj_t *build_signal_panel(lv_obj_t *parent);
 static lv_obj_t *build_spectrum_panel(lv_obj_t *parent);
+static lv_obj_t *build_rfband_panel(lv_obj_t *parent);
+static lv_obj_t *build_ble_panel(lv_obj_t *parent);
+static lv_obj_t *build_csi_panel(lv_obj_t *parent);
 static lv_obj_t *build_archive_panel(lv_obj_t *parent);
 static lv_obj_t *build_article_panel(lv_obj_t *parent);
 static lv_obj_t *build_cassette_panel(lv_obj_t *parent);
 static lv_obj_t *build_insights_panel(lv_obj_t *parent);
+static lv_obj_t *build_instruments_panel(lv_obj_t *parent);
+static lv_obj_t *build_sensors_panel(lv_obj_t *parent);
 static void wifi_panel_opened(void);
 static void start_signal_scan(void);
+static void start_rfband_scan(void);
 static void set_rail_highlight(void);   /* persistent rail; defined with the rail code */
 
 /* ---- Function rail + dial/tab navigation ---------------------------------
@@ -173,7 +201,9 @@ static void set_rail_highlight(void);   /* persistent rail; defined with the rai
 /* Icon ids for the persistent rail glyphs (drawn from primitives, no font assets). */
 typedef enum {
     IC_HOME, IC_ARCHIVE, IC_SCANNER, IC_VITALS, IC_SIGNAL,
-    IC_SPECTRUM, IC_CASSETTE, IC_INSIGHTS, IC_SETUP,
+    IC_SPECTRUM, IC_RFBAND, IC_CONTACTS, IC_SIGENV,
+    IC_INSTRUMENTS, IC_SENSORS,
+    IC_CASSETTE, IC_INSIGHTS, IC_SETUP,
 } icon_id_t;
 
 static const struct {
@@ -181,15 +211,13 @@ static const struct {
     panel_kind_t kind;
     icon_id_t    icon;
 } s_rail[] = {
-    { "CONSOLE",     PK_HOME,     IC_HOME     },
-    { "ARCHIVE",     PK_ARCHIVE,  IC_ARCHIVE  },
-    { "SCANNER",     PK_NONE,     IC_SCANNER  },   /* reveals the bare readout on the root screen */
-    { "VITALS",      PK_VITALS,   IC_VITALS   },
-    { "SIGNAL SCAN", PK_SCAN,     IC_SIGNAL   },
-    { "SPECTRUM",    PK_SPECTRUM, IC_SPECTRUM },
-    { "CASSETTE",    PK_CASSETTE, IC_CASSETTE },
-    { "INSIGHTS",    PK_INSIGHTS, IC_INSIGHTS },
-    { "SETUP",       PK_MENU,     IC_SETUP    },
+    { "CONSOLE",     PK_HOME,        IC_HOME        },
+    { "ARCHIVE",     PK_ARCHIVE,     IC_ARCHIVE     },
+    { "INSTRUMENTS", PK_INSTRUMENTS, IC_INSTRUMENTS },   /* SCANNER/SIGNAL SCAN/SPECTRUM/VITALS */
+    { "SENSORS",     PK_SENSORS,     IC_SENSORS     },   /* RF BAND/CONTACTS/SIGNAL ENV (C6 radio) */
+    { "CASSETTE",    PK_CASSETTE,    IC_CASSETTE    },
+    { "INSIGHTS",    PK_INSIGHTS,    IC_INSIGHTS    },
+    { "SETUP",       PK_MENU,        IC_SETUP       },
 };
 #define RAIL_COUNT ((int)(sizeof(s_rail) / sizeof(s_rail[0])))
 
@@ -223,8 +251,14 @@ static void close_panel(void)
     s_about_ip = NULL; s_about_uptime = NULL;
     s_vit_temp = NULL; s_vit_ram = NULL; s_vit_uptime = NULL; s_vit_cell = NULL;
     s_vit_temp_bar = NULL; s_vit_ram_bar = NULL; s_vit_cell_bar = NULL;
+    s_vit_up_net = NULL; s_vit_up_ap = NULL; s_vit_up_link = NULL;
     s_sig_list = NULL; s_sig_status = NULL;
     s_spec_db = NULL; s_spec_db_bar = NULL; s_spec_status = NULL;
+    s_rf_status = NULL;
+    for (int i = 0; i < RF_CHANNELS; i++) s_rf_bars[i] = NULL;
+    s_ble_summary = NULL; s_ble_list = NULL;
+    s_csi_status = NULL;
+    for (int i = 0; i < PROP_CSI_BINS; i++) s_csi_bars[i] = NULL;
     s_home_clock = NULL; s_home_temp = NULL; s_home_link = NULL;
     /* s_rail_btns are the persistent rail cells on the real screen — NOT children
      * of the torn-down panel, so they survive close_panel and are never nulled. */
@@ -245,6 +279,12 @@ static void rail_sync(panel_kind_t kind)
         case PK_WIFI: case PK_DISPLAY: case PK_AUDIO:
         case PK_LEDS: case PK_ABOUT: case PK_MENU: want = PK_MENU; break;
         case PK_ARTICLE: want = PK_ARCHIVE; break;
+        /* Instruments + sensors live under their group; the bare scanner readout
+         * (PK_NONE) belongs to INSTRUMENTS too. */
+        case PK_NONE: case PK_SCAN: case PK_SPECTRUM: case PK_VITALS:
+            want = PK_INSTRUMENTS; break;
+        case PK_RFBAND: case PK_BLE: case PK_CSI:
+            want = PK_SENSORS; break;
         default: break;
     }
     for (int i = 0; i < RAIL_COUNT; i++) {
@@ -275,6 +315,11 @@ static void open_panel(panel_kind_t kind)
         case PK_VITALS:  s_cur_panel = build_vitals_panel(s_root); break;
         case PK_SCAN:    s_cur_panel = build_signal_panel(s_root); break;
         case PK_SPECTRUM: s_cur_panel = build_spectrum_panel(s_root); break;
+        case PK_RFBAND:  s_cur_panel = build_rfband_panel(s_root); break;
+        case PK_BLE:     s_cur_panel = build_ble_panel(s_root); break;
+        case PK_CSI:     s_cur_panel = build_csi_panel(s_root); break;
+        case PK_INSTRUMENTS: s_cur_panel = build_instruments_panel(s_root); break;
+        case PK_SENSORS:     s_cur_panel = build_sensors_panel(s_root); break;
         case PK_ARCHIVE: s_cur_panel = build_archive_panel(s_root); break;
         case PK_ARTICLE: s_cur_panel = build_article_panel(s_root); break;
         case PK_CASSETTE: s_cur_panel = build_cassette_panel(s_root); break;
@@ -286,6 +331,8 @@ static void open_panel(panel_kind_t kind)
         wifi_panel_opened();
     } else if (kind == PK_SCAN) {
         start_signal_scan();   /* auto-scan on open */
+    } else if (kind == PK_RFBAND) {
+        start_rfband_scan();   /* auto-scan on open */
     }
     /* Mask the swap with the configured channel-change transition (skipped during
      * the initial boot build; the overlay was created above so the next render
@@ -405,6 +452,8 @@ static void open_menu_cb(lv_event_t *e)    { (void)e; open_panel(PK_MENU); }
 static void back_to_home_cb(lv_event_t *e) { (void)e; open_panel(PK_HOME); }
 static void close_setup_cb(lv_event_t *e)  { (void)e; open_panel(PK_HOME); }
 static void back_to_menu_cb(lv_event_t *e) { (void)e; open_panel(PK_MENU); }
+static void back_to_instruments_cb(lv_event_t *e) { (void)e; open_panel(PK_INSTRUMENTS); }
+static void back_to_sensors_cb(lv_event_t *e)     { (void)e; open_panel(PK_SENSORS); }
 static void menu_open_cb(lv_event_t *e)    { open_panel((panel_kind_t)(intptr_t)lv_event_get_user_data(e)); }
 static void setup_scan_cb(lv_event_t *e)   { (void)e; start_scan(); }
 static void ssid_changed_cb(lv_event_t *e) { (void)e; update_forget_visibility(); }
@@ -799,23 +848,30 @@ static void set_meter(lv_obj_t *fill, int pct, lv_color_t col) { kit_set_meter(f
 
 static lv_obj_t *build_vitals_panel(lv_obj_t *parent)
 {
-    lv_obj_t *p = make_panel(parent, "VITALS", back_to_home_cb);
+    lv_obj_t *p = make_panel(parent, "VITALS", back_to_instruments_cb);
     lv_obj_t *b = kit_body(p);
     s_vit_temp   = kit_meter_row(b, "CORE TEMP", &s_vit_temp_bar);
     s_vit_ram    = kit_meter_row(b, "FREE RAM",  &s_vit_ram_bar);
     s_vit_cell   = kit_meter_row(b, "CELL",      &s_vit_cell_bar);
     s_vit_uptime = kit_meter_row(b, "UPTIME",    NULL);
 
-    lv_obj_t *note = lv_label_create(b);
-    lv_label_set_text(note, "Reactor / system telemetry - live.");
-    lv_obj_set_style_text_color(note, COL_MUTE, 0);
+    /* UPLINK dossier — info about the AP this unit is associated with (cached by
+     * prop_net's background poll; updated live by the observer). */
+    lv_obj_t *uphdr = lv_label_create(b);
+    lv_label_set_text(uphdr, "UPLINK");
+    lv_obj_set_style_text_color(uphdr, COL_AMBER, 0);
+    lv_obj_set_style_text_font(uphdr, FONT_HEAD, 0);
+    lv_obj_t *card = kit_card(b, lv_pct(100), LV_SIZE_CONTENT);
+    s_vit_up_net  = kit_info_row(card, "NET",  "--");
+    s_vit_up_ap   = kit_info_row(card, "AP",   "--");
+    s_vit_up_link = kit_info_row(card, "LINK", "--");
     return p;
 }
 
 /* ---- SIGNAL SCAN instrument (WiFi APs rendered as detected contacts) ------ */
 
-#define SIG_MAX_ROWS 8
-#define SIG_ROW_H    46
+#define SIG_MAX_ROWS 7
+#define SIG_ROW_H    62
 
 /* Map RSSI (dBm) to a 0..100 strength for the contact meter. */
 static int rssi_to_pct(int rssi)
@@ -859,8 +915,21 @@ static void signal_scan_task(void *arg)
                     lv_obj_set_style_text_color(dbm, COL_MUTE, 0);
                     lv_obj_align(dbm, LV_ALIGN_TOP_RIGHT, -6, y);
 
+                    /* Sub-line: vendor (OUI) // PHY generation // security // channel. */
+                    const char *vendor = prop_net_oui_vendor(s_aps[i].bssid);
+                    char sub[72];
+                    snprintf(sub, sizeof(sub), "%s  //  %s  //  %s  //  CH %d%s",
+                             vendor ? vendor : "UNKNOWN OEM",
+                             prop_phy_label(s_aps[i].phy), s_aps[i].sec,
+                             s_aps[i].channel, s_aps[i].ftm ? "  //  FTM" : "");
+                    lv_obj_t *sl = lv_label_create(s_sig_list);
+                    lv_label_set_text(sl, sub);
+                    lv_obj_set_style_text_color(sl, COL_MUTE, 0);
+                    lv_obj_set_style_text_font(sl, FONT_BODY, 0);
+                    lv_obj_align(sl, LV_ALIGN_TOP_LEFT, 6, y + 22);
+
                     int pct = rssi_to_pct(s_aps[i].rssi);
-                    lv_obj_t *fill = make_meter_bar(s_sig_list, 6, y + 24, SCAN_W - 180);
+                    lv_obj_t *fill = make_meter_bar(s_sig_list, 6, y + 44, SCAN_W - 180);
                     set_meter(fill, pct, pct < 25 ? COL_DIM : COL_AMBER);
                 }
             }
@@ -888,7 +957,7 @@ static void signal_rescan_cb(lv_event_t *e) { (void)e; start_signal_scan(); }
 
 static lv_obj_t *build_signal_panel(lv_obj_t *parent)
 {
-    lv_obj_t *p = make_panel(parent, "SIGNAL SCAN", back_to_home_cb);
+    lv_obj_t *p = make_panel(parent, "SIGNAL SCAN", back_to_instruments_cb);
 
     s_sig_status = lv_label_create(p);
     lv_label_set_text(s_sig_status, "SCANNING SPECTRUM...");
@@ -917,7 +986,7 @@ static lv_obj_t *build_signal_panel(lv_obj_t *parent)
 
 static lv_obj_t *build_spectrum_panel(lv_obj_t *parent)
 {
-    lv_obj_t *p = make_panel(parent, "SPECTRUM", back_to_home_cb);
+    lv_obj_t *p = make_panel(parent, "SPECTRUM", back_to_instruments_cb);
 
     if (!prop_mic_available()) {
         s_spec_status = lv_label_create(p);
@@ -962,6 +1031,268 @@ static lv_obj_t *build_spectrum_panel(lv_obj_t *parent)
     return p;
 }
 
+/* ---- RF BAND instrument (2.4 GHz channel occupancy bar chart) -------------
+ * A WiFi-derived "sensor": one bar per channel (1..13), height = how busy/strong
+ * that channel is. Pure reuse of the scan path (prop_net_scan_channels) — no new
+ * radio config. A background scan fills the cached histogram; the observer renders
+ * the bars with the same peak-hold ballistics as the mic SPECTRUM. */
+
+#define RF_BW    42        /* bar width */
+#define RF_GAP   20        /* gap between bars */
+#define RF_X0    82        /* left margin (13 bars centred in SCAN_W) */
+#define RF_BASE  130       /* baseline offset from panel bottom (room for labels) */
+#define RF_MAXH  300       /* full-scale bar height */
+
+/* Background channel scan off the LVGL thread; result lands in s_rf_chan and the
+ * observer animates it. Mirrors signal_scan_task. */
+static void rfband_scan_task(void *arg)
+{
+    (void)arg;
+    uint8_t hist[PROP_NET_CHAN_SLOTS];
+    int n = prop_net_scan_channels(hist);
+
+    if (lvgl_port_lock(300)) {
+        if (s_cur_kind == PK_RFBAND && s_rf_status) {
+            if (n < 0) {
+                lv_label_set_text(s_rf_status, "SCAN FAILED  (C6 radio?)");
+            } else if (n == 0) {
+                memset(s_rf_chan, 0, sizeof(s_rf_chan));
+                lv_label_set_text(s_rf_status, "BAND CLEAR  -  NO EMITTERS");
+            } else {
+                memcpy(s_rf_chan, hist, sizeof(s_rf_chan));
+                /* Busiest channel, for the readout. */
+                int top = 1, topv = 0;
+                for (int ch = 1; ch < PROP_NET_CHAN_SLOTS; ch++) {
+                    if (hist[ch] > topv) { topv = hist[ch]; top = ch; }
+                }
+                lv_label_set_text_fmt(s_rf_status, "%d EMITTER%s  -  PEAK CH %d",
+                                      n, n == 1 ? "" : "S", top);
+            }
+        }
+        lvgl_port_unlock();
+    }
+    s_rf_scanning = false;
+    vTaskDelete(NULL);
+}
+
+static void start_rfband_scan(void)
+{
+    if (s_rf_scanning || !s_rf_status) {
+        return;
+    }
+    s_rf_scanning = true;
+    lv_label_set_text(s_rf_status, "SCANNING 2.4 GHz...");
+    if (xTaskCreate(rfband_scan_task, "rf_scan", 4096, NULL, 4, NULL) != pdPASS) {
+        s_rf_scanning = false;
+        lv_label_set_text(s_rf_status, "scan busy");
+    }
+}
+
+static void rfband_rescan_cb(lv_event_t *e) { (void)e; start_rfband_scan(); }
+
+static lv_obj_t *build_rfband_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "RF BAND", back_to_sensors_cb);
+
+    s_rf_status = lv_label_create(p);
+    lv_label_set_text(s_rf_status, "SCANNING 2.4 GHz...");
+    lv_obj_set_style_text_color(s_rf_status, COL_AMBER, 0);
+    lv_obj_set_style_text_font(s_rf_status, FONT_HEAD, 0);
+    lv_obj_align(s_rf_status, LV_ALIGN_TOP_LEFT, 30, 84);
+
+    make_btn(p, "RESCAN", 150, LV_ALIGN_TOP_RIGHT, -30, 78, rfband_rescan_cb);
+
+    /* Baseline the bars stand on. */
+    lv_obj_t *base = lv_obj_create(p);
+    lv_obj_remove_style_all(base);
+    lv_obj_set_size(base, RF_CHANNELS * RF_BW + (RF_CHANNELS - 1) * RF_GAP, 2);
+    lv_obj_set_style_bg_opa(base, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(base, COL_DIM, 0);
+    lv_obj_align(base, LV_ALIGN_BOTTOM_LEFT, RF_X0, -RF_BASE + 2);
+
+    for (int i = 0; i < RF_CHANNELS; i++) {
+        lv_coord_t x = RF_X0 + i * (RF_BW + RF_GAP);
+        lv_obj_t *b = lv_obj_create(p);
+        lv_obj_remove_style_all(b);
+        lv_obj_set_size(b, RF_BW, 2);
+        lv_obj_align(b, LV_ALIGN_BOTTOM_LEFT, x, -RF_BASE);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(b, COL_AMBER, 0);
+        s_rf_bars[i] = b;
+        s_rf_decay[i] = 0.0f;
+
+        /* Channel number under the baseline. */
+        lv_obj_t *cl = lv_label_create(p);
+        lv_label_set_text_fmt(cl, "%d", i + 1);
+        lv_obj_set_style_text_color(cl, COL_MUTE, 0);
+        lv_obj_set_style_text_font(cl, FONT_BODY, 0);
+        lv_obj_align(cl, LV_ALIGN_BOTTOM_LEFT, x + RF_BW / 2 - 8, -RF_BASE + 10);
+    }
+
+    lv_obj_t *note = lv_label_create(p);
+    lv_label_set_text(note, "2.4 GHz channel occupancy  -  WiFi emitters per channel");
+    lv_obj_set_style_text_color(note, COL_MUTE, 0);
+    lv_obj_align(note, LV_ALIGN_BOTTOM_LEFT, RF_X0, -30);
+    return p;
+}
+
+/* ---- CONTACT SIGNATURES instrument (passive BLE scan) ---------------------
+ * Nearby BLE advertisers rendered as "contacts": a header summary plus a
+ * scrolling list of rows (strength bar + name / Company-ID label). The device
+ * set changes slowly, so the observer rebuilds the list throttled (~2.5 Hz). */
+
+#define BLE_ROW_H 64
+
+static lv_obj_t *build_ble_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "CONTACTS", back_to_sensors_cb);
+
+    if (!prop_ble_available()) {
+        lv_obj_t *off = lv_label_create(p);
+        lv_label_set_text(off, "-- BLE OFFLINE --");
+        lv_obj_set_style_text_color(off, COL_DIM, 0);
+        lv_obj_set_style_text_font(off, FONT_HEAD, 0);
+        lv_obj_center(off);
+        return p;
+    }
+
+    s_ble_summary = lv_label_create(p);
+    lv_label_set_text(s_ble_summary, "LISTENING FOR CONTACTS...");
+    lv_obj_set_style_text_color(s_ble_summary, COL_AMBER, 0);
+    lv_obj_set_style_text_font(s_ble_summary, FONT_HEAD, 0);
+    lv_obj_align(s_ble_summary, LV_ALIGN_TOP_LEFT, 30, 84);
+
+    /* Scrolling contact list (rows added by the observer). */
+    s_ble_list = lv_obj_create(p);
+    lv_obj_remove_style_all(s_ble_list);
+    lv_obj_set_size(s_ble_list, SCAN_W - 60, 600 - 140);
+    lv_obj_align(s_ble_list, LV_ALIGN_TOP_LEFT, 30, 132);
+    lv_obj_set_style_pad_all(s_ble_list, 0, 0);
+    lv_obj_set_scroll_dir(s_ble_list, LV_DIR_VER);
+    return p;
+}
+
+/* RSSI -> bar fill. RSSI is in dBm (already a log of power); real contacts cluster
+ * in the weak -70..-95 band and read flat on a linear map. A sqrt expansion over
+ * the useful window spreads that cluster so rows are visually distinct. */
+static int ble_rssi_to_bar(int rssi)
+{
+    float lin = (rssi + 100.0f) / 65.0f;   /* -100 dBm -> 0, -35 dBm -> 1 */
+    if (lin < 0.0f) lin = 0.0f;
+    if (lin > 1.0f) lin = 1.0f;
+    return (int)(sqrtf(lin) * 100.0f);
+}
+
+/* Format a distance estimate compactly ("0.4 m", "12 m"). */
+static void ble_fmt_dist(char *out, size_t n, float d)
+{
+    if (d < 10.0f) snprintf(out, n, "%.1f m", (double)d);
+    else           snprintf(out, n, "%d m", (int)(d + 0.5f));
+}
+
+/* Render one BLE contact row into the list at vertical slot `i`. */
+static void ble_add_row(int i, const prop_ble_dev_t *d)
+{
+    int y = i * BLE_ROW_H;
+    const char *brand = prop_ble_company_label(d->company_id);
+    const char *klass = prop_ble_appearance_label(d->appearance);
+
+    char idbuf[48];
+    if (d->name[0]) {
+        snprintf(idbuf, sizeof(idbuf), "%02d  %s", i + 1, d->name);
+    } else if (klass) {
+        snprintf(idbuf, sizeof(idbuf), "%02d  %s", i + 1, klass);
+    } else if (brand) {
+        snprintf(idbuf, sizeof(idbuf), "%02d  %s DEVICE", i + 1, brand);
+    } else {
+        snprintf(idbuf, sizeof(idbuf), "%02d  %02X:%02X:%02X",
+                 i + 1, d->mac[3], d->mac[4], d->mac[5]);
+    }
+    lv_obj_t *tag = lv_label_create(s_ble_list);
+    lv_label_set_text(tag, idbuf);
+    lv_obj_set_style_text_color(tag, COL_AMBER, 0);
+    lv_obj_align(tag, LV_ALIGN_TOP_LEFT, 6, y);
+
+    lv_obj_t *dbm = lv_label_create(s_ble_list);
+    lv_label_set_text_fmt(dbm, "%d dBm", d->rssi);
+    lv_obj_set_style_text_color(dbm, COL_MUTE, 0);
+    lv_obj_align(dbm, LV_ALIGN_TOP_RIGHT, -6, y);
+
+    /* Distance estimate, bright on the right under the dBm. */
+    char dbuf[16];
+    ble_fmt_dist(dbuf, sizeof(dbuf), prop_ble_distance_m(d->rssi, d->tx_power));
+    lv_obj_t *dist = lv_label_create(s_ble_list);
+    lv_label_set_text_fmt(dist, "~ %s", dbuf);
+    lv_obj_set_style_text_color(dist, COL_AMBER, 0);
+    lv_obj_set_style_text_font(dist, FONT_BODY, 0);
+    lv_obj_align(dist, LV_ALIGN_TOP_RIGHT, -6, y + 22);
+
+    /* Classification line: device class (if known) + civilian/unknown/anonymous. */
+    char sb[56];
+    const char *cls = brand ? "CIVILIAN UNIT"
+                    : (d->company_id != PROP_BLE_NONE ? "UNKNOWN EMITTER" : "ANONYMOUS BEACON");
+    if (brand) {
+        snprintf(sb, sizeof(sb), "CIVILIAN UNIT  //  %s", brand);
+    } else {
+        snprintf(sb, sizeof(sb), "%s", cls);
+    }
+    lv_obj_t *sl = lv_label_create(s_ble_list);
+    lv_label_set_text(sl, sb);
+    lv_obj_set_style_text_color(sl, COL_MUTE, 0);
+    lv_obj_set_style_text_font(sl, FONT_BODY, 0);
+    lv_obj_align(sl, LV_ALIGN_TOP_LEFT, 6, y + 22);
+
+    int pct = ble_rssi_to_bar(d->rssi);
+    lv_obj_t *fill = make_meter_bar(s_ble_list, 6, y + 46, SCAN_W - 60 - 150);
+    set_meter(fill, pct, pct < 25 ? COL_DIM : COL_AMBER);
+}
+
+/* ---- SIGNAL ENVIRONMENT instrument (WiFi CSI, or synthetic fallback) -------
+ * Per-subcarrier channel amplitude as a dense bar field — the RF "texture" of the
+ * room. Driven by prop_csi, which serves real CSI when frames are arriving and a
+ * synthetic RSSI-variance trace otherwise; the header reports which is live. */
+
+#define CSI_BW   20
+#define CSI_GAP  8
+#define CSI_X0   30
+#define CSI_BASE 118
+#define CSI_MAXH 300
+
+static lv_obj_t *build_csi_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "SIGNAL ENV", back_to_sensors_cb);
+
+    s_csi_status = lv_label_create(p);
+    lv_label_set_text(s_csi_status, "ACQUIRING CHANNEL...");
+    lv_obj_set_style_text_color(s_csi_status, COL_AMBER, 0);
+    lv_obj_set_style_text_font(s_csi_status, FONT_HEAD, 0);
+    lv_obj_align(s_csi_status, LV_ALIGN_TOP_LEFT, 30, 84);
+
+    lv_obj_t *base = lv_obj_create(p);
+    lv_obj_remove_style_all(base);
+    lv_obj_set_size(base, PROP_CSI_BINS * CSI_BW + (PROP_CSI_BINS - 1) * CSI_GAP, 2);
+    lv_obj_set_style_bg_opa(base, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(base, COL_DIM, 0);
+    lv_obj_align(base, LV_ALIGN_BOTTOM_LEFT, CSI_X0, -CSI_BASE + 2);
+
+    for (int i = 0; i < PROP_CSI_BINS; i++) {
+        lv_obj_t *b = lv_obj_create(p);
+        lv_obj_remove_style_all(b);
+        lv_obj_set_size(b, CSI_BW, 2);
+        lv_obj_align(b, LV_ALIGN_BOTTOM_LEFT, CSI_X0 + i * (CSI_BW + CSI_GAP), -CSI_BASE);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(b, COL_AMBER, 0);
+        s_csi_bars[i] = b;
+        s_csi_decay[i] = 0.0f;
+    }
+
+    lv_obj_t *note = lv_label_create(p);
+    lv_label_set_text(note, "WiFi channel state  -  per-subcarrier amplitude");
+    lv_obj_set_style_text_color(note, COL_MUTE, 0);
+    lv_obj_align(note, LV_ALIGN_BOTTOM_LEFT, CSI_X0, -30);
+    return p;
+}
+
 /* ---- Console home (PK_HOME): the in-world multi-data interface ------------
  * The default landing screen. Shows the device identity + a data-sponge status
  * strip (clock/date/temp/intake) and the function rail the SELECTOR drives. */
@@ -979,6 +1310,10 @@ static lv_point_precise_t s_ic_scan[9];
 static lv_point_precise_t s_ic_vit[6];
 static lv_point_precise_t s_ic_sig[3][3];
 static lv_point_precise_t s_ic_ins[2][2];
+static lv_point_precise_t s_ic_ble[6];
+static lv_point_precise_t s_ic_csi[3][8];
+static lv_point_precise_t s_ic_instr[2];
+static lv_point_precise_t s_ic_sens[3][3];
 
 static lv_obj_t *ic_box(lv_obj_t *cell, int x, int y, int w, int h, lv_color_t col, bool fill, bool circle)
 {
@@ -1046,6 +1381,46 @@ static void draw_icon(lv_obj_t *cell, icon_id_t id, lv_color_t col)
         int xs[4] = {22,32,42,52};
         int hs[4] = {14,26,18,28};
         for (int k = 0; k < 4; k++) ic_box(cell, xs[k], 48 - hs[k], 6, hs[k], col, true, false);
+        break; }
+    case IC_RFBAND: {                                /* channel-occupancy bars on a baseline */
+        int xs[5] = {21,29,37,45,53};
+        int hs[5] = {12,24,16,28,14};
+        for (int k = 0; k < 5; k++) ic_box(cell, xs[k], 47 - hs[k], 5, hs[k], col, true, false);
+        ic_box(cell, 19, 47, 40, 2, col, true, false);
+        break; }
+    case IC_CONTACTS: {                              /* bluetooth rune (nearby contacts) */
+        int xs[6] = {30,46,38,38,46,30};
+        int ys[6] = {40,24,16,48,40,24};
+        for (int k = 0; k < 6; k++) { s_ic_ble[k].x = xs[k]; s_ic_ble[k].y = ys[k]; }
+        ic_poly(cell, s_ic_ble, 6, col);
+        break; }
+    case IC_SIGENV: {                                /* signal-environment waterfall (stacked waves) */
+        for (int d = 0; d < 3; d++) {
+            int baseY = 24 + d * 9;
+            for (int i = 0; i < 8; i++) {
+                s_ic_csi[d][i].x = 20 + i * 5;
+                s_ic_csi[d][i].y = baseY + (int)(sinf(i * 1.1f + d) * 3.0f);
+            }
+            ic_poly(cell, s_ic_csi[d], 8, col);
+        }
+        break; }
+    case IC_INSTRUMENTS: {                            /* gauge: dial outline + needle + hub */
+        ic_box(cell, 22, 20, 32, 32, col, false, true);
+        s_ic_instr[0].x = 38; s_ic_instr[0].y = 36;
+        s_ic_instr[1].x = 50; s_ic_instr[1].y = 24;
+        ic_poly(cell, s_ic_instr, 2, col);
+        ic_box(cell, 35, 33, 6, 6, col, true, true);
+        break; }
+    case IC_SENSORS: {                                /* radiating chevrons + source dot (radio sensing) */
+        int rx[3] = {8,14,20};
+        for (int c = 0; c < 3; c++) {
+            int r = rx[c];
+            s_ic_sens[c][0].x = 38 - r; s_ic_sens[c][0].y = 44;
+            s_ic_sens[c][1].x = 38;     s_ic_sens[c][1].y = 44 - r;
+            s_ic_sens[c][2].x = 38 + r; s_ic_sens[c][2].y = 44;
+            ic_poly(cell, s_ic_sens[c], 3, col);
+        }
+        ic_box(cell, 35, 46, 6, 6, col, true, true);
         break; }
     case IC_CASSETTE:                                /* shell + two reels */
         ic_box(cell, 22, 24, 32, 18, col, false, false);
@@ -1724,6 +2099,30 @@ static lv_obj_t *build_menu_panel(lv_obj_t *parent)
     return m;
 }
 
+/* INSTRUMENTS group: the unit's own readouts. Rows open the full-screen instruments
+ * (which BACK to here). Keeps the rail uncluttered — see the SENSORS twin below. */
+static lv_obj_t *build_instruments_panel(lv_obj_t *parent)
+{
+    lv_obj_t *m = make_panel(parent, "INSTRUMENTS", back_to_home_cb);
+    lv_obj_t *b = kit_body(m);
+    kit_list_row(b, "SCANNER",     menu_open_cb, (void *)(intptr_t)PK_NONE);
+    kit_list_row(b, "SIGNAL SCAN", menu_open_cb, (void *)(intptr_t)PK_SCAN);
+    kit_list_row(b, "SPECTRUM",    menu_open_cb, (void *)(intptr_t)PK_SPECTRUM);
+    kit_list_row(b, "VITALS",      menu_open_cb, (void *)(intptr_t)PK_VITALS);
+    return m;
+}
+
+/* SENSORS group: the C6 radio-environment instruments (RF BAND / CONTACTS / SIGNAL ENV). */
+static lv_obj_t *build_sensors_panel(lv_obj_t *parent)
+{
+    lv_obj_t *m = make_panel(parent, "SENSORS", back_to_home_cb);
+    lv_obj_t *b = kit_body(m);
+    kit_list_row(b, "RF BAND",    menu_open_cb, (void *)(intptr_t)PK_RFBAND);
+    kit_list_row(b, "CONTACTS",   menu_open_cb, (void *)(intptr_t)PK_BLE);
+    kit_list_row(b, "SIGNAL ENV", menu_open_cb, (void *)(intptr_t)PK_CSI);
+    return m;
+}
+
 /* Signal level is measured in quarter-cells. The gauge deliberately never tops
  * out (cassette-futurism: a perfect reading is suspicious) — SIG_QMAX is one
  * quarter short of completely full. */
@@ -2265,6 +2664,25 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         set_meter(s_vit_cell_bar, (int)((cell - 3.3f) / (4.2f - 3.3f) * 100.0f), COL_AMBER);
         lv_label_set_text_fmt(s_vit_uptime, "%02u:%02u:%02u",
                               (unsigned)(up / 3600), (unsigned)((up / 60) % 60), (unsigned)(up % 60));
+
+        /* UPLINK dossier (cached connected-AP info). */
+        if (s_vit_up_net) {
+            prop_uplink_t ul;
+            prop_net_get_uplink(&ul);
+            if (ul.connected) {
+                lv_label_set_text_fmt(s_vit_up_net, "%s  %d dBm", ul.ssid, ul.rssi);
+                const char *v = prop_net_oui_vendor(ul.bssid);
+                lv_label_set_text_fmt(s_vit_up_ap, "%s  %02X:%02X:%02X",
+                                      v ? v : "UNKNOWN OEM", ul.bssid[3], ul.bssid[4], ul.bssid[5]);
+                lv_label_set_text_fmt(s_vit_up_link, "%s  -  CH %d  -  %s",
+                                      ul.phy[0] ? ul.phy : "--", ul.channel,
+                                      ul.country[0] ? ul.country : "--");
+            } else {
+                lv_label_set_text(s_vit_up_net, "-- NO UPLINK --");
+                lv_label_set_text(s_vit_up_ap, "--");
+                lv_label_set_text(s_vit_up_link, "--");
+            }
+        }
     }
 
     /* Drive the SPECTRUM bars from the mic FFT every frame while it's live. The
@@ -2287,6 +2705,72 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         if (st->tick % 4 == 0 && s_spec_db) {
             lv_label_set_text_fmt(s_spec_db, "%d dB", prop_mic_get_db());
             set_meter(s_spec_db_bar, (prop_mic_get_db() + 60) * 100 / 60, COL_AMBER);
+        }
+    }
+
+    /* Drive the RF BAND bars from the cached channel histogram. The data only
+     * changes on a (re)scan, so bars rise to their value and hold; the slow decay
+     * gives a smooth settle and lets a fresh scan with weaker channels ease down. */
+    if (s_cur_kind == PK_RFBAND && s_rf_bars[0]) {
+        for (int i = 0; i < RF_CHANNELS; i++) {
+            float v = (float)s_rf_chan[i + 1];   /* s_rf_chan[ch], ch = i+1 */
+            if (v >= s_rf_decay[i]) s_rf_decay[i] = v;
+            else s_rf_decay[i] *= 0.90f;
+            int pct = (int)s_rf_decay[i];
+            int h = 2 + pct * RF_MAXH / 100;
+            lv_obj_set_height(s_rf_bars[i], h);
+            lv_obj_align(s_rf_bars[i], LV_ALIGN_BOTTOM_LEFT,
+                         RF_X0 + i * (RF_BW + RF_GAP), -RF_BASE);
+            lv_obj_set_style_bg_color(s_rf_bars[i],
+                                      pct > 70 ? COL_ALERT : (pct > 20 ? COL_AMBER : COL_MUTE), 0);
+        }
+    }
+
+    /* Rebuild the BLE contact list (throttled ~2.5 Hz — the device set changes
+     * slowly and a full rebuild churns widgets). */
+    if (s_cur_kind == PK_BLE && s_ble_list && (st->tick % 8 == 0)) {
+        int cnt = 0, named = 0, known = 0;
+        int8_t best = 0;
+        prop_ble_get_summary(&cnt, &best, &named, &known);
+        if (cnt == 0) {
+            lv_label_set_text(s_ble_summary, "NO CONTACTS IN RANGE");
+        } else {
+            char cb[16];
+            ble_fmt_dist(cb, sizeof(cb), prop_ble_distance_m(best, PROP_BLE_TXPWR_NONE));
+            lv_label_set_text_fmt(s_ble_summary,
+                                  "%d CONTACT%s  -  NEAREST ~%s  -  %d KNOWN",
+                                  cnt, cnt == 1 ? "" : "S", cb, known);
+        }
+
+        prop_ble_dev_t devs[PROP_BLE_MAX];
+        int n = prop_ble_get_devices(devs, PROP_BLE_MAX);
+        lv_obj_clean(s_ble_list);   /* drop the previous rows */
+        for (int i = 0; i < n; i++) {
+            ble_add_row(i, &devs[i]);
+        }
+    }
+
+    /* Drive the SIGNAL ENVIRONMENT bars from the CSI column (real or synthetic),
+     * with the same peak-hold ballistics as the mic spectrum. */
+    if (s_cur_kind == PK_CSI && s_csi_bars[0]) {
+        uint8_t col[PROP_CSI_BINS];
+        prop_csi_get_column(col);
+        for (int i = 0; i < PROP_CSI_BINS; i++) {
+            float v = (float)col[i];
+            if (v >= s_csi_decay[i]) s_csi_decay[i] = v;
+            else s_csi_decay[i] *= 0.82f;
+            int pct = (int)s_csi_decay[i];
+            int h = 2 + pct * CSI_MAXH / 100;
+            lv_obj_set_height(s_csi_bars[i], h);
+            lv_obj_align(s_csi_bars[i], LV_ALIGN_BOTTOM_LEFT,
+                         CSI_X0 + i * (CSI_BW + CSI_GAP), -CSI_BASE);
+            lv_obj_set_style_bg_color(s_csi_bars[i],
+                                      pct > 85 ? COL_ALERT : (pct > 35 ? COL_AMBER : COL_MUTE), 0);
+        }
+        if (st->tick % 8 == 0 && s_csi_status) {
+            label_set_text_cached(s_csi_status, prop_csi_is_live()
+                                  ? "CSI LIVE  //  REAL CHANNEL DATA"
+                                  : "SYNTHETIC  //  RF NOISE FLOOR");
         }
     }
 
@@ -2335,6 +2819,11 @@ void prop_ui_goto(const char *screen)
     else if (strcmp(screen, "vitals") == 0)  open_panel(PK_VITALS);
     else if (strcmp(screen, "scan") == 0)    open_panel(PK_SCAN);
     else if (strcmp(screen, "spectrum") == 0) open_panel(PK_SPECTRUM);
+    else if (strcmp(screen, "rfband") == 0)  open_panel(PK_RFBAND);
+    else if (strcmp(screen, "ble") == 0)     open_panel(PK_BLE);
+    else if (strcmp(screen, "csi") == 0)     open_panel(PK_CSI);
+    else if (strcmp(screen, "instruments") == 0) open_panel(PK_INSTRUMENTS);
+    else if (strcmp(screen, "sensors") == 0)     open_panel(PK_SENSORS);
     else if (strcmp(screen, "archive") == 0) open_panel(PK_ARCHIVE);
     else if (strcmp(screen, "cassette") == 0) open_panel(PK_CASSETTE);
     else if (strcmp(screen, "insights") == 0) open_panel(PK_INSIGHTS);

@@ -9,3 +9,8 @@
 
 # Python bytecode cache from the dev tools.
 __pycache__/
+
+# Local WiFi secret: SSID/password baked in as the build-time STA default (used only
+# when NVS has no stored creds). Machine-specific, NOT for the repo. The committed
+# wifi_secret.env.example is the template; copy it to wifi_secret.env and fill it in.
+wifi_secret.env

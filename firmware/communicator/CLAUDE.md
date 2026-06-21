@@ -4,20 +4,33 @@ Guidance for working on this firmware (the cassette-futurism communicator/scanne
 Read the root `../../CLAUDE.md` for board/repo context. This file is about *developing here*,
 with an emphasis on **graphics/UI work**.
 
-## Build / flash / monitor (this machine)
+## Build / flash / monitor
 
-ESP-IDF **6.0.1** is installed via EIM. It is NOT on PATH; activate it per command, and
-force UTF-8 (the component manager prints an emoji that crashes cp1252):
+ESP-IDF **6.0.1** is required.
 
+**Windows (PowerShell):**
 ```powershell
 & "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"; $env:PYTHONIOENCODING="utf-8"
 idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" build
 idf.py -C "f:\git\personal\CrowPanelProp\firmware\communicator" -p COM7 flash
 ```
+Or use the helper: `pwsh tools/dev.ps1 bf -Port COM7` (build+flash) or `pwsh tools/dev.ps1 ota`. Board details: COM7 (CH341 driver).
 
-Or use the helper: `pwsh tools/dev.ps1 bf -Port COM7` (build+flash) or
-`pwsh tools/dev.ps1 ota` (build + push over WiFi to `comm-unit-7.local`). Board enumerates on **COM7**
-(CH341 driver). Target is `esp32p4`; the board is **chip rev v1.3** and config already pins the
+**Linux / Debian (Bash):**
+```bash
+. ~/.local/esp/esp-idf/export.sh
+idf.py -C firmware/communicator build
+idf.py -C firmware/communicator -p /dev/ttyUSB0 flash
+```
+Or use the helper: `./tools/dev.sh bf -Port /dev/ttyUSB0` or `./tools/dev.sh ota`. Board details: /dev/ttyUSB0.
+
+**Default WiFi (optional):** copy `wifi_secret.env.example` → `wifi_secret.env` (gitignored) and
+set `SSID=` / `PASS=`. `main/CMakeLists.txt` bakes them in as the *default* STA creds, applied only
+when NVS is empty (fresh flash / `erase-flash`); creds set later via SETUP→WI-FI or `/cmd wifi`
+(stored in NVS) always win. Blank/missing file → unit comes up AP-only. Password is plaintext in
+the image — hence gitignored. Edit the file and rebuild to change it.
+
+Target is `esp32p4`; the board is **chip rev v1.3** and config already pins the
 pre-v3 silicon line — don't touch `CONFIG_ESP32P4_*REV*` or it won't boot. See `../../` memory
 `idf6-migration` for the full list of 6.0/board quirks (cJSON, driver split, esp_lcd API, C6 SDIO pins).
 
@@ -106,6 +119,11 @@ Palette + helpers are at the top of `prop_ui.c`:
 - **Do not switch back to the builtin pool / raise `LV_MEM`** — it starves esp_hosted ("mempool: no
   mem" boot loop). Other big buffers/assets also go in **PSRAM** (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`).
   If WiFi RAM gets tight, the lever is `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`.
+- **Main task stack must be 8192** (`CONFIG_ESP_MAIN_TASK_STACK_SIZE`), not the IDF default 3584. Once
+  BT/NimBLE is on, `app_main`'s bring-up (`nvs_flash_init` → partition mmap, then engine/UI/net/BLE)
+  overruns 3584 B. The overrun does NOT print a clean "stack overflow" — it surfaces as
+  `assert failed: ... esp_task_stack_is_sane_cache_disabled()` during the first flash op, and boot-loops.
+  It can hide on incremental builds and only bite after a `fullclean` (layout shift) — keep the bump.
 
 ## Module map
 
@@ -114,13 +132,32 @@ Palette + helpers are at the top of `prop_ui.c`:
 | `main/prop_ui.c` | **All LVGL UI** (console home + function rail + SETUP + instruments + ARCHIVE). `prop_ui_input()` is the dial/tab/action nav entry — nav lives in the view |
 | `main/prop_content.c` | **Author-editable archive content** (sections → entries; real-Earth desert placeholders). Edit here to change the ARCHIVE — no UI change |
 | `main/prop_engine.c` | Scene state machine + 10 Hz animation; single source of truth |
-| `main/prop_net.c` | WiFi AP+STA via C6, scan, STA state, NVS creds |
+| `main/prop_net.c` | WiFi via C6: STA + **deferred** AP (hotspot held back ~60 s while STA joins, to free C6 radio time; comes up only if STA hasn't connected or there are no saved creds), scan, channel-occupancy scan (RF BAND), STA state, NVS creds |
 | `main/prop_api.c` | HTTP: `/`, `/state`, `/cmd`, `/ws`, `/ota`, `/screenshot` |
 | `main/prop_settings.c` | NVS key/value (survives reflash) |
 | `main/prop_fx.c` | CRT post overlay on `lv_layer_top()` (scanlines/vignette/phosphor + refresh band); paints ARGB pixels **directly** into the canvas buffer (v9 canvas layer-draw deadlocks under the lock); lazy-allocated |
 | `main/lv_port_mem.c` | Custom LVGL allocator → routes `lv_malloc` to PSRAM (see Memory reality) |
 | `main/prop_mic.c` | PDM mic capture (I2S0) + FFT → cached spectrum bands + dB level |
+| `main/prop_ble.c` | **Passive BLE scan via the C6** (NimBLE host, controller on the C6 over esp_hosted VHCI) → cached contact table (MAC/RSSI/name/Company-ID/appearance, LRU age-out) + distance estimate. Drives the CONTACTS instrument |
+| `main/prop_csi.c` | **WiFi CSI "signal environment"** — best-effort real CSI from the C6 with a **synthetic RSSI-variance fallback** (real CSI returns `ESP_ERR_NOT_SUPPORTED` on this esp_hosted/slave; the panel self-labels LIVE vs SYNTHETIC). Drives SIGNAL ENV |
 | `peripheral/bsp_*` | display/touch/backlight (bsp_illuminate, bsp_display, bsp_i2c), LEDs+buttons (bsp_io) |
+
+### Rail layout (grouped)
+
+The left rail is 7 top-level entries: CONSOLE, ARCHIVE, **INSTRUMENTS**, **SENSORS**, CASSETTE, INSIGHTS, SETUP. The instruments are not on the rail directly — they live in two submenu list-panels (mirroring how SETUP groups config), which keeps the rail uncluttered:
+- **INSTRUMENTS** (`PK_INSTRUMENTS`) → SCANNER (the bare readout, `PK_NONE`), SIGNAL SCAN, SPECTRUM, VITALS.
+- **SENSORS** (`PK_SENSORS`) → RF BAND, CONTACTS, SIGNAL ENV (the C6 radio sensors).
+
+A panel's BACK returns to its group; `rail_sync()` maps each sub-panel back to its group cell for the highlight. Deep-link goto names (`spectrum`, `ble`, …) still open panels directly.
+
+### Radio-data instruments (C6 sensors)
+
+The C6 co-processor is mined for prop "sensor" data beyond plain WiFi — the three SENSORS instruments, all following the background-task → cached value → `ui_observer` pattern:
+- **RF BAND** (`PK_RFBAND`) — 2.4 GHz channel-occupancy bars from `prop_net_scan_channels()` (pure reuse of the scan path; on-demand scan on open + RESCAN).
+- **CONTACTS** (`PK_BLE`) — live BLE advertisers as ranged contacts. Needs the NimBLE host + esp_hosted BT flags in `sdkconfig.defaults` (`CONFIG_BT_NIMBLE_ENABLED`, `CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE`, `CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI`). The transport is already up from `esp_wifi_init`, so `prop_ble_init` only does `esp_hosted_bt_controller_init/enable` + NimBLE — **no `esp_hosted_connect_to_slave`**.
+- **SIGNAL ENV** (`PK_CSI`) — per-subcarrier channel amplitude (synthetic on this stack; see above).
+
+**RAM verdict (the Phase-0 gate that gated all this):** NimBLE + WiFi + LVGL coexist fine — **no `HS_MP` mempool boot loop**, ~**332 KB internal RAM free** at runtime with all three instruments live. The `SPIRAM_TRY_ALLOCATE_WIFI_LWIP` lever was **not** needed.
 
 ### Hardware notes (non-obvious; confirmed from vendor examples)
 
@@ -138,12 +175,15 @@ Palette + helpers are at the top of `prop_ui.c`:
 
 `POST /cmd` (JSON): `{"cmd":"scene","value":"SCANNING"}`, `{"cmd":"ui","screen":"<name>"}`
 (screens: `home`=console, `scanner archive cassette insights menu wifi display audio leds
-vitals scan spectrum about`), `{"cmd":"input","control":"selector|tab|action","arg":"cw|ccw|press"|N}`
+vitals scan spectrum rfband ble csi instruments sensors about`; `instruments`/`sensors`
+are the rail submenus, the rest deep-link straight to a panel),
+`{"cmd":"input","control":"selector|tab|action","arg":"cw|ccw|press"|N}`
 (simulated dial/tab/action nav; boots to `home`),
 `{"cmd":"sens","value":0-100}`, `{"cmd":"fx","on":true,"value":0-100}`,
 `{"cmd":"led","name":"alert","on":true}`, `{"cmd":"status","value":"..."}`,
 `{"cmd":"channel","value":"..."}`, `{"cmd":"wifi","ssid":"..","pass":"..","remember":true}`.
-`GET /state` JSON (scene/status/channel/link/sensitivity/channel_pos/ip/leds);
+`GET /state` JSON (scene/status/channel/link/sensitivity/channel_pos/ip/version/leds,
+plus `ble:{count,strongest,known}` when BLE is up and `csi_live` bool);
 `GET /screenshot` RGB565 read from the DPI framebuffer (whole panel incl. the fx overlay); `WS /ws` same.
 
 **Dev CLI:** `python tools/prop.py shot out.png --screen spectrum --wait` (wait→drive→
