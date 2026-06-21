@@ -45,7 +45,7 @@
             <!-- BACKLIGHT slider row  y≈76 -->
             <lv_label text="BACKLIGHT" align="top_left" x="40" y="82"><style name="lbl" /></lv_label>
             <lv_label bind_text="subj_brightness" bind_text-fmt="%d%%" align="top_right" x="-40" y="82"><style name="mute" /></lv_label>
-            <lv_slider width="868" height="22" align="top_mid" y="104" bind_value="subj_brightness" min="5" max="100">
+            <lv_slider width="868" height="22" align="top_mid" y="104" bind_value="subj_brightness" min_value="5" max_value="100">
                 <style name="sld_main" /><style name="sld_ind" selector="indicator" /><style name="sld_knob" selector="knob" />
             </lv_slider>
 
@@ -56,28 +56,28 @@
             <!-- SCANLINES slider row  y≈196 -->
             <lv_label text="SCANLINES" align="top_left" x="40" y="196"><style name="lbl" /></lv_label>
             <lv_label bind_text="subj_scanlines" bind_text-fmt="%d%%" align="top_right" x="-40" y="196"><style name="mute" /></lv_label>
-            <lv_slider width="868" height="22" align="top_mid" y="218" bind_value="subj_scanlines" min="0" max="100">
+            <lv_slider width="868" height="22" align="top_mid" y="218" bind_value="subj_scanlines" min_value="0" max_value="100">
                 <style name="sld_main" /><style name="sld_ind" selector="indicator" /><style name="sld_knob" selector="knob" />
             </lv_slider>
 
             <!-- PHOSPHOR slider row  y≈262 -->
             <lv_label text="PHOSPHOR" align="top_left" x="40" y="262"><style name="lbl" /></lv_label>
             <lv_label bind_text="subj_phosphor" bind_text-fmt="%d%%" align="top_right" x="-40" y="262"><style name="mute" /></lv_label>
-            <lv_slider width="868" height="22" align="top_mid" y="284" bind_value="subj_phosphor" min="0" max="100">
+            <lv_slider width="868" height="22" align="top_mid" y="284" bind_value="subj_phosphor" min_value="0" max_value="100">
                 <style name="sld_main" /><style name="sld_ind" selector="indicator" /><style name="sld_knob" selector="knob" />
             </lv_slider>
 
             <!-- VIGNETTE slider row  y≈328 -->
             <lv_label text="VIGNETTE" align="top_left" x="40" y="328"><style name="lbl" /></lv_label>
             <lv_label bind_text="subj_vignette" bind_text-fmt="%d%%" align="top_right" x="-40" y="328"><style name="mute" /></lv_label>
-            <lv_slider width="868" height="22" align="top_mid" y="350" bind_value="subj_vignette" min="0" max="100">
+            <lv_slider width="868" height="22" align="top_mid" y="350" bind_value="subj_vignette" min_value="0" max_value="100">
                 <style name="sld_main" /><style name="sld_ind" selector="indicator" /><style name="sld_knob" selector="knob" />
             </lv_slider>
 
             <!-- REFRESH SWEEP slider row  y≈394 -->
             <lv_label text="REFRESH SWEEP" align="top_left" x="40" y="394"><style name="lbl" /></lv_label>
             <lv_label bind_text="subj_refresh" bind_text-fmt="%d%%" align="top_right" x="-40" y="394"><style name="mute" /></lv_label>
-            <lv_slider width="868" height="22" align="top_mid" y="416" bind_value="subj_refresh" min="0" max="100">
+            <lv_slider width="868" height="22" align="top_mid" y="416" bind_value="subj_refresh" min_value="0" max_value="100">
                 <style name="sld_main" /><style name="sld_ind" selector="indicator" /><style name="sld_knob" selector="knob" />
             </lv_slider>
 

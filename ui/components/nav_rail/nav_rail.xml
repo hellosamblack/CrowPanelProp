@@ -1,71 +1,82 @@
 <!--
-  nav_rail — the persistent 76px icon rail down the left edge of every screen.
+  nav_rail — the persistent 76px rail down the left edge of every screen.
   Mirrors the s_rail[] table + build_rail() in main/prop_ui.c (CONSOLE / ARCHIVE /
   INSTRUMENTS / SENSORS / CASSETTE / INSIGHTS / SETUP).
 
-  In the firmware the rail is drawn from LVGL primitives and navigates via
-  open_panel(); here each cell is a clickable button that fires a
-  screen_create_event so the rail navigates live in the editor preview.
-  (screen_create_event = build-on-enter / delete-on-leave, matching the firmware's
-  lazily-built one-panel-at-a-time model.)
+  Each cell is a clickable button that fires a screen_create_event, so the rail
+  navigates live in the editor preview (screen_create_event = build-on-enter /
+  delete-on-leave, matching the firmware's lazily-built one-panel model).
 
-  Included by every screen as <nav_rail/> in place of the old static placeholder.
+  Structure follows the proven container-component pattern (lvgl_editor
+  tutorials/8_animations list.xml): the view is sized with element attributes and
+  styled with inline style_* props; each cell button is sized with width/height
+  attributes (NOT via a named style, which isn't honored for flex-child geometry).
+  Included by every screen as <nav_rail/>.
 -->
 <component>
-    <styles>
-        <style name="strip"
-               bg_color="#col_panel_item"
-               border_side="right" border_color="#col_dim" border_width="2"
-               radius="0" pad_all="0" />
-        <style name="cell"
-               bg_opa="0" border_width="0" radius="0" shadow_width="0"
-               text_color="#col_mute" text_font="font_body"
-               width="76" height="85" />
-        <!-- Pressed feedback: dim amber wash -->
-        <style name="cell_pr" bg_color="#col_dim" bg_opa="120" />
-    </styles>
-
-    <view width="76" height="600" align="top_left" flex_flow="column">
-        <style name="strip" />
-
-        <lv_button>
-            <style name="cell" /><style name="cell_pr" selector="pressed" />
+    <view
+        width="76" height="600"
+        flex_flow="column"
+        style_bg_color="#col_panel_item"
+        style_border_side="right"
+        style_border_color="#col_dim"
+        style_border_width="2"
+        style_radius="0"
+        style_pad_all="0"
+        style_pad_row="0"
+    >
+        <lv_button width="76" height="85"
+                   style_bg_opa="0" style_bg_color-pressed="#col_dim" style_bg_opa-pressed="140"
+                   style_border_width="0" style_radius="0" style_shadow_width="0"
+                   style_text_color="#col_mute" style_text_font="font_body">
             <lv_label text="CONSOLE" align="center" />
             <screen_create_event screen="screen_home" trigger="clicked" />
         </lv_button>
 
-        <lv_button>
-            <style name="cell" /><style name="cell_pr" selector="pressed" />
+        <lv_button width="76" height="85"
+                   style_bg_opa="0" style_bg_color-pressed="#col_dim" style_bg_opa-pressed="140"
+                   style_border_width="0" style_radius="0" style_shadow_width="0"
+                   style_text_color="#col_mute" style_text_font="font_body">
             <lv_label text="ARCHIVE" align="center" />
             <screen_create_event screen="screen_archive" trigger="clicked" />
         </lv_button>
 
-        <lv_button>
-            <style name="cell" /><style name="cell_pr" selector="pressed" />
+        <lv_button width="76" height="85"
+                   style_bg_opa="0" style_bg_color-pressed="#col_dim" style_bg_opa-pressed="140"
+                   style_border_width="0" style_radius="0" style_shadow_width="0"
+                   style_text_color="#col_mute" style_text_font="font_body">
             <lv_label text="INSTR" align="center" />
             <screen_create_event screen="screen_instruments" trigger="clicked" />
         </lv_button>
 
-        <lv_button>
-            <style name="cell" /><style name="cell_pr" selector="pressed" />
+        <lv_button width="76" height="85"
+                   style_bg_opa="0" style_bg_color-pressed="#col_dim" style_bg_opa-pressed="140"
+                   style_border_width="0" style_radius="0" style_shadow_width="0"
+                   style_text_color="#col_mute" style_text_font="font_body">
             <lv_label text="SENSORS" align="center" />
             <screen_create_event screen="screen_sensors" trigger="clicked" />
         </lv_button>
 
-        <lv_button>
-            <style name="cell" /><style name="cell_pr" selector="pressed" />
+        <lv_button width="76" height="85"
+                   style_bg_opa="0" style_bg_color-pressed="#col_dim" style_bg_opa-pressed="140"
+                   style_border_width="0" style_radius="0" style_shadow_width="0"
+                   style_text_color="#col_mute" style_text_font="font_body">
             <lv_label text="CASS" align="center" />
             <screen_create_event screen="screen_cassette" trigger="clicked" />
         </lv_button>
 
-        <lv_button>
-            <style name="cell" /><style name="cell_pr" selector="pressed" />
+        <lv_button width="76" height="85"
+                   style_bg_opa="0" style_bg_color-pressed="#col_dim" style_bg_opa-pressed="140"
+                   style_border_width="0" style_radius="0" style_shadow_width="0"
+                   style_text_color="#col_mute" style_text_font="font_body">
             <lv_label text="INSIGHT" align="center" />
             <screen_create_event screen="screen_insights" trigger="clicked" />
         </lv_button>
 
-        <lv_button>
-            <style name="cell" /><style name="cell_pr" selector="pressed" />
+        <lv_button width="76" height="85"
+                   style_bg_opa="0" style_bg_color-pressed="#col_dim" style_bg_opa-pressed="140"
+                   style_border_width="0" style_radius="0" style_shadow_width="0"
+                   style_text_color="#col_mute" style_text_font="font_body">
             <lv_label text="SETUP" align="center" />
             <screen_create_event screen="screen_setup" trigger="clicked" />
         </lv_button>

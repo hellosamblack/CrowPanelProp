@@ -39,7 +39,7 @@
             <!-- VOLUME slider row -->
             <lv_label text="VOLUME" align="top_left"  x="40" y="82"><style name="lbl" /></lv_label>
             <lv_label bind_text="subj_volume" bind_text-fmt="%d%%" align="top_right" x="-40" y="82"><style name="mute" /></lv_label>
-            <lv_slider width="868" height="22" align="top_mid" y="104" bind_value="subj_volume" min="0" max="100">
+            <lv_slider width="868" height="22" align="top_mid" y="104" bind_value="subj_volume" min_value="0" max_value="100">
                 <style name="sld_main" /><style name="sld_ind" selector="indicator" /><style name="sld_knob" selector="knob" />
             </lv_slider>
 
