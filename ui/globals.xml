@@ -26,10 +26,11 @@
     </images>
 
     <fonts>
-        <!-- Eurostile Bold — matches FONT_BODY/HEAD/STATUS/PUNCH in prop_kit.h -->
-        <bin name="font_body"   src_path="../resources/Eurostile-Bold.ttf" size="14" bpp="4" as_file="false" />
-        <bin name="font_head"   src_path="../resources/Eurostile-Bold.ttf" size="24" bpp="4" as_file="false" />
-        <bin name="font_status" src_path="../resources/Eurostile-Bold.ttf" size="40" bpp="4" as_file="false" />
-        <bin name="font_punch"  src_path="../resources/Eurostile-Bold.ttf" size="56" bpp="4" as_file="false" />
+        <!-- tiny_ttf = loaded dynamically from file; required for the online viewer.
+             bin (compile-time C arrays) is firmware-only and cannot be used here. -->
+        <tiny_ttf name="font_body"   size="14" as_file="true" src_path="fonts/Eurostile-Bold.ttf" />
+        <tiny_ttf name="font_head"   size="24" as_file="true" src_path="fonts/Eurostile-Bold.ttf" />
+        <tiny_ttf name="font_status" size="40" as_file="true" src_path="fonts/Eurostile-Bold.ttf" />
+        <tiny_ttf name="font_punch"  size="56" as_file="true" src_path="fonts/Eurostile-Bold.ttf" />
     </fonts>
 </globals>

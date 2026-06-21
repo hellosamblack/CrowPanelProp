@@ -1,4 +1,4 @@
-<project lvgl_version="9.5.0">
+<project name="ui_communicator" lvgl_version="9.5.0">
     <targets>
         <target name="crowpanel_p4">
             <display width="1024" height="600"/>
