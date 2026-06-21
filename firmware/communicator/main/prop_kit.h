@@ -44,3 +44,31 @@ lv_obj_t *kit_info_row(lv_obj_t *parent, const char *key, const char *val);
 /* Paint a 2-stop phosphor gradient (c1 -> c2 along `dir`) as an object's background.
  * Uses the v9 complex SW-draw gradient path (CONFIG_LV_DRAW_SW_COMPLEX). */
 void kit_phosphor_grad(lv_obj_t *obj, lv_color_t c1, lv_color_t c2, lv_grad_dir_t dir);
+
+/* ---- Styling primitives (theme a raw widget; the kit is the single source) --- */
+void kit_style_btn(lv_obj_t *o);      /* amber-bordered button on the panel fill   */
+void kit_style_field(lv_obj_t *o);    /* dropdown/textarea: dim border, amber text  */
+void kit_style_slider(lv_obj_t *o);   /* square amber slider                        */
+void kit_style_switch(lv_obj_t *o);   /* square amber switch                        */
+
+/* ---- Meters ------------------------------------------------------------- */
+lv_obj_t *kit_meter(lv_obj_t *parent, lv_coord_t w);   /* square track + amber fill; returns the fill */
+void kit_set_meter(lv_obj_t *fill, int pct, lv_color_t col);
+
+/* ---- Flex page + rows (compose a panel body with no manual y offsets) ---- */
+/* Transparent flex-column body filling the panel below the title; rows self-stack
+ * with a consistent gap (vertically scrollable if they overflow). */
+lv_obj_t *kit_body(lv_obj_t *panel);
+/* "LABEL ........ VAL%" over a slider. Returns the value label — store it and update
+ * it from `cb` (which reads the slider via lv_event_get_target). */
+lv_obj_t *kit_slider_row(lv_obj_t *body, const char *label, int min, int max, int val, lv_event_cb_t cb);
+/* "LABEL .......... [switch]". Returns the switch. */
+lv_obj_t *kit_switch_row(lv_obj_t *body, const char *label, bool on, lv_event_cb_t cb, void *ud);
+/* "LABEL ........ VALUE" over a meter (pass fill_out=NULL for a value-only row).
+ * Returns the value label; *fill_out (if given) receives the fill for kit_set_meter. */
+lv_obj_t *kit_meter_row(lv_obj_t *body, const char *label, lv_obj_t **fill_out);
+/* Full-width menu/list row (big amber text, left-aligned). Returns the row. */
+lv_obj_t *kit_list_row(lv_obj_t *body, const char *text, lv_event_cb_t cb, void *ud);
+/* Bare full-width flex row (space-between) — fill it yourself with a label + a widget
+ * (e.g. a dropdown). Returns the row container. */
+lv_obj_t *kit_row(lv_obj_t *body);

@@ -1,5 +1,5 @@
-# ESP-IDF build output — huge and machine-specific. NOTE: build/ is currently
-# tracked from an earlier commit; run `git rm -r --cached build` once to untrack it.
+# ESP-IDF build output — huge and machine-specific. Untracked (removed from the index
+# with `git rm -r --cached build`); regenerated locally by idf.py. Keep it ignored.
 /build/
 
 # Scratch screenshots from the dev loop (tools/prop.py, tools/screenshot.py).

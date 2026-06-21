@@ -296,24 +296,9 @@ static void open_panel(panel_kind_t kind)
 }
 
 /* Cassette-futurism styling helpers: amber-on-black, square corners. */
-static void style_btn(lv_obj_t *b)
-{
-    lv_obj_set_style_bg_color(b, COL_PANEL_ITEM, 0);
-    lv_obj_set_style_bg_color(b, COL_DIM, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_border_color(b, COL_AMBER, 0);
-    lv_obj_set_style_border_width(b, 1, 0);
-    lv_obj_set_style_radius(b, 0, 0);
-    lv_obj_set_style_text_color(b, COL_AMBER, 0);
-}
-
-static void style_field(lv_obj_t *f)
-{
-    lv_obj_set_style_bg_color(f, COL_PANEL_ITEM, 0);
-    lv_obj_set_style_border_color(f, COL_DIM, 0);
-    lv_obj_set_style_border_width(f, 1, 0);
-    lv_obj_set_style_radius(f, 0, 0);
-    lv_obj_set_style_text_color(f, COL_AMBER, 0);
-}
+/* Thin wrappers over the kit so existing call sites stay terse; the kit owns the look. */
+static void style_btn(lv_obj_t *b)   { kit_style_btn(b); }
+static void style_field(lv_obj_t *f) { kit_style_field(f); }
 
 static void style_keyboard(lv_obj_t *kb)
 {
@@ -528,20 +513,6 @@ static lv_obj_t *make_panel(lv_obj_t *parent, const char *title, lv_event_cb_t b
     return p;
 }
 
-/* One row in the global SETUP menu. */
-static void menu_item(lv_obj_t *menu, const char *text, int idx, lv_event_cb_t cb, void *ud)
-{
-    lv_obj_t *b = lv_btn_create(menu);
-    lv_obj_set_size(b, SCAN_W - 120, 56);
-    lv_obj_align(b, LV_ALIGN_TOP_MID, 0, 80 + idx * 66);
-    style_btn(b);
-    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ud);
-    lv_obj_t *l = lv_label_create(b);
-    lv_label_set_text(l, text);
-    lv_obj_set_style_text_font(l, FONT_HEAD, 0);
-    lv_obj_align(l, LV_ALIGN_LEFT_MID, 20, 0);
-}
-
 static lv_obj_t *build_wifi_panel(lv_obj_t *parent)
 {
     s_setup_panel = make_panel(parent, "WI-FI", back_to_menu_cb);
@@ -608,53 +579,6 @@ static lv_obj_t *build_wifi_panel(lv_obj_t *parent)
 
 /* ---- Real SETUP panels (replace the stubs) ------------------------------- */
 
-/* A themed amber-on-black slider, full-ish width, centred at y. */
-static lv_obj_t *make_slider(lv_obj_t *parent, int min, int max, int val,
-                             lv_coord_t y, lv_event_cb_t cb)
-{
-    lv_obj_t *s = lv_slider_create(parent);
-    lv_obj_set_width(s, SCAN_W - 320);
-    lv_slider_set_range(s, min, max);
-    lv_slider_set_value(s, val, LV_ANIM_OFF);
-    lv_obj_align(s, LV_ALIGN_TOP_LEFT, 40, y);
-    lv_obj_set_style_bg_color(s, COL_PANEL_ITEM, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(s, COL_DIM, LV_PART_MAIN);
-    lv_obj_set_style_border_width(s, 1, LV_PART_MAIN);
-    lv_obj_set_style_radius(s, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s, COL_AMBER, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(s, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(s, COL_AMBER, LV_PART_KNOB);
-    lv_obj_set_style_radius(s, 0, LV_PART_KNOB);
-    if (cb) {
-        lv_obj_add_event_cb(s, cb, LV_EVENT_VALUE_CHANGED, NULL);
-    }
-    return s;
-}
-
-/* A themed switch (square, amber when on). */
-static lv_obj_t *make_switch(lv_obj_t *parent, bool on, lv_coord_t x, lv_coord_t y,
-                             lv_event_cb_t cb, void *ud)
-{
-    lv_obj_t *sw = lv_switch_create(parent);
-    lv_obj_align(sw, LV_ALIGN_TOP_LEFT, x, y);
-    lv_obj_set_style_bg_color(sw, COL_PANEL_ITEM, LV_PART_MAIN);
-    lv_obj_set_style_border_color(sw, COL_DIM, LV_PART_MAIN);
-    lv_obj_set_style_border_width(sw, 1, LV_PART_MAIN);
-    lv_obj_set_style_radius(sw, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(sw, COL_AMBER, LV_PART_INDICATOR | LV_STATE_CHECKED);
-    lv_obj_set_style_radius(sw, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(sw, COL_AMBER, LV_PART_KNOB);
-    lv_obj_set_style_radius(sw, 0, LV_PART_KNOB);
-    if (on) {
-        lv_obj_add_state(sw, LV_STATE_CHECKED);
-    }
-    if (cb) {
-        lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, ud);
-    }
-    return sw;
-}
-
 /* A left-aligned amber section label. */
 static lv_obj_t *panel_label(lv_obj_t *p, const char *txt, lv_coord_t x, lv_coord_t y)
 {
@@ -711,58 +635,39 @@ static void fps_toggle_cb(lv_event_t *e)
     prop_ui_set_fps(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
 
-/* One labelled FX slider row at vertical position y; returns the value label. */
-static lv_obj_t *fx_row(lv_obj_t *p, const char *name, lv_coord_t y,
-                        uint8_t val, lv_event_cb_t cb)
-{
-    panel_label(p, name, 40, y);
-    lv_obj_t *v = lv_label_create(p);
-    lv_label_set_text_fmt(v, "%u%%", val);
-    lv_obj_set_style_text_color(v, COL_MUTE, 0);
-    lv_obj_align(v, LV_ALIGN_TOP_RIGHT, -40, y);
-    make_slider(p, 0, 100, val, y + 34, cb);
-    return v;
-}
-
 static lv_obj_t *build_display_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "DISPLAY", back_to_menu_cb);
-    lv_obj_set_scroll_dir(p, LV_DIR_VER);   /* rows can exceed panel height */
+    lv_obj_t *b = kit_body(p);   /* flex column, scrolls if the rows overflow */
 
-    uint32_t b = 80;
-    prop_settings_get_u32("brightness", &b, 80);
-    panel_label(p, "BACKLIGHT", 40, 92);
-    s_disp_bright_val = lv_label_create(p);
-    lv_label_set_text_fmt(s_disp_bright_val, "%u%%", (unsigned)b);
-    lv_obj_set_style_text_color(s_disp_bright_val, COL_MUTE, 0);
-    lv_obj_align(s_disp_bright_val, LV_ALIGN_TOP_RIGHT, -40, 92);
-    make_slider(p, 5, 100, b, 126, disp_bright_cb);
+    uint32_t bl = 80;
+    prop_settings_get_u32("brightness", &bl, 80);
+    s_disp_bright_val = kit_slider_row(b, "BACKLIGHT", 5, 100, bl, disp_bright_cb);
 
-    panel_label(p, "CRT EFFECTS", 40, 188);
-    make_switch(p, prop_fx_enabled(), SCAN_W - 140, 184, fx_toggle_cb, NULL);
-
-    s_fx_scan_val = fx_row(p, "SCANLINES",     232, prop_fx_scanlines(), fx_scan_cb);
-    s_fx_phos_val = fx_row(p, "PHOSPHOR",      300, prop_fx_phosphor(),  fx_phos_cb);
-    s_fx_vign_val = fx_row(p, "VIGNETTE",      368, prop_fx_vignette(),  fx_vign_cb);
-    s_fx_refr_val = fx_row(p, "REFRESH SWEEP", 436, prop_fx_refresh(),   fx_refr_cb);
+    kit_switch_row(b, "CRT EFFECTS", prop_fx_enabled(), fx_toggle_cb, NULL);
+    s_fx_scan_val = kit_slider_row(b, "SCANLINES",     0, 100, prop_fx_scanlines(), fx_scan_cb);
+    s_fx_phos_val = kit_slider_row(b, "PHOSPHOR",      0, 100, prop_fx_phosphor(),  fx_phos_cb);
+    s_fx_vign_val = kit_slider_row(b, "VIGNETTE",      0, 100, prop_fx_vignette(),  fx_vign_cb);
+    s_fx_refr_val = kit_slider_row(b, "REFRESH SWEEP", 0, 100, prop_fx_refresh(),   fx_refr_cb);
 
     /* Screen-change transition flavor (the "old TV channel change"). */
-    panel_label(p, "TRANSITION", 40, 508);
-    lv_obj_t *dd = lv_dropdown_create(p);
+    lv_obj_t *trow = kit_row(b);
+    lv_obj_t *tl = lv_label_create(trow);
+    lv_label_set_text(tl, "TRANSITION");
+    lv_obj_set_style_text_color(tl, COL_AMBER, 0);
+    lv_obj_t *dd = lv_dropdown_create(trow);
     lv_dropdown_set_options(dd, "OFF\nSNOW\nROLL\nCOLLAPSE\nSNOW+COLLAPSE");
     uint32_t tr = 1;
     prop_settings_get_u32("fx_trans", &tr, 1);
     lv_dropdown_set_selected(dd, tr > 4 ? 1 : tr);
     lv_obj_set_width(dd, 360);
-    lv_obj_align(dd, LV_ALIGN_TOP_RIGHT, -40, 502);
     style_field(dd);
     lv_obj_add_event_cb(dd, fx_trans_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     /* FPS meter HUD toggle (top-right perf readout). */
-    panel_label(p, "FPS METER", 40, 560);
     uint32_t fps_on = 0;
     prop_settings_get_u32("fps_on", &fps_on, 0);
-    make_switch(p, fps_on != 0, SCAN_W - 140, 556, fps_toggle_cb, NULL);
+    kit_switch_row(b, "FPS METER", fps_on != 0, fps_toggle_cb, NULL);
     return p;
 }
 
@@ -783,25 +688,24 @@ static void lamp_test_cb(lv_event_t *e)
 static lv_obj_t *build_leds_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "LEDS", back_to_menu_cb);
+    lv_obj_t *b = kit_body(p);
     for (int i = 0; i < LED_COUNT && i < 3; i++) {
-        lv_coord_t y = 100 + i * 70;
-        lv_obj_t *l = lv_label_create(p);
         char name[16];
         strlcpy(name, bsp_io_led_name((prop_led_t)i), sizeof(name));
         for (char *c = name; *c; c++) *c = (char)toupper((unsigned char)*c);
-        lv_label_set_text(l, name);
-        lv_obj_set_style_text_color(l, COL_AMBER, 0);
-        lv_obj_set_style_text_font(l, FONT_HEAD, 0);
-        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 60, y);
-        make_switch(p, bsp_io_led_get((prop_led_t)i), SCAN_W - 160, y - 4,
-                    led_sw_cb, (void *)(intptr_t)i);
+        kit_switch_row(b, name, bsp_io_led_get((prop_led_t)i), led_sw_cb, (void *)(intptr_t)i);
     }
-    make_btn(p, "LAMP TEST", 200, LV_ALIGN_TOP_LEFT, 60, 100 + 3 * 70 + 10, lamp_test_cb);
+    lv_obj_t *test = lv_btn_create(b);
+    lv_obj_set_size(test, 200, 52);
+    kit_style_btn(test);
+    lv_obj_add_event_cb(test, lamp_test_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *tl = lv_label_create(test);
+    lv_label_set_text(tl, "LAMP TEST");
+    lv_obj_center(tl);
 
-    lv_obj_t *note = lv_label_create(p);
+    lv_obj_t *note = lv_label_create(b);
     lv_label_set_text(note, "Lamps are on/off (no brightness). Scene animation resumes control.");
     lv_obj_set_style_text_color(note, COL_MUTE, 0);
-    lv_obj_align(note, LV_ALIGN_BOTTOM_LEFT, 60, -30);
     return p;
 }
 
@@ -821,24 +725,17 @@ static void audio_mute_cb(lv_event_t *e)
 static lv_obj_t *build_audio_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "AUDIO", back_to_menu_cb);
+    lv_obj_t *b = kit_body(p);
     uint32_t vol = 60, mute = 0;
     prop_settings_get_u32("audio_vol", &vol, 60);
     prop_settings_get_u32("audio_mute", &mute, 0);
 
-    panel_label(p, "VOLUME", 40, 100);
-    s_audio_vol_val = lv_label_create(p);
-    lv_label_set_text_fmt(s_audio_vol_val, "%u%%", (unsigned)vol);
-    lv_obj_set_style_text_color(s_audio_vol_val, COL_MUTE, 0);
-    lv_obj_align(s_audio_vol_val, LV_ALIGN_TOP_RIGHT, -40, 100);
-    make_slider(p, 0, 100, vol, 134, audio_vol_cb);
+    s_audio_vol_val = kit_slider_row(b, "VOLUME", 0, 100, vol, audio_vol_cb);
+    kit_switch_row(b, "MUTE", mute != 0, audio_mute_cb, NULL);
 
-    panel_label(p, "MUTE", 40, 210);
-    make_switch(p, mute != 0, SCAN_W - 140, 206, audio_mute_cb, NULL);
-
-    lv_obj_t *note = lv_label_create(p);
+    lv_obj_t *note = lv_label_create(b);
     lv_label_set_text(note, "Output stage idle - SFX not yet wired.");
     lv_obj_set_style_text_color(note, COL_MUTE, 0);
-    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 40, 300);
     return p;
 }
 
@@ -890,69 +787,28 @@ static float read_core_temp(void)
 
 /* A non-interactive horizontal readout bar (square, amber fill). Returns the fill
  * object; drive it with set_meter(). */
+/* Positioned wrapper over kit_meter (the kit builds the square track + amber fill). */
 static lv_obj_t *make_meter_bar(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w)
 {
-    lv_obj_t *bar = lv_obj_create(parent);
-    lv_obj_remove_style_all(bar);
-    lv_obj_set_size(bar, w, 18);
-    lv_obj_align(bar, LV_ALIGN_TOP_LEFT, x, y);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(bar, COL_PANEL_ITEM, 0);
-    lv_obj_set_style_border_color(bar, COL_DIM, 0);
-    lv_obj_set_style_border_width(bar, 2, 0);
-    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *fill = lv_obj_create(bar);
-    lv_obj_remove_style_all(fill);
-    lv_obj_set_height(fill, 18 - 8);
-    lv_obj_set_width(fill, 0);
-    lv_obj_align(fill, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(fill, COL_AMBER, 0);
+    lv_obj_t *fill = kit_meter(parent, w);
+    lv_obj_align(lv_obj_get_parent(fill), LV_ALIGN_TOP_LEFT, x, y);
     return fill;
 }
 
-static void set_meter(lv_obj_t *fill, int pct, lv_color_t col)
-{
-    if (!fill) {
-        return;
-    }
-    lv_coord_t w = lv_obj_get_content_width(lv_obj_get_parent(fill));
-    if (w <= 1) w = 100;
-    if (pct < 0) pct = 0;
-    if (pct > 100) pct = 100;
-    lv_obj_set_width(fill, pct * w / 100);
-    lv_obj_set_style_bg_color(fill, col, 0);
-}
-
-/* A VITALS readout row: caption + right-aligned value + a meter bar below. */
-static lv_obj_t *vitals_row(lv_obj_t *p, const char *cap, lv_coord_t y,
-                            lv_obj_t **value_out, lv_obj_t **bar_out)
-{
-    panel_label(p, cap, 40, y);
-    lv_obj_t *v = lv_label_create(p);
-    lv_label_set_text(v, "--");
-    lv_obj_set_style_text_color(v, COL_MUTE, 0);
-    lv_obj_align(v, LV_ALIGN_TOP_RIGHT, -40, y);
-    *value_out = v;
-    if (bar_out) {
-        *bar_out = make_meter_bar(p, 40, y + 28, SCAN_W - 360);
-    }
-    return v;
-}
+static void set_meter(lv_obj_t *fill, int pct, lv_color_t col) { kit_set_meter(fill, pct, col); }
 
 static lv_obj_t *build_vitals_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "VITALS", back_to_home_cb);
-    vitals_row(p, "CORE TEMP", 92,  &s_vit_temp, &s_vit_temp_bar);
-    vitals_row(p, "FREE RAM",  166, &s_vit_ram,  &s_vit_ram_bar);
-    vitals_row(p, "CELL",      240, &s_vit_cell, &s_vit_cell_bar);
-    vitals_row(p, "UPTIME",    314, &s_vit_uptime, NULL);
+    lv_obj_t *b = kit_body(p);
+    s_vit_temp   = kit_meter_row(b, "CORE TEMP", &s_vit_temp_bar);
+    s_vit_ram    = kit_meter_row(b, "FREE RAM",  &s_vit_ram_bar);
+    s_vit_cell   = kit_meter_row(b, "CELL",      &s_vit_cell_bar);
+    s_vit_uptime = kit_meter_row(b, "UPTIME",    NULL);
 
-    lv_obj_t *note = lv_label_create(p);
+    lv_obj_t *note = lv_label_create(b);
     lv_label_set_text(note, "Reactor / system telemetry - live.");
     lv_obj_set_style_text_color(note, COL_MUTE, 0);
-    lv_obj_align(note, LV_ALIGN_BOTTOM_LEFT, 40, -30);
     return p;
 }
 
@@ -1859,11 +1715,12 @@ static lv_obj_t *build_menu_panel(lv_obj_t *parent)
     /* SETUP holds CONFIGURATION only; instruments (VITALS/SCAN/SPECTRUM) live on
      * the console rail. BACK returns to the console. */
     lv_obj_t *m = make_panel(parent, "SETUP", close_setup_cb);
-    menu_item(m, "WI-FI",   0, menu_open_cb, (void *)(intptr_t)PK_WIFI);
-    menu_item(m, "DISPLAY", 1, menu_open_cb, (void *)(intptr_t)PK_DISPLAY);
-    menu_item(m, "AUDIO",   2, menu_open_cb, (void *)(intptr_t)PK_AUDIO);
-    menu_item(m, "LEDS",    3, menu_open_cb, (void *)(intptr_t)PK_LEDS);
-    menu_item(m, "ABOUT",   4, menu_open_cb, (void *)(intptr_t)PK_ABOUT);
+    lv_obj_t *b = kit_body(m);
+    kit_list_row(b, "WI-FI",   menu_open_cb, (void *)(intptr_t)PK_WIFI);
+    kit_list_row(b, "DISPLAY", menu_open_cb, (void *)(intptr_t)PK_DISPLAY);
+    kit_list_row(b, "AUDIO",   menu_open_cb, (void *)(intptr_t)PK_AUDIO);
+    kit_list_row(b, "LEDS",    menu_open_cb, (void *)(intptr_t)PK_LEDS);
+    kit_list_row(b, "ABOUT",   menu_open_cb, (void *)(intptr_t)PK_ABOUT);
     return m;
 }
 

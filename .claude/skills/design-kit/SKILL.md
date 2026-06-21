@@ -21,17 +21,36 @@ Theme (include `prop_kit.h` — `prop_ui.c` already does):
   `COL_DIM` (unlit/borders only — never for readable text), `COL_ALERT`, `COL_PANEL_ITEM`.
 - Fonts: `FONT_BODY` (14), `FONT_HEAD` (24), `FONT_STATUS` (40), `FONT_PUNCH` (56).
 
-Components:
+Containers / cards:
 - `kit_card(parent, w, h)` → square, dim-bordered card with a subtle phosphor gradient,
-  pre-set as a **vertical flex column** with padding + row gap. Add children and they
-  self-stack — no manual y math. Use `LV_SIZE_CONTENT` for h to fit contents.
-- `kit_info_row(parent, key, val)` → a flex row (muted key left, amber value right,
-  space-between). **Returns the value label** so the observer can update it live.
-- `kit_phosphor_grad(obj, c1, c2, dir)` → 2-stop gradient bg (the v9 complex SW-draw path).
+  pre-set as a **vertical flex column** with padding + row gap. `LV_SIZE_CONTENT` for h.
+- `kit_body(panel)` → transparent full-width flex-column **page body** below the title;
+  add rows and they self-stack with a consistent gap (scrolls if they overflow). This is
+  the backbone of a converted settings/info panel.
 
-Older helpers still in `prop_ui.c` (migrate into the kit when you touch them): `make_panel`,
-`make_btn`, `style_btn`, `style_field`, `make_slider`, `make_switch`, `make_meter_bar`/`set_meter`,
-`menu_item`, `panel_label`.
+Rows (add these to a `kit_body`/`kit_card` — no manual y math):
+- `kit_info_row(parent, key, val)` → muted key / amber value; **returns the value label**.
+- `kit_slider_row(body, label, min, max, val, cb)` → "LABEL … VAL%" over a full-width
+  slider; **returns the value label** (update it from `cb`, which reads the slider).
+- `kit_switch_row(body, label, on, cb, ud)` → "LABEL … [switch]"; returns the switch.
+- `kit_meter_row(body, label, &fill)` → "LABEL … VALUE" over a meter (NULL fill = value
+  only); returns the value label, `*fill` feeds `kit_set_meter`.
+- `kit_list_row(body, text, cb, ud)` → full-width menu row (big amber text); returns it.
+- `kit_row(body)` → bare space-between flex row; fill it yourself (e.g. label + dropdown).
+
+Primitives (the kit is the single source of the look; `prop_ui.c`'s `style_btn`/`style_field`/
+`make_meter_bar`/`set_meter` are thin wrappers over these):
+- `kit_style_btn/field/slider/switch(obj)`, `kit_meter(parent, w)` / `kit_set_meter(fill, pct, col)`,
+  `kit_phosphor_grad(obj, c1, c2, dir)`.
+
+Still in `prop_ui.c`: `make_panel` (framed panel + BACK + title), `make_btn`, `panel_label`
+(used by the procedural instrument chrome). The old absolute-position `make_slider`/`make_switch`/
+`menu_item`/`fx_row`/`vitals_row` are gone — use the flex rows above.
+
+**Converted vs themed:** the row-composable panels (menu, display, audio, leds, vitals, about)
+are built from these flex rows. The procedural / form / tabbed-list screens (scanner+home
+console, spectrum, signal scan, archive+article, cassette, insights, wifi) keep their bespoke
+structure but draw on the kit theme + primitives — don't force flex onto those.
 
 ## Recipe: compose / redesign a screen
 
