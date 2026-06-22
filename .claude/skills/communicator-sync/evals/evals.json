@@ -1,0 +1,27 @@
+{
+  "skill_name": "communicator-sync",
+  "note": "Realistic evals are git-driven: stage a collaborator/firmware commit on a throwaway branch + worktree, then the prompt is what you'd actually say ('sync what he just pushed') so the agent must read git to discover the change. See the workspace iterations for how these were run (with-skill vs no-skill baseline).",
+  "evals": [
+    {
+      "id": "A-restyle",
+      "direction": "XML -> C",
+      "setup": "Collaborator commit on ui/: rename SETUP row 'LEDS'->'LAMPS' in screen_setup.xml + bump col_amber 0xE0B000->0xF0C000 in globals.xml.",
+      "prompt": "My collaborator just pushed an LVGL editor change (latest commit, touches ui/). Sync it into the firmware UI so the panel matches his design.",
+      "checks": ["COL_AMBER->0xF0C000 in prop_kit.h (palette lockstep)", "build_menu_panel row 'LEDS'->'LAMPS'", "LEDS panel title NOT over-renamed", "no stale 0xE0B000 in main/", "discovered via git + built"]
+    },
+    {
+      "id": "B-newscreen",
+      "direction": "XML -> C (new screen)",
+      "setup": "Collaborator commit adds ui/screens/screen_calibrate.xml (no C counterpart) + a CALIBRATE row in screen_setup.xml.",
+      "prompt": "My collaborator pushed a new screen from the LVGL editor (latest commit, under ui/). Wire it into the firmware so it actually works on the device.",
+      "checks": ["PK_CALIBRATE enum", "build_calibrate_panel", "open_panel case", "CALIBRATE row in build_menu_panel", "close_panel NULLs new widget", "XML still viewer-safe + builds"]
+    },
+    {
+      "id": "C-mirror-to-xml",
+      "direction": "C -> XML (discriminator: viewer-safety)",
+      "setup": "Firmware commit on main/prop_ui.c: add a BALANCE slider (-100..100) + a TEST TONE button using LV_SYMBOL_PLAY to build_audio_panel.",
+      "prompt": "I just pushed a firmware change to the AUDIO panel (latest commit, main/prop_ui.c). Mirror it into the LVGL design and make sure it still previews in the viewer.",
+      "checks": ["BALANCE slider mirrored", "uses min_value/max_value not min/max (trap 1)", "TEST TONE mirrored", "LV_SYMBOL_PLAY kept out of rendered XML (trap 2)", "check_ui.py viewer-safe", "subj_balance declared + bound"]
+    }
+  ]
+}
