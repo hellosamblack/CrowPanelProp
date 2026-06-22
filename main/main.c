@@ -135,6 +135,14 @@ void app_main(void)
             MAIN_ERROR("control API failed to start: %s", esp_err_to_name(api_err));
         }
 
+        /* Custom-RPC link to the C6 (on-C6 CSI capture). NON-fatal: the SDIO
+         * transport is up from prop_net_init, so just register the receiver. */
+        esp_err_t coproc_err = prop_coproc_init();
+        if (coproc_err != ESP_OK) {
+            MAIN_ERROR("co-processor RPC unavailable (%s) — no on-C6 CSI feed",
+                       esp_err_to_name(coproc_err));
+        }
+
         /* BLE scan (CONTACT SIGNATURES) — the C6 hosts the controller, sharing the
          * SDIO link WiFi just brought up. NON-fatal: if the controller/host won't
          * come up (or RAM is tight) the panel shows "BLE OFFLINE" and the rest runs. */

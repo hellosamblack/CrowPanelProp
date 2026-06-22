@@ -252,6 +252,7 @@ static void publish_locked(void)
 static void animate_task(void *arg)
 {
     (void)arg;
+    TickType_t last_wake = xTaskGetTickCount();
     while (1) {
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         s_state.tick++;
@@ -280,7 +281,7 @@ static void animate_task(void *arg)
         s_state.led_mask = scene_led_mask(s_state.scene, s_state.tick);
         publish_locked();
         xSemaphoreGive(s_mutex);
-        vTaskDelay(pdMS_TO_TICKS(ANIM_PERIOD_MS));
+        xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(ANIM_PERIOD_MS));
     }
 }
 

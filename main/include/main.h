@@ -27,6 +27,7 @@
 #include "prop_audio.h"
 #include "prop_ble.h"
 #include "prop_csi.h"
+#include "prop_coproc.h"
 
 #define MAIN_TAG "MAIN"
 #define MAIN_INFO(fmt, ...)  ESP_LOGI(MAIN_TAG, fmt, ##__VA_ARGS__)
