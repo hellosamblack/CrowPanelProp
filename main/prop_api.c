@@ -6,6 +6,8 @@
 #include "prop_fx.h"
 #include "prop_ble.h"
 #include "prop_csi.h"
+#include "prop_coproc.h"
+#include "prop_calib.h"
 #include "prop_settings.h"
 #include "bsp_io.h"
 #include "bsp_aio.h"
@@ -199,6 +201,45 @@ static esp_err_t dispatch_command(const char *json, int len)
                         else if (bsp_aio_get_mode(idx) == AIO_ANALOG_OUT)   err = bsp_aio_set_aout(idx, value->valueint);
                     }
                 }
+            }
+        } else if (strcmp(c, "csi") == 0) {
+            /* Runtime ESPectre/CSI config — no C6 reflash. Examples:
+             *   {"cmd":"csi","key":"hampel_window","value":9}
+             *   {"cmd":"csi","key":"lowpass_cutoff","value":12.5}   (float keys auto-scale)
+             *   {"cmd":"csi","action":"recal"}
+             * Float-typed keys accept a decimal and are stored ×1000 internally. */
+            const cJSON *action = cJSON_GetObjectItem(root, "action");
+            const cJSON *key    = cJSON_GetObjectItem(root, "key");
+            const cJSON *value  = cJSON_GetObjectItem(root, "value");
+            if (cJSON_IsString(action) &&
+                (strcmp(action->valuestring, "calibrate") == 0 ||
+                 strcmp(action->valuestring, "reset") == 0)) {
+                prop_calib_reset();      /* re-converge the adaptive threshold */
+                err = ESP_OK;
+            } else if (cJSON_IsString(action) && strcmp(action->valuestring, "auto_on") == 0) {
+                prop_calib_set_auto(true);
+                err = ESP_OK;
+            } else if (cJSON_IsString(action) && strcmp(action->valuestring, "auto_off") == 0) {
+                prop_calib_set_auto(false);
+                err = ESP_OK;
+            } else if (cJSON_IsString(action)) {
+                char act[24];
+                snprintf(act, sizeof(act), "%s%s",
+                         action->valuestring[0] == '@' ? "" : "@", action->valuestring);
+                err = prop_coproc_csi_action(act);
+            } else if (cJSON_IsString(key) && cJSON_IsNumber(value)) {
+                /* Scale float-typed keys by 1000 to match the stored fixed-point form. */
+                char type = 'I';
+                for (int i = 0, n = prop_coproc_csi_count(); i < n; i++) {
+                    const char *k; char t;
+                    if (prop_coproc_csi_describe(i, &k, NULL, &t, NULL, NULL, NULL, NULL) &&
+                        strcmp(k, key->valuestring) == 0) { type = t; break; }
+                }
+                /* 'F' and 'T' (manual threshold) carry a decimal scaled ×1000. */
+                int32_t v = (type == 'F' || type == 'T')
+                    ? (int32_t)(value->valuedouble * 1000.0 + (value->valuedouble < 0 ? -0.5 : 0.5))
+                    : value->valueint;
+                err = prop_coproc_csi_set(key->valuestring, v);
             }
         }
     }

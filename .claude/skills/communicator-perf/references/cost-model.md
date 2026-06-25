@@ -49,6 +49,11 @@ for esp_hosted (see constraint below). This is usually the single biggest throug
 
 ## Untried experiments worth proposing (with measurement)
 
+- **`xTaskDelayUntil` for the engine tick** — `prop_engine.c:283` uses `vTaskDelay(pdMS_TO_TICKS(50))`,
+  a relative delay that drifts by the body's runtime. Replace with `xTaskDelayUntil` for a fixed-period
+  loop — the observer fan-out cadence becomes perfectly regular, removing a source of bursty
+  invalidation scheduling. Two-line change, zero risk, immediate consistency improvement. This should
+  be applied before anything else because it costs nothing.
 - **Partial draw buffers in internal SRAM.** Full-screen ×2 (≈2.4 MB) can't fit internal RAM, which
   is why `buff_spiram=true`. But a *partial* N-line buffer in internal RAM can, and rendering into
   internal SRAM is far faster than into PSRAM. Worth A/B-ing for the redraw sizes this UI produces.
@@ -86,16 +91,18 @@ for esp_hosted (see constraint below). This is usually the single biggest throug
 
 All unpinned today (no core affinity) — this is the main consistency liability:
 
-| Task | File | Prio | Role / rate |
-|---|---|---|---|
-| LVGL port | `bsp_illuminate.c` | MAX-4 | render + input, 5 ms tick |
-| engine/observer | `prop_engine.c` | 5 | 20 Hz state + UI fan-out |
-| rssi poll | `prop_net.c` | 3 | ~1 Hz `esp_wifi_sta_get_ap_info` (SDIO) |
-| ble prune | `prop_ble.c` | 3 | ~2 Hz |
-| NimBLE host | `prop_ble.c` | (nimble) | event-driven BLE adverts (SDIO/VHCI) |
-| CSI fold | `prop_csi.c` | 4 | ~15 Hz |
-| mic FFT | `prop_mic.c` | 5 | ~10 Hz I2S + FFT |
-| wifi/sig/rf scan | `prop_ui.c` | 4 | on-demand, **blocking** 1–5 s scan (off the UI task — good) |
+| Task | File | Prio | Role / rate | Notes |
+|---|---|---|---|---|
+| LVGL port | `bsp_illuminate.c` | MAX-4 | render + input, 5 ms tick | affinity -1 (unpinned) |
+| engine/observer | `prop_engine.c` | 5 | 20 Hz state + UI fan-out | **uses `vTaskDelay` → drifts** (see §untried) |
+| rssi poll | `prop_net.c` | 3 | ~1 Hz `esp_wifi_sta_get_ap_info` (SDIO) | |
+| ble prune | `prop_ble.c` | 3 | ~2 Hz | |
+| NimBLE host | `prop_ble.c` | (nimble) | event-driven BLE adverts (SDIO/VHCI) | |
+| CSI fold | `prop_csi.c` | 4 | ~15 Hz | |
+| mic FFT | `prop_mic.c` | 5 | ~10 Hz I2S + FFT | |
+| wifi/sig/rf scan | `prop_ui.c` | 4 | on-demand, **blocking** 1–5 s scan (off the UI task — good) | |
 
 A radio task migrating onto LVGL's core mid-render is the textbook cause of the swinging frame times.
 Pin LVGL to one HP core and the radio/background tasks to the other, then re-measure consistency.
+Use `xTaskGetCoreID(NULL)` from inside each task at startup to log actual placement and verify
+pinning is working as configured.

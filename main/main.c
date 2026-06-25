@@ -122,6 +122,12 @@ void app_main(void)
                    esp_err_to_name(audio_err));
     }
 
+    /* mmWave presence radar on the UART3-IN header (GPIO33). NON-fatal. */
+    esp_err_t radar_err = prop_radar_init();
+    if (radar_err != ESP_OK) {
+        MAIN_ERROR("radar init failed: %s", esp_err_to_name(radar_err));
+    }
+
     /* WiFi (AP+STA via the C6) then the live control API. Both are NON-fatal:
      * the C6 radio is optional to the prop's core function, so a co-processor
      * problem must not take down the display/LEDs/buttons. */
@@ -142,6 +148,13 @@ void app_main(void)
             MAIN_ERROR("co-processor RPC unavailable (%s) — no on-C6 CSI feed",
                        esp_err_to_name(coproc_err));
         }
+
+        /* CSI traffic generator: pings the gateway so the C6 has frames to
+         * measure. NON-fatal; idle until a rate is configured + STA is up. */
+        prop_traffic_init();
+
+        /* Guided two-phase auto-calibration (CSI CONFIG panel). */
+        prop_calib_init();
 
         /* BLE scan (CONTACT SIGNATURES) — the C6 hosts the controller, sharing the
          * SDIO link WiFi just brought up. NON-fatal: if the controller/host won't

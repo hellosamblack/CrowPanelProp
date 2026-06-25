@@ -102,7 +102,15 @@ This is the most likely cause of the *swinging* frame times the user cares most 
   `bsp_illuminate.c`; `NULL`/unpinned in `prop_net.c`, `prop_ble.c`, `prop_csi.c`, `prop_engine.c`).
   When a radio task lands on LVGL's core mid-render, the frame stalls. Pinning LVGL to one HP core and
   pushing the radio/background tasks to the other is the classic fix for inconsistency — propose it
-  with the specific tasks and core assignments.
+  with the specific tasks and core assignments. To verify actual placement at runtime (not just what
+  was configured), use `xTaskGetCoreID(handle)` from inside the task or from a diagnostic command.
+- **Engine tick drift (`prop_engine.c:283`)**: the engine loop uses `vTaskDelay(pdMS_TO_TICKS(ANIM_PERIOD_MS))`,
+  which is a *relative* delay — it doesn't account for how long the loop body took. The result is a
+  nominal 50 ms period that varies by the body's runtime, drifting the observer fan-out cadence over
+  time. Irregular fan-out → irregular invalidation → bursty render scheduling → frame-time variance.
+  Fix: switch to `xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(ANIM_PERIOD_MS))` (fixed-period, no
+  drift). This is a two-line change with zero risk, and it's the cleanest consistency lever available
+  without touching the draw pipeline.
 - **Task priority**: the LVGL port task runs at `configMAX_PRIORITIES-4`. Confirm no chatty
   background task sits at or above it on the same core.
 - **Work under the LVGL lock**: input (dial/touch) is processed by `prop_ui_input()` which
@@ -170,6 +178,12 @@ curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","fps":true}'   # FP
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":false}'   # CRT overlay off (A/B)
 curl -s -X POST http://comm-unit-7.local/cmd -d '{"cmd":"fx","on":true}'    # CRT overlay on
 ```
+
+For core affinity changes, verify actual placement (not just configured affinity) by temporarily
+logging `xTaskGetCoreID(NULL)` from inside each task at startup — the cost model concurrency map
+has what they *should* report; confirm they match after any re-pinning. `uxTaskGetStackHighWaterMark(NULL)`
+from inside a task after a representative run is useful for right-sizing stacks without wasting
+internal RAM headroom (the constraint is ~332 KB internal free; stacks in internal RAM count against it).
 
 ```
 

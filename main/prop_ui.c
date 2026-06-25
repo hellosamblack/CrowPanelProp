@@ -8,6 +8,8 @@
 #include "prop_audio.h"
 #include "prop_ble.h"
 #include "prop_csi.h"
+#include "prop_calib.h"
+#include "prop_coproc.h"
 #include "prop_content.h"
 #include "bsp_io.h"
 #include "bsp_aio.h"
@@ -116,9 +118,9 @@ typedef enum {
     PK_NONE = 0,   /* no panel: the bare SCANNER readout on the root screen */
     PK_HOME,       /* the in-world console (default landing screen) */
     PK_MENU, PK_WIFI, PK_DISPLAY, PK_AUDIO, PK_LEDS, PK_ABOUT, PK_VITALS,
-    PK_SCAN, PK_SPECTRUM, PK_RFBAND, PK_BLE, PK_CSI,
+    PK_SCAN, PK_SPECTRUM, PK_RFBAND, PK_BLE, PK_CSI, PK_CSICFG, PK_CSISET,
     PK_INSTRUMENTS,   /* submenu: SCANNER / SIGNAL SCAN / SPECTRUM / VITALS */
-    PK_SENSORS,       /* submenu: RF BAND / CONTACTS / SIGNAL ENV */
+    PK_SENSORS,       /* submenu: RF BAND / CONTACTS / SIGNAL ENV / CSI CONFIG */
     PK_ARCHIVE,    /* data-archive browser (tabs = sections) */
     PK_ARTICLE,    /* a single archive entry */
     PK_CASSETTE,   /* cassette deck (stub) */
@@ -173,7 +175,27 @@ static ble_row_t s_ble_rows[PROP_BLE_MAX];
 /* SIGNAL ENVIRONMENT (CSI) instrument (valid only while PK_CSI is current). */
 static lv_obj_t *s_csi_bars[PROP_CSI_BINS];
 static lv_obj_t *s_csi_status;
-static float s_csi_decay[PROP_CSI_BINS];   /* UI-side peak-hold / decay */
+static lv_obj_t *s_csi_motion;   /* big MOTION / IDLE state readout */
+static lv_obj_t *s_csi_move;     /* movement-vs-threshold numeric readout */
+static lv_obj_t *s_csi_rf;       /* turbulence + receiver gain readout */
+static lv_obj_t *s_csi_rssi;     /* link RSSI (upper-right) */
+static lv_obj_t *s_csi_fp_cells[64]; /* NBVI subcarrier fingerprint (lit cells) */
+static lv_obj_t *s_csi_geiger_lbl; /* SPECTRE GEIGER button label */
+
+/* CSI CONFIG / auto-calibration panel (valid only while PK_CSICFG is current). */
+static lv_obj_t *s_cfg_motion;   /* live MOTION / IDLE */
+static lv_obj_t *s_cfg_move;     /* live movement / threshold readout */
+static lv_obj_t *s_cfg_meter;    /* movement-vs-threshold bar fill */
+static lv_obj_t *s_cfg_phase;    /* big calibration phase / countdown */
+static lv_obj_t *s_cfg_btn_lbl;  /* CALIBRATE / CANCEL button label */
+
+/* CSI SETTINGS editor (PK_CSISET): paginated, button-row controls. */
+#define MAX_CSI_SET 24
+#define CSISET_PER_PAGE 3
+static lv_obj_t *s_set_vallbl[MAX_CSI_SET];
+static lv_obj_t *s_set_content;   /* container holding the current page's rows */
+static lv_obj_t *s_set_pagelbl;   /* "page x/N" */
+static int       s_set_page;
 
 /* I/O BENCH (PK_IO overview grid + PK_IO_PIN single-pin config). One panel alive at a
  * time; these widget pointers belong to whichever IO panel is current and are NULLed on
@@ -216,6 +238,8 @@ static lv_obj_t *build_spectrum_panel(lv_obj_t *parent);
 static lv_obj_t *build_rfband_panel(lv_obj_t *parent);
 static lv_obj_t *build_ble_panel(lv_obj_t *parent);
 static lv_obj_t *build_csi_panel(lv_obj_t *parent);
+static lv_obj_t *build_csicfg_panel(lv_obj_t *parent);
+static lv_obj_t *build_csiset_panel(lv_obj_t *parent);
 static lv_obj_t *build_archive_panel(lv_obj_t *parent);
 static lv_obj_t *build_article_panel(lv_obj_t *parent);
 static lv_obj_t *build_cassette_panel(lv_obj_t *parent);
@@ -300,6 +324,20 @@ static void close_panel(void)
     s_ble_summary = NULL; s_ble_list = NULL;
     memset(s_ble_rows, 0, sizeof(s_ble_rows));
     s_csi_status = NULL;
+    s_csi_motion = NULL;
+    s_csi_move = NULL;
+    s_csi_rf = NULL;
+    s_csi_rssi = NULL;
+    for (int i = 0; i < 64; i++) s_csi_fp_cells[i] = NULL;
+    s_csi_geiger_lbl = NULL;
+    s_cfg_motion = NULL;
+    s_cfg_move = NULL;
+    s_cfg_meter = NULL;
+    s_cfg_phase = NULL;
+    s_cfg_btn_lbl = NULL;
+    s_set_content = NULL;
+    s_set_pagelbl = NULL;
+    for (int i = 0; i < MAX_CSI_SET; i++) s_set_vallbl[i] = NULL;
     for (int i = 0; i < PROP_CSI_BINS; i++) s_csi_bars[i] = NULL;
     s_home_clock = NULL; s_home_temp = NULL; s_home_link = NULL;
     /* s_rail_btns are the persistent rail cells on the real screen - NOT children
@@ -332,7 +370,7 @@ static void rail_sync(panel_kind_t kind)
          * (PK_NONE) belongs to INSTRUMENTS too. */
         case PK_NONE: case PK_SCAN: case PK_SPECTRUM: case PK_VITALS:
             want = PK_INSTRUMENTS; break;
-        case PK_RFBAND: case PK_BLE: case PK_CSI:
+        case PK_RFBAND: case PK_BLE: case PK_CSI: case PK_CSICFG: case PK_CSISET:
             want = PK_SENSORS; break;
         default: break;
     }
@@ -385,6 +423,8 @@ static void open_panel(panel_kind_t kind)
         case PK_RFBAND:  s_cur_panel = build_rfband_panel(s_root); break;
         case PK_BLE:     s_cur_panel = build_ble_panel(s_root); break;
         case PK_CSI:     s_cur_panel = build_csi_panel(s_root); break;
+        case PK_CSICFG:  s_cur_panel = build_csicfg_panel(s_root); break;
+        case PK_CSISET:  s_cur_panel = build_csiset_panel(s_root); break;
         case PK_INSTRUMENTS: s_cur_panel = build_instruments_panel(s_root); break;
         case PK_SENSORS:     s_cur_panel = build_sensors_panel(s_root); break;
         case PK_ARCHIVE: s_cur_panel = build_archive_panel(s_root); break;
@@ -1452,17 +1492,70 @@ static void ble_update_row(int i, const prop_ble_dev_t *d)
 #define CSI_GAP  8
 #define CSI_X0   30
 #define CSI_BASE 118
-#define CSI_MAXH 300
+#define CSI_MAXH 230   /* bar tops reach y~252 — clear of the readout text above */
+
+static void csi_rebaseline_cb(lv_event_t *e) { (void)e; prop_calib_reset(); }
+static void csi_cog_cb(lv_event_t *e)        { (void)e; open_panel(PK_CSISET); }
+static void csi_geiger_cb(lv_event_t *e)     { (void)e; prop_csi_set_geiger(!prop_csi_geiger()); }
 
 static lv_obj_t *build_csi_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "SIGNAL ENV", back_to_sensors_cb);
+
+    /* Settings cog (top-right corner) → CSI SETTINGS. */
+    lv_obj_t *cog = make_btn(p, LV_SYMBOL_SETTINGS, 60, LV_ALIGN_TOP_RIGHT, -20, 12, csi_cog_cb);
+    (void)cog;
 
     s_csi_status = lv_label_create(p);
     lv_label_set_text(s_csi_status, "ACQUIRING CHANNEL...");
     lv_obj_set_style_text_color(s_csi_status, COL_AMBER, 0);
     lv_obj_set_style_text_font(s_csi_status, FONT_HEAD, 0);
     lv_obj_align(s_csi_status, LV_ALIGN_TOP_LEFT, 30, 84);
+
+    /* Big MOTION / IDLE state — the headline readout (camera-legible: bold head
+     * font, amber for idle, alert red for motion). */
+    s_csi_motion = lv_label_create(p);
+    lv_label_set_text(s_csi_motion, "IDLE");
+    lv_obj_set_style_text_color(s_csi_motion, COL_MUTE, 0);
+    lv_obj_set_style_text_font(s_csi_motion, FONT_HEAD, 0);
+    lv_obj_align(s_csi_motion, LV_ALIGN_TOP_LEFT, 30, 120);
+
+    /* Movement metric vs detection threshold. */
+    s_csi_move = lv_label_create(p);
+    lv_label_set_text(s_csi_move, "MOVEMENT --- / THR ---");
+    lv_obj_set_style_text_color(s_csi_move, COL_MUTE, 0);
+    lv_obj_align(s_csi_move, LV_ALIGN_TOP_LEFT, 30, 152);
+
+    /* Extra RF datapoints: raw turbulence + receiver gain state. */
+    s_csi_rf = lv_label_create(p);
+    lv_label_set_text(s_csi_rf, "TURB ---  GAIN ---");
+    lv_obj_set_style_text_color(s_csi_rf, COL_DIM, 0);
+    lv_obj_align(s_csi_rf, LV_ALIGN_TOP_LEFT, 30, 178);
+
+    /* ---- upper-right quadrant: actions + RF fingerprint ---- */
+    make_btn(p, "RE-BASELINE", 240, LV_ALIGN_TOP_RIGHT, -30, 78, csi_rebaseline_cb);
+    lv_obj_t *gb = make_btn(p, "SPECTRE GEIGER", 240, LV_ALIGN_TOP_RIGHT, -30, 134, csi_geiger_cb);
+    s_csi_geiger_lbl = lv_obj_get_child(gb, 0);
+
+    s_csi_rssi = lv_label_create(p);
+    lv_label_set_text(s_csi_rssi, "LINK ---");
+    lv_obj_set_style_text_color(s_csi_rssi, COL_MUTE, 0);
+    lv_obj_align(s_csi_rssi, LV_ALIGN_TOP_RIGHT, -30, 196);
+
+    /* NBVI subcarrier fingerprint — a 64-cell strip; the selected band lights up. */
+    lv_obj_t *fpt = lv_label_create(p);
+    lv_label_set_text(fpt, "NBVI BAND");
+    lv_obj_set_style_text_color(fpt, COL_DIM, 0);
+    lv_obj_align(fpt, LV_ALIGN_TOP_LEFT, 30, 206);
+    for (int i = 0; i < 64; i++) {
+        lv_obj_t *c = lv_obj_create(p);
+        lv_obj_remove_style_all(c);
+        lv_obj_set_size(c, 4, 16);
+        lv_obj_align(c, LV_ALIGN_TOP_LEFT, 30 + i * 6, 228);
+        lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(c, COL_DIM, 0);
+        s_csi_fp_cells[i] = c;
+    }
 
     lv_obj_t *base = lv_obj_create(p);
     lv_obj_remove_style_all(base);
@@ -1479,13 +1572,276 @@ static lv_obj_t *build_csi_panel(lv_obj_t *parent)
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(b, COL_AMBER, 0);
         s_csi_bars[i] = b;
-        s_csi_decay[i] = 0.0f;
     }
 
     lv_obj_t *note = lv_label_create(p);
-    lv_label_set_text(note, "WiFi channel state  -  per-subcarrier amplitude");
+    lv_label_set_text(note, "WiFi CSI motion variance  -  history (newest right)");
     lv_obj_set_style_text_color(note, COL_MUTE, 0);
     lv_obj_align(note, LV_ALIGN_BOTTOM_LEFT, CSI_X0, -30);
+    return p;
+}
+
+/* ---- CSI CONFIG + continuous auto-calibration (PK_CSICFG) ----------------- */
+static void csicfg_reset_cb(lv_event_t *e) { (void)e; prop_calib_reset(); }
+static void csicfg_auto_cb(lv_event_t *e)  { (void)e; prop_calib_set_auto(!prop_calib_auto()); }
+static void csicfg_settings_cb(lv_event_t *e) { (void)e; open_panel(PK_CSISET); }
+
+static lv_obj_t *build_csicfg_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "CSI CONFIG", back_to_sensors_cb);
+
+    /* Live feedback: motion state + movement vs threshold + meter. */
+    s_cfg_motion = lv_label_create(p);
+    lv_label_set_text(s_cfg_motion, "IDLE");
+    lv_obj_set_style_text_color(s_cfg_motion, COL_MUTE, 0);
+    lv_obj_set_style_text_font(s_cfg_motion, FONT_HEAD, 0);
+    lv_obj_align(s_cfg_motion, LV_ALIGN_TOP_LEFT, 30, 78);
+
+    s_cfg_move = lv_label_create(p);
+    lv_label_set_text(s_cfg_move, "MOVEMENT --- / THR ---");
+    lv_obj_set_style_text_color(s_cfg_move, COL_MUTE, 0);
+    lv_obj_align(s_cfg_move, LV_ALIGN_TOP_LEFT, 30, 114);
+
+    s_cfg_meter = kit_meter(p, SCAN_W - 320);
+    lv_obj_align(lv_obj_get_parent(s_cfg_meter), LV_ALIGN_TOP_LEFT, 30, 144);
+
+    /* Adaptive status line (learning / adapting / baseline). */
+    s_cfg_phase = lv_label_create(p);
+    lv_label_set_text(s_cfg_phase, "AUTO-ADAPTING");
+    lv_obj_set_style_text_color(s_cfg_phase, COL_AMBER, 0);
+    lv_obj_set_style_text_font(s_cfg_phase, FONT_HEAD, 0);
+    lv_obj_align(s_cfg_phase, LV_ALIGN_TOP_LEFT, 30, 206);
+
+    lv_obj_t *hint = lv_label_create(p);
+    lv_label_set_text(hint,
+        "AUTO threshold learns this room's quiet baseline continuously and\n"
+        "keeps the motion threshold just above it - no leaving the room.\n"
+        "RESET re-learns fast after you move the unit.");
+    lv_obj_set_style_text_color(hint, COL_MUTE, 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 30, 248);
+
+    lv_obj_t *abtn = make_btn(p, "AUTO: ON", 200, LV_ALIGN_BOTTOM_LEFT, 30, -40, csicfg_auto_cb);
+    s_cfg_btn_lbl = lv_obj_get_child(abtn, 0);
+    make_btn(p, "RESET BASELINE", 220, LV_ALIGN_BOTTOM_LEFT, 244, -40, csicfg_reset_cb);
+    make_btn(p, "SETTINGS " LV_SYMBOL_RIGHT, 200, LV_ALIGN_BOTTOM_LEFT, 478, -40, csicfg_settings_cb);
+    return p;
+}
+
+/* ---- CSI SETTINGS editor (PK_CSISET): paginated, button-row controls -------
+ * Every ESPectre/CSI setting with a short description, controlled by button rows
+ * (enum/bitmask/bool select), threshold-mode (AUTO/MIN/MANUAL + stepper), or a
+ * [-]/[+] stepper for ranges. Paginated with PREV/NEXT buttons (no swipe). */
+static void back_to_csicfg_cb(lv_event_t *e) { (void)e; open_panel(PK_CSICFG); }
+static void render_csiset_page(void);
+
+static void set_fmt_value(char *buf, size_t n, char type, int32_t val)
+{
+    if (type == 'T') {
+        if (val == -1)      { snprintf(buf, n, "AUTO"); }
+        else if (val == -2) { snprintf(buf, n, "MIN"); }
+        else                { snprintf(buf, n, "%ld.%02ld", (long)val / 1000, ((long)val % 1000) / 10); }
+    } else if (type == 'F') { snprintf(buf, n, "%ld.%02ld", (long)val / 1000, ((long)val % 1000) / 10); }
+    else if (type == 'B')   { snprintf(buf, n, "%s", val ? "ON" : "OFF"); }
+    else                    { snprintf(buf, n, "%ld", (long)val); }
+}
+
+/* Clamp + apply a setting, then re-render the page (refreshes highlights/value). */
+static void csiset_set(int idx, int32_t val)
+{
+    const char *key; int32_t lo, hi;
+    if (!prop_coproc_csi_describe(idx, &key, NULL, NULL, &lo, &hi, NULL, NULL)) { return; }
+    if (val < lo) { val = lo; }
+    if (val > hi) { val = hi; }
+    prop_coproc_csi_set(key, val);
+    render_csiset_page();
+}
+
+static int32_t csiset_step(int32_t lo, int32_t hi)
+{
+    int32_t s = (hi - lo) / 20;
+    return s < 1 ? 1 : s;
+}
+
+/* ud = (setting_index << 8) | sub */
+static void csiset_opt_cb(lv_event_t *e)
+{
+    int ud = (int)(intptr_t)lv_event_get_user_data(e), idx = ud >> 8, opt = ud & 0xff;
+    char type; int32_t val;
+    prop_coproc_csi_describe(idx, NULL, &val, &type, NULL, NULL, NULL, NULL);
+    if (type == 'M')      { val ^= (1 << opt); }   /* bitmask: toggle this bit */
+    else                  { val = opt; }           /* enum / bool: select */
+    csiset_set(idx, val);
+}
+static void csiset_thr_cb(lv_event_t *e)
+{
+    int ud = (int)(intptr_t)lv_event_get_user_data(e), idx = ud >> 8, mode = ud & 0xff;
+    int32_t val;
+    prop_coproc_csi_describe(idx, NULL, &val, NULL, NULL, NULL, NULL, NULL);
+    /* AUTO here == the continuous adaptive controller (same as CSI CONFIG's AUTO).
+     * MIN/MANUAL turn it off so the chosen fixed threshold sticks. */
+    if (mode == 0) {                            /* AUTO */
+        prop_calib_set_auto(true);
+        render_csiset_page();
+    } else if (mode == 1) {                      /* MIN */
+        prop_calib_set_auto(false);
+        csiset_set(idx, -2);
+    } else {                                     /* MANUAL (keep/seed 2.0) */
+        prop_calib_set_auto(false);
+        csiset_set(idx, val >= 0 ? val : 2000);
+    }
+}
+static void csiset_step_cb(lv_event_t *e)
+{
+    int ud = (int)(intptr_t)lv_event_get_user_data(e), idx = ud >> 8, dir = ud & 0xff;
+    char type; int32_t val, lo, hi;
+    prop_coproc_csi_describe(idx, NULL, &val, &type, &lo, &hi, NULL, NULL);
+    int32_t slo = (type == 'T') ? 0 : lo;          /* threshold manual steps 0..hi */
+    int32_t step = csiset_step(slo, hi);
+    val = (dir ? val + step : val - step);
+    if (val < slo) { val = slo; }
+    if (val > hi)  { val = hi; }
+    csiset_set(idx, val);
+}
+static void csiset_page_cb(lv_event_t *e)
+{
+    int dir = (int)(intptr_t)lv_event_get_user_data(e);
+    int n = prop_coproc_csi_count(), pages = (n + CSISET_PER_PAGE - 1) / CSISET_PER_PAGE;
+    s_set_page += dir;
+    if (s_set_page < 0) { s_set_page = 0; }
+    if (s_set_page >= pages) { s_set_page = pages - 1; }
+    render_csiset_page();
+}
+
+/* A themed pill button; filled when selected. ud = (idx<<8)|sub. */
+static void csiset_pill(lv_obj_t *row, const char *txt, bool sel, lv_event_cb_t cb, int ud)
+{
+    lv_obj_t *b = lv_btn_create(row);
+    lv_obj_set_height(b, 38);
+    style_btn(b);
+    lv_obj_set_style_pad_hor(b, 14, 0);
+    if (sel) {
+        lv_obj_set_style_bg_color(b, COL_AMBER, 0);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    }
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, (void *)(intptr_t)ud);
+    lv_obj_t *l = lv_label_create(b);
+    lv_label_set_text(l, txt);
+    lv_obj_set_style_text_color(l, sel ? COL_BG : COL_AMBER, 0);
+    lv_obj_center(l);
+}
+
+static void render_csiset_page(void)
+{
+    if (!s_set_content) { return; }
+    lv_obj_clean(s_set_content);
+    for (int i = 0; i < MAX_CSI_SET; i++) { s_set_vallbl[i] = NULL; }
+
+    int n = prop_coproc_csi_count();
+    int pages = (n + CSISET_PER_PAGE - 1) / CSISET_PER_PAGE;
+    int start = s_set_page * CSISET_PER_PAGE;
+
+    for (int i = start; i < start + CSISET_PER_PAGE && i < n; i++) {
+        const char *key, *desc, *opts; char type; int32_t val, lo, hi;
+        if (!prop_coproc_csi_describe(i, &key, &val, &type, &lo, &hi, &desc, &opts)) { continue; }
+
+        lv_obj_t *card = kit_card(s_set_content, lv_pct(100), LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_all(card, 10, 0);
+        lv_obj_set_style_pad_row(card, 6, 0);
+
+        /* header: NAME ......... VALUE */
+        lv_obj_t *hdr = lv_obj_create(card);
+        lv_obj_remove_style_all(hdr);
+        lv_obj_set_size(hdr, lv_pct(100), LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_t *name = lv_label_create(hdr);
+        lv_label_set_text(name, key);
+        lv_obj_set_style_text_color(name, COL_AMBER, 0);
+        lv_obj_t *vlbl = lv_label_create(hdr);
+        char vb[16]; set_fmt_value(vb, sizeof(vb), type, val);
+        if (type == 'T' && prop_calib_auto()) { snprintf(vb, sizeof(vb), "AUTO"); }
+        lv_label_set_text(vlbl, vb);
+        lv_obj_set_style_text_color(vlbl, COL_MUTE, 0);
+        s_set_vallbl[i] = vlbl;
+
+        /* control row */
+        lv_obj_t *ctl = lv_obj_create(card);
+        lv_obj_remove_style_all(ctl);
+        lv_obj_set_size(ctl, lv_pct(100), LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(ctl, LV_FLEX_FLOW_ROW_WRAP);
+        lv_obj_set_style_pad_column(ctl, 8, 0);
+        lv_obj_set_style_pad_row(ctl, 6, 0);
+
+        if (type == 'B') {
+            csiset_pill(ctl, "OFF", val == 0, csiset_opt_cb, (i << 8) | 0);
+            csiset_pill(ctl, "ON",  val != 0, csiset_opt_cb, (i << 8) | 1);
+        } else if (type == 'E' || type == 'M') {
+            /* split opts on '|' */
+            char buf[64]; strncpy(buf, opts ? opts : "", sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
+            int k = 0; char *save = NULL;
+            for (char *tok = strtok_r(buf, "|", &save); tok && k < 8; tok = strtok_r(NULL, "|", &save), k++) {
+                bool sel = (type == 'M') ? (val & (1 << k)) != 0 : (val == k);
+                csiset_pill(ctl, tok, sel, csiset_opt_cb, (i << 8) | k);
+            }
+        } else if (type == 'T') {
+            bool autoon = prop_calib_auto();
+            csiset_pill(ctl, "AUTO",   autoon,                 csiset_thr_cb, (i << 8) | 0);
+            csiset_pill(ctl, "MIN",    !autoon && val == -2,   csiset_thr_cb, (i << 8) | 1);
+            csiset_pill(ctl, "MANUAL", !autoon && val >= 0,    csiset_thr_cb, (i << 8) | 2);
+            if (!autoon && val >= 0) {
+                csiset_pill(ctl, "-", false, csiset_step_cb, (i << 8) | 0);
+                csiset_pill(ctl, "+", false, csiset_step_cb, (i << 8) | 1);
+            }
+        } else {   /* I / F stepper */
+            csiset_pill(ctl, LV_SYMBOL_MINUS, false, csiset_step_cb, (i << 8) | 0);
+            csiset_pill(ctl, LV_SYMBOL_PLUS,  false, csiset_step_cb, (i << 8) | 1);
+        }
+
+        lv_obj_t *dl = lv_label_create(card);
+        lv_label_set_text(dl, desc);
+        lv_label_set_long_mode(dl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(dl, lv_pct(100));
+        lv_obj_set_style_text_color(dl, COL_MUTE, 0);
+    }
+
+    if (s_set_pagelbl) {
+        lv_label_set_text_fmt(s_set_pagelbl, "PAGE %d/%d", s_set_page + 1, pages);
+    }
+}
+
+static lv_obj_t *build_csiset_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "CSI SETTINGS", back_to_csicfg_cb);
+    s_set_page = 0;
+
+    /* page nav (button-scrolled, not swipe) */
+    lv_obj_t *prev = lv_btn_create(p);
+    style_btn(prev); lv_obj_set_size(prev, 150, 50);
+    lv_obj_align(prev, LV_ALIGN_BOTTOM_LEFT, 30, -18);
+    lv_obj_add_event_cb(prev, csiset_page_cb, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
+    lv_obj_t *pl = lv_label_create(prev); lv_label_set_text(pl, LV_SYMBOL_LEFT " PREV"); lv_obj_center(pl);
+
+    lv_obj_t *next = lv_btn_create(p);
+    style_btn(next); lv_obj_set_size(next, 150, 50);
+    lv_obj_align(next, LV_ALIGN_BOTTOM_RIGHT, -30, -18);
+    lv_obj_add_event_cb(next, csiset_page_cb, LV_EVENT_CLICKED, (void *)(intptr_t)1);
+    lv_obj_t *nl = lv_label_create(next); lv_label_set_text(nl, "NEXT " LV_SYMBOL_RIGHT); lv_obj_center(nl);
+
+    s_set_pagelbl = lv_label_create(p);
+    lv_obj_set_style_text_color(s_set_pagelbl, COL_AMBER, 0);
+    lv_obj_align(s_set_pagelbl, LV_ALIGN_BOTTOM_MID, 0, -32);
+
+    /* scrollable content holding the current page's cards */
+    s_set_content = lv_obj_create(p);
+    lv_obj_remove_style_all(s_set_content);
+    lv_obj_set_size(s_set_content, SCAN_W - 60, 430);
+    lv_obj_align(s_set_content, LV_ALIGN_TOP_MID, 0, 66);
+    lv_obj_set_flex_flow(s_set_content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_set_content, 10, 0);
+    lv_obj_clear_flag(s_set_content, LV_OBJ_FLAG_SCROLLABLE);
+
+    render_csiset_page();
     return p;
 }
 
@@ -2780,6 +3136,7 @@ static lv_obj_t *build_sensors_panel(lv_obj_t *parent)
     kit_list_row(b, "RF BAND",    menu_open_cb, (void *)(intptr_t)PK_RFBAND);
     kit_list_row(b, "CONTACTS",   menu_open_cb, (void *)(intptr_t)PK_BLE);
     kit_list_row(b, "SIGNAL ENV", menu_open_cb, (void *)(intptr_t)PK_CSI);
+    kit_list_row(b, "CSI CONFIG", menu_open_cb, (void *)(intptr_t)PK_CSICFG);
     return m;
 }
 
@@ -3424,16 +3781,15 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
-    /* Drive the SIGNAL ENVIRONMENT bars from the CSI column (real or synthetic),
-     * with the same peak-hold ballistics as the mic spectrum. */
+    /* Drive the SIGNAL ENVIRONMENT bars from the CSI movement-history FIFO. Each
+     * bar is a fixed past sample — render col[i] DIRECTLY (no peak-hold decay,
+     * which would let historical bars change height after the fact). The FIFO
+     * scroll happens at the source (prop_csi.c) when a new C6 sample arrives. */
     if (s_cur_kind == PK_CSI && s_csi_bars[0]) {
         uint8_t col[PROP_CSI_BINS];
         prop_csi_get_column(col);
         for (int i = 0; i < PROP_CSI_BINS; i++) {
-            float v = (float)col[i];
-            if (v >= s_csi_decay[i]) s_csi_decay[i] = v;
-            else s_csi_decay[i] *= 0.82f;
-            int pct = (int)s_csi_decay[i];
+            int pct = col[i];
             int h = 2 + pct * CSI_MAXH / 100;
             lv_obj_set_height(s_csi_bars[i], h);
             lv_obj_align(s_csi_bars[i], LV_ALIGN_BOTTOM_LEFT,
@@ -3441,10 +3797,109 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             lv_obj_set_style_bg_color(s_csi_bars[i],
                                       pct > 85 ? COL_ALERT : (pct > 35 ? COL_AMBER : COL_MUTE), 0);
         }
-        if (st->tick % 8 == 0 && s_csi_status) {
-            label_set_text_cached(s_csi_status, prop_csi_is_live()
-                                  ? "CSI LIVE  //  REAL CHANNEL DATA"
-                                  : "SYNTHETIC  //  RF NOISE FLOOR");
+        /* Motion verdict + movement readout (real C6 data when live). */
+        bool motion = false; int move_mi = 0, thr_mi = 0;
+        bool live = prop_csi_get_motion(&motion, &move_mi, &thr_mi);
+        prop_calib_status_t ccs; prop_calib_get(&ccs);
+        if (st->tick % 4 == 0) {
+            if (s_csi_motion) {
+                if (ccs.countdown > 0) {
+                    char mb[24]; snprintf(mb, sizeof(mb), "RE-BASELINE %d", ccs.countdown);
+                    label_set_text_cached(s_csi_motion, mb);
+                    lv_obj_set_style_text_color(s_csi_motion, COL_AMBER, 0);
+                } else {
+                    label_set_text_cached(s_csi_motion, !live ? "--" : (motion ? "MOTION" : "IDLE"));
+                    lv_obj_set_style_text_color(s_csi_motion, motion ? COL_ALERT : COL_MUTE, 0);
+                }
+            }
+            if (s_csi_rssi) {
+                int rssi = prop_net_get_rssi();
+                char sb[24];
+                if (rssi) { snprintf(sb, sizeof(sb), "LINK %d dBm", rssi); }
+                else      { snprintf(sb, sizeof(sb), "LINK ---"); }
+                label_set_text_cached(s_csi_rssi, sb);
+            }
+            if (s_csi_geiger_lbl) {
+                label_set_text_cached(s_csi_geiger_lbl,
+                                      prop_csi_geiger() ? "GEIGER: ON" : "SPECTRE GEIGER");
+            }
+            if (s_csi_move) {
+                char buf[40];
+                if (live) {
+                    snprintf(buf, sizeof(buf), "MOVEMENT %d / THR %d", move_mi, thr_mi);
+                } else {
+                    snprintf(buf, sizeof(buf), "MOVEMENT --- / THR ---");
+                }
+                label_set_text_cached(s_csi_move, buf);
+            }
+            if (s_csi_rf) {
+                int turb = 0, agc = 0, fft = 0; bool gl = false;
+                prop_csi_get_rf(&turb, &agc, &fft, &gl);
+                char rb[64];
+                if (live) {
+                    snprintf(rb, sizeof(rb), "TURB %d.%02d   AGC %d  FFT %d   GAIN %s",
+                             turb / 1000, (turb % 1000) / 10, agc, fft,
+                             gl ? "LOCKED" : "UNLOCKED");
+                } else {
+                    snprintf(rb, sizeof(rb), "TURB ---  GAIN ---");
+                }
+                label_set_text_cached(s_csi_rf, rb);
+            }
+        }
+            if (s_csi_status) {
+                label_set_text_cached(s_csi_status, live
+                                      ? "CSI LIVE  //  ON-C6 MOTION"
+                                      : "SYNTHETIC  //  NO C6 FEED");
+            }
+            if (s_csi_fp_cells[0]) {
+                uint8_t sc[12]; prop_csi_get_subcarriers(sc);
+                static uint8_t last_sc[12];
+                if (memcmp(sc, last_sc, 12) != 0) {   /* re-light only on change */
+                    memcpy(last_sc, sc, 12);
+                    bool sel[64] = { 0 };
+                    for (int k = 0; k < 12; k++) { if (sc[k] < 64) { sel[sc[k]] = true; } }
+                    for (int b = 0; b < 64; b++) {
+                        if (!s_csi_fp_cells[b]) { continue; }
+                        lv_obj_set_height(s_csi_fp_cells[b], sel[b] ? 16 : 5);
+                        lv_obj_set_style_bg_color(s_csi_fp_cells[b], sel[b] ? COL_AMBER : COL_DIM, 0);
+                    }
+                }
+            }
+    }
+
+    /* CSI CONFIG panel: live feedback + guided calibration phase/countdown. */
+    if (s_cur_kind == PK_CSICFG && s_cfg_phase && (st->tick % 4 == 0)) {
+        bool motion = false; int move_mi = 0, thr_mi = 0;
+        bool live = prop_csi_get_motion(&motion, &move_mi, &thr_mi);
+        if (s_cfg_motion) {
+            label_set_text_cached(s_cfg_motion, !live ? "--" : (motion ? "MOTION" : "IDLE"));
+            lv_obj_set_style_text_color(s_cfg_motion, motion ? COL_ALERT : COL_MUTE, 0);
+        }
+        if (s_cfg_move) {
+            char buf[40];
+            if (live) { snprintf(buf, sizeof(buf), "MOVEMENT %d / THR %d", move_mi, thr_mi); }
+            else      { snprintf(buf, sizeof(buf), "MOVEMENT --- / THR ---"); }
+            label_set_text_cached(s_cfg_move, buf);
+        }
+        if (s_cfg_meter) {
+            int thr = thr_mi > 0 ? thr_mi : 1000;
+            kit_set_meter(s_cfg_meter, move_mi * 100 / (thr * 2),
+                          motion ? COL_ALERT : COL_AMBER);
+        }
+
+        prop_calib_status_t cs;
+        prop_calib_get(&cs);
+        char b[64];
+        if (cs.auto_on && cs.live && cs.fill_pct < 100) {
+            snprintf(b, sizeof(b), "LEARNING  %d%%", cs.fill_pct);
+        } else if (cs.auto_on && cs.live) {
+            snprintf(b, sizeof(b), "AUTO-ADAPTING  base %d", cs.baseline_milli);
+        } else {
+            snprintf(b, sizeof(b), "%s", cs.message[0] ? cs.message : "AUTO OFF");
+        }
+        label_set_text_cached(s_cfg_phase, b);
+        if (s_cfg_btn_lbl) {
+            label_set_text_cached(s_cfg_btn_lbl, cs.auto_on ? "AUTO: ON" : "AUTO: OFF");
         }
     }
 
@@ -3525,6 +3980,8 @@ void prop_ui_goto(const char *screen)
     else if (strcmp(screen, "rfband") == 0)  open_panel(PK_RFBAND);
     else if (strcmp(screen, "ble") == 0)     open_panel(PK_BLE);
     else if (strcmp(screen, "csi") == 0)     open_panel(PK_CSI);
+    else if (strcmp(screen, "csicfg") == 0)  open_panel(PK_CSICFG);
+    else if (strcmp(screen, "csiset") == 0)  open_panel(PK_CSISET);
     else if (strcmp(screen, "instruments") == 0) open_panel(PK_INSTRUMENTS);
     else if (strcmp(screen, "sensors") == 0)     open_panel(PK_SENSORS);
     else if (strcmp(screen, "archive") == 0) open_panel(PK_ARCHIVE);

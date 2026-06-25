@@ -2,6 +2,15 @@
 # with `git rm -r --cached build`); regenerated locally by idf.py. Keep it ignored.
 /build/
 
+# C6 slave firmware (c6_slave/) is a second IDF project (esp32c6). Track its sources,
+# but ignore per-machine generated artefacts: build output, the sdkconfig generated
+# from sdkconfig.defaults, and component-manager-fetched deps.
+c6_slave/slave/build/
+c6_slave/slave/sdkconfig
+c6_slave/slave/sdkconfig.old
+c6_slave/slave/managed_components/
+c6_slave/slave/dependencies.lock
+
 # Scratch screenshots from the dev loop (tools/prop.py, tools/screenshot.py).
 # Firmware images are C arrays in main/*.c, never .png — so every .png here is scratch.
 *.png

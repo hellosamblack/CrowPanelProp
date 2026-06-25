@@ -42,6 +42,7 @@ static char s_ip[16] = "0.0.0.0";
 static volatile prop_sta_state_t s_sta_state = STA_IDLE;
 static volatile int s_rssi;      /* cached signal strength (dBm), 0 = unknown */
 static prop_uplink_t s_uplink;   /* cached connected-AP dossier (filled by rssi_task) */
+static volatile bool s_scanning; /* a WiFi scan is in flight (RF BAND / WIFI panel) */
 static bool s_ap_up;             /* true once the fallback hotspot is running */
 static void rssi_task(void *arg);
 static esp_err_t enable_ap(void);
@@ -339,23 +340,31 @@ const char *prop_net_oui_vendor(const uint8_t mac[6])
 static int scan_and_fetch(wifi_ap_record_t **recs)
 {
     *recs = NULL;
+    /* Flag the scan so rssi_task stops polling esp_wifi_sta_get_ap_info while it
+     * runs: mid-scan that RPC returns an empty AP-info payload that esp-hosted's
+     * port memcpy asserts on (null src) → crash. Held across the blocking scan. */
+    s_scanning = true;
     wifi_scan_config_t scan_cfg = { 0 };   /* all channels, active scan */
     esp_err_t err = esp_wifi_scan_start(&scan_cfg, true);
     if (err != ESP_OK) {
         ESP_LOGW(NET_TAG, "scan start failed: %s", esp_err_to_name(err));
+        s_scanning = false;
         return -1;
     }
     uint16_t num = 0;
     esp_wifi_scan_get_ap_num(&num);
     if (num == 0) {
+        s_scanning = false;
         return 0;
     }
     wifi_ap_record_t *r = calloc(num, sizeof(wifi_ap_record_t));
     if (!r) {
         esp_wifi_clear_ap_list();
+        s_scanning = false;
         return -1;
     }
     esp_wifi_scan_get_ap_records(&num, r);   /* also frees the internal list */
+    s_scanning = false;
     *recs = r;
     return (int)num;
 }
@@ -527,7 +536,8 @@ static void rssi_task(void *arg)
     (void)arg;
     for (;;) {
         wifi_ap_record_t ap;
-        if (s_sta_state == STA_CONNECTED && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        if (!s_scanning && s_sta_state == STA_CONNECTED &&
+            esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
             s_rssi = ap.rssi;
             s_uplink.connected = true;
             strlcpy(s_uplink.ssid, (const char *)ap.ssid, sizeof(s_uplink.ssid));
