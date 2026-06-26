@@ -10,6 +10,9 @@
 #include "prop_csi.h"
 #include "prop_calib.h"
 #include "prop_coproc.h"
+#include "prop_motion.h"
+#include "prop_imu.h"
+#include "prop_aux_radar.h"
 #include "prop_content.h"
 #include "bsp_io.h"
 #include "bsp_aio.h"
@@ -118,7 +121,7 @@ typedef enum {
     PK_NONE = 0,   /* no panel: the bare SCANNER readout on the root screen */
     PK_HOME,       /* the in-world console (default landing screen) */
     PK_MENU, PK_WIFI, PK_DISPLAY, PK_AUDIO, PK_LEDS, PK_ABOUT, PK_VITALS,
-    PK_SCAN, PK_SPECTRUM, PK_RFBAND, PK_BLE, PK_CSI, PK_CSICFG, PK_CSISET,
+    PK_SCAN, PK_SPECTRUM, PK_RFBAND, PK_BLE, PK_CSI, PK_CSICFG, PK_CSISET, PK_MOTION,
     PK_INSTRUMENTS,   /* submenu: SCANNER / SIGNAL SCAN / SPECTRUM / VITALS */
     PK_SENSORS,       /* submenu: RF BAND / CONTACTS / SIGNAL ENV / CSI CONFIG */
     PK_ARCHIVE,    /* data-archive browser (tabs = sections) */
@@ -181,6 +184,21 @@ static lv_obj_t *s_csi_rf;       /* turbulence + receiver gain readout */
 static lv_obj_t *s_csi_rssi;     /* link RSSI (upper-right) */
 static lv_obj_t *s_csi_fp_cells[64]; /* NBVI subcarrier fingerprint (lit cells) */
 static lv_obj_t *s_csi_geiger_lbl; /* SPECTRE GEIGER button label */
+
+/* MOTION SCAN instrument (valid only while PK_MOTION is current). */
+static lv_obj_t *s_motion_tgt_label;    /* "TARGETS: N" header */
+static lv_obj_t *s_motion_alert;        /* "MOTION DETECTED" flash */
+static lv_obj_t *s_motion_blips[3];     /* target blips (amber circles) */
+static lv_obj_t *s_motion_trows[3];     /* T1/T2/T3 data label rows */
+static lv_obj_t *s_motion_sweep;        /* rotating sweep lv_line */
+static lv_obj_t *s_motion_gimbal_line;  /* artificial horizon lv_line */
+static lv_obj_t *s_motion_gimbal_orient; /* "P: XX  R: XX" orientation text */
+static lv_obj_t *s_motion_aux_seeed;    /* Seeed sensor status label */
+static lv_obj_t *s_motion_aux_sen;      /* SEN0395 sensor status label */
+static int       s_sweep_angle;         /* current sweep angle 0-359 */
+/* Module-scope point buffers — LVGL keeps a pointer; must outlive the widgets. */
+static lv_point_precise_t s_motion_sweep_pts[2];
+static lv_point_precise_t s_motion_gimbal_pts[2];
 
 /* CSI CONFIG / auto-calibration panel (valid only while PK_CSICFG is current). */
 static lv_obj_t *s_cfg_motion;   /* live MOTION / IDLE */
@@ -248,6 +266,7 @@ static lv_obj_t *build_instruments_panel(lv_obj_t *parent);
 static lv_obj_t *build_sensors_panel(lv_obj_t *parent);
 static lv_obj_t *build_io_panel(lv_obj_t *parent);
 static lv_obj_t *build_io_pin_panel(lv_obj_t *parent);
+static lv_obj_t *build_motion_panel(lv_obj_t *parent);
 static void wifi_panel_opened(void);
 static void start_signal_scan(void);
 static void start_rfband_scan(void);
@@ -353,6 +372,11 @@ static void close_panel(void)
     s_pin_read = NULL; s_pin_fill = NULL; s_pin_edges = NULL;
     s_pin_aout = NULL; s_pin_slider = NULL; s_pin_entry = NULL;
     s_connect_pending = false;
+    s_motion_tgt_label = NULL; s_motion_alert = NULL;
+    for (int i = 0; i < 3; i++) { s_motion_blips[i] = NULL; s_motion_trows[i] = NULL; }
+    s_motion_sweep = NULL; s_motion_gimbal_line = NULL;
+    s_motion_gimbal_orient = NULL;
+    s_motion_aux_seeed = NULL; s_motion_aux_sen = NULL;
 }
 
 /* Light the rail cell for the function `kind` belongs to. Sub-panels map to their
@@ -370,7 +394,7 @@ static void rail_sync(panel_kind_t kind)
          * (PK_NONE) belongs to INSTRUMENTS too. */
         case PK_NONE: case PK_SCAN: case PK_SPECTRUM: case PK_VITALS:
             want = PK_INSTRUMENTS; break;
-        case PK_RFBAND: case PK_BLE: case PK_CSI: case PK_CSICFG: case PK_CSISET:
+        case PK_RFBAND: case PK_BLE: case PK_CSI: case PK_CSICFG: case PK_CSISET: case PK_MOTION:
             want = PK_SENSORS; break;
         default: break;
     }
@@ -433,6 +457,7 @@ static void open_panel(panel_kind_t kind)
         case PK_INSIGHTS: s_cur_panel = build_insights_panel(s_root); break;
         case PK_IO:       s_cur_panel = build_io_panel(s_root); break;
         case PK_IO_PIN:   s_cur_panel = build_io_pin_panel(s_root); break;
+        case PK_MOTION:   s_cur_panel = build_motion_panel(s_root); break;
         default: break;    /* PK_NONE: no panel - the SCANNER readout shows through */
     }
     s_cur_kind = kind;
@@ -3137,7 +3162,190 @@ static lv_obj_t *build_sensors_panel(lv_obj_t *parent)
     kit_list_row(b, "CONTACTS",   menu_open_cb, (void *)(intptr_t)PK_BLE);
     kit_list_row(b, "SIGNAL ENV", menu_open_cb, (void *)(intptr_t)PK_CSI);
     kit_list_row(b, "CSI CONFIG", menu_open_cb, (void *)(intptr_t)PK_CSICFG);
+    kit_list_row(b, "MOTION SCAN", menu_open_cb, (void *)(intptr_t)PK_MOTION);
     return m;
+}
+
+/* ---- MOTION SCAN panel — Alien-style radar + gimbal + aux sensors -------
+ * Left 440x440: rotating sweep line + range rings + amber target blips.
+ * Right: target count, 190x190 artificial horizon, T1/T2/T3 data, aux status. */
+
+static lv_obj_t *build_motion_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "MOTION SCAN", back_to_sensors_cb);
+
+    /* ---- Left: radar display box (440x440) ---- */
+    lv_obj_t *rbox = lv_obj_create(p);
+    lv_obj_set_size(rbox, 440, 440);
+    lv_obj_align(rbox, LV_ALIGN_TOP_LEFT, 10, 64);
+    lv_obj_set_style_bg_color(rbox, COL_PANEL_ITEM, 0);
+    lv_obj_set_style_bg_opa(rbox, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(rbox, COL_DIM, 0);
+    lv_obj_set_style_border_width(rbox, 1, 0);
+    lv_obj_set_style_radius(rbox, 0, 0);
+    lv_obj_set_style_pad_all(rbox, 0, 0);
+    lv_obj_clear_flag(rbox, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* 6 range rings (COL_DIM circles, 1m per ring, max 6m) */
+    for (int r = 1; r <= 6; r++) {
+        int d = r * 70;   /* 70, 140, 210, 280, 350, 420 px */
+        lv_obj_t *ring = lv_obj_create(rbox);
+        lv_obj_remove_style_all(ring);
+        lv_obj_set_size(ring, d, d);
+        lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_color(ring, COL_DIM, 0);
+        lv_obj_set_style_border_width(ring, 1, 0);
+        lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_center(ring);
+    }
+
+    /* Center dot */
+    lv_obj_t *dot = lv_obj_create(rbox);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 6, 6);
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(dot, COL_AMBER, 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_center(dot);
+
+    /* Sweep line — points at module scope (observer updates them each tick) */
+    s_motion_sweep_pts[0].x = 220; s_motion_sweep_pts[0].y = 220;
+    s_motion_sweep_pts[1].x = 220; s_motion_sweep_pts[1].y = 10;  /* initial: north */
+    s_motion_sweep = lv_line_create(rbox);
+    lv_line_set_points(s_motion_sweep, s_motion_sweep_pts, 2);
+    lv_obj_set_style_line_color(s_motion_sweep, COL_AMBER, 0);
+    lv_obj_set_style_line_width(s_motion_sweep, 2, 0);
+    lv_obj_set_style_line_rounded(s_motion_sweep, false, 0);
+    lv_obj_align(s_motion_sweep, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    /* 3 target blips (amber circles, initially hidden) */
+    for (int i = 0; i < 3; i++) {
+        s_motion_blips[i] = lv_obj_create(rbox);
+        lv_obj_remove_style_all(s_motion_blips[i]);
+        lv_obj_set_size(s_motion_blips[i], 12, 12);
+        lv_obj_set_style_radius(s_motion_blips[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(s_motion_blips[i], COL_AMBER, 0);
+        lv_obj_set_style_bg_opa(s_motion_blips[i], LV_OPA_COVER, 0);
+        lv_obj_add_flag(s_motion_blips[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    /* ---- Right column starts at x=462 ---- */
+
+    /* "TARGETS: N" label */
+    s_motion_tgt_label = lv_label_create(p);
+    lv_label_set_text(s_motion_tgt_label, "TARGETS: 0");
+    lv_obj_set_style_text_color(s_motion_tgt_label, COL_MUTE, 0);
+    lv_obj_set_style_text_font(s_motion_tgt_label, FONT_HEAD, 0);
+    lv_obj_align(s_motion_tgt_label, LV_ALIGN_TOP_LEFT, 462, 68);
+
+    /* "MOTION DETECTED" alert (hidden when no targets) */
+    s_motion_alert = lv_label_create(p);
+    lv_label_set_text(s_motion_alert, "MOTION DETECTED");
+    lv_obj_set_style_text_color(s_motion_alert, COL_ALERT, 0);
+    lv_obj_set_style_text_font(s_motion_alert, FONT_BODY, 0);
+    lv_obj_align(s_motion_alert, LV_ALIGN_TOP_LEFT, 462, 100);
+    lv_obj_add_flag(s_motion_alert, LV_OBJ_FLAG_HIDDEN);
+
+    /* Divider line */
+    lv_obj_t *div1 = lv_obj_create(p);
+    lv_obj_remove_style_all(div1);
+    lv_obj_set_size(div1, 476, 1);
+    lv_obj_align(div1, LV_ALIGN_TOP_LEFT, 462, 122);
+    lv_obj_set_style_bg_color(div1, COL_DIM, 0);
+    lv_obj_set_style_bg_opa(div1, LV_OPA_COVER, 0);
+
+    /* Gimbal box (190x190) */
+    lv_obj_t *gbox = lv_obj_create(p);
+    lv_obj_set_size(gbox, 190, 190);
+    lv_obj_align(gbox, LV_ALIGN_TOP_LEFT, 462, 128);
+    lv_obj_set_style_bg_color(gbox, COL_PANEL_ITEM, 0);
+    lv_obj_set_style_bg_opa(gbox, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(gbox, COL_DIM, 0);
+    lv_obj_set_style_border_width(gbox, 1, 0);
+    lv_obj_set_style_radius(gbox, 0, 0);
+    lv_obj_set_style_pad_all(gbox, 0, 0);
+    lv_obj_clear_flag(gbox, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* "IMU" label inside gimbal */
+    lv_obj_t *g_label = lv_label_create(gbox);
+    lv_label_set_text(g_label, "IMU");
+    lv_obj_set_style_text_color(g_label, COL_DIM, 0);
+    lv_obj_set_style_text_font(g_label, FONT_BODY, 0);
+    lv_obj_align(g_label, LV_ALIGN_TOP_LEFT, 4, 4);
+
+    /* Thin cross lines (center reference grid; never update) */
+    static lv_point_precise_t s_gh_pts[2] = {{0, 95}, {190, 95}};
+    lv_obj_t *h_cross = lv_line_create(gbox);
+    lv_line_set_points(h_cross, s_gh_pts, 2);
+    lv_obj_set_style_line_color(h_cross, COL_DIM, 0);
+    lv_obj_set_style_line_width(h_cross, 1, 0);
+    lv_obj_align(h_cross, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    static lv_point_precise_t s_gv_pts[2] = {{95, 0}, {95, 190}};
+    lv_obj_t *v_cross = lv_line_create(gbox);
+    lv_line_set_points(v_cross, s_gv_pts, 2);
+    lv_obj_set_style_line_color(v_cross, COL_DIM, 0);
+    lv_obj_set_style_line_width(v_cross, 1, 0);
+    lv_obj_align(v_cross, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    /* Artificial horizon line — module-scope pts, updated by observer */
+    s_motion_gimbal_pts[0].x = 25;  s_motion_gimbal_pts[0].y = 95;
+    s_motion_gimbal_pts[1].x = 165; s_motion_gimbal_pts[1].y = 95;
+    s_motion_gimbal_line = lv_line_create(gbox);
+    lv_line_set_points(s_motion_gimbal_line, s_motion_gimbal_pts, 2);
+    lv_obj_set_style_line_color(s_motion_gimbal_line, COL_AMBER, 0);
+    lv_obj_set_style_line_width(s_motion_gimbal_line, 3, 0);
+    lv_obj_align(s_motion_gimbal_line, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    /* Pitch/roll text below gimbal */
+    s_motion_gimbal_orient = lv_label_create(p);
+    lv_label_set_text(s_motion_gimbal_orient, "P: 0.0  R: 0.0");
+    lv_obj_set_style_text_color(s_motion_gimbal_orient, COL_MUTE, 0);
+    lv_obj_set_style_text_font(s_motion_gimbal_orient, FONT_BODY, 0);
+    lv_obj_align(s_motion_gimbal_orient, LV_ALIGN_TOP_LEFT, 462, 324);
+
+    /* Divider */
+    lv_obj_t *div2 = lv_obj_create(p);
+    lv_obj_remove_style_all(div2);
+    lv_obj_set_size(div2, 476, 1);
+    lv_obj_align(div2, LV_ALIGN_TOP_LEFT, 462, 342);
+    lv_obj_set_style_bg_color(div2, COL_DIM, 0);
+    lv_obj_set_style_bg_opa(div2, LV_OPA_COVER, 0);
+
+    /* T1/T2/T3 target data rows */
+    static const char *const trow_init[3] = {"T1  --", "T2  --", "T3  --"};
+    for (int i = 0; i < 3; i++) {
+        s_motion_trows[i] = lv_label_create(p);
+        lv_label_set_text(s_motion_trows[i], trow_init[i]);
+        lv_obj_set_style_text_color(s_motion_trows[i], COL_DIM, 0);
+        lv_obj_set_style_text_font(s_motion_trows[i], FONT_BODY, 0);
+        lv_obj_align(s_motion_trows[i], LV_ALIGN_TOP_LEFT, 462, 350 + i * 28);
+    }
+
+    /* Aux divider */
+    lv_obj_t *div3 = lv_obj_create(p);
+    lv_obj_remove_style_all(div3);
+    lv_obj_set_size(div3, 476, 1);
+    lv_obj_align(div3, LV_ALIGN_TOP_LEFT, 462, 438);
+    lv_obj_set_style_bg_color(div3, COL_DIM, 0);
+    lv_obj_set_style_bg_opa(div3, LV_OPA_COVER, 0);
+
+    /* Aux sensor status labels */
+    s_motion_aux_seeed = lv_label_create(p);
+    lv_label_set_text(s_motion_aux_seeed, "SEEED  OFFLINE");
+    lv_obj_set_style_text_color(s_motion_aux_seeed, COL_DIM, 0);
+    lv_obj_set_style_text_font(s_motion_aux_seeed, FONT_BODY, 0);
+    lv_obj_align(s_motion_aux_seeed, LV_ALIGN_TOP_LEFT, 462, 448);
+
+    s_motion_aux_sen = lv_label_create(p);
+    lv_label_set_text(s_motion_aux_sen, "SEN0395  OFFLINE");
+    lv_obj_set_style_text_color(s_motion_aux_sen, COL_DIM, 0);
+    lv_obj_set_style_text_font(s_motion_aux_sen, FONT_BODY, 0);
+    lv_obj_align(s_motion_aux_sen, LV_ALIGN_TOP_LEFT, 462, 476);
+
+    s_sweep_angle = 90;   /* start sweep pointing north (up = forward) */
+    return p;
 }
 
 /* Signal level is measured in quarter-cells. The gauge deliberately never tops
@@ -3958,6 +4166,120 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
+    /* Drive the MOTION SCAN panel: sweep rotation, target blips, gimbal, aux labels. */
+    if (s_cur_kind == PK_MOTION && s_motion_sweep) {
+        /* Advance sweep angle 3° per tick (~60°/s at 20 Hz, one revolution per 6 s). */
+        s_sweep_angle = (s_sweep_angle + 3) % 360;
+        float rad = (float)s_sweep_angle * (3.14159265f / 180.0f);
+        /* +90° rotation maps angle 0 to "north" (top of display); forward = up. */
+        int16_t ex = (int16_t)(220.0f + cosf(rad - 1.5707963f) * 210.0f);
+        int16_t ey = (int16_t)(220.0f - sinf(rad - 1.5707963f) * 210.0f);
+        s_motion_sweep_pts[1].x = ex;
+        s_motion_sweep_pts[1].y = ey;
+        lv_line_set_points(s_motion_sweep, s_motion_sweep_pts, 2);
+
+        /* Update target blips from LD2450 cache. */
+        prop_motion_target_t tgts[3];
+        int cnt = prop_motion_get_targets(tgts, 3);
+        for (int i = 0; i < 3; i++) {
+            if (!s_motion_blips[i]) break;
+            if (i < cnt) {
+                int bx = 220 + (int)((int32_t)tgts[i].x_mm * 210 / 6000);
+                int by = 220 - (int)((int32_t)tgts[i].y_mm * 210 / 6000);
+                if (bx < 6)   bx = 6;
+                if (bx > 434) bx = 434;
+                if (by < 6)   by = 6;
+                if (by > 434) by = 434;
+                lv_obj_set_pos(s_motion_blips[i], bx - 6, by - 6);
+                lv_obj_set_style_bg_color(s_motion_blips[i],
+                    (tgts[i].speed_mm_s > 200 || tgts[i].speed_mm_s < -200)
+                        ? COL_ALERT : COL_AMBER, 0);
+                lv_obj_clear_flag(s_motion_blips[i], LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(s_motion_blips[i], LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+
+        /* Update target count label + motion alert. */
+        if (s_motion_tgt_label) {
+            char cb[20];
+            snprintf(cb, sizeof(cb), "TARGETS: %d", cnt);
+            label_set_text_cached(s_motion_tgt_label, cb);
+        }
+        if (s_motion_alert) {
+            if (cnt > 0) lv_obj_clear_flag(s_motion_alert, LV_OBJ_FLAG_HIDDEN);
+            else         lv_obj_add_flag(s_motion_alert, LV_OBJ_FLAG_HIDDEN);
+        }
+
+        /* Update T1/T2/T3 target rows. */
+        static const char *const trow_blank[3] = {"T1  --", "T2  --", "T3  --"};
+        for (int i = 0; i < 3; i++) {
+            if (!s_motion_trows[i]) break;
+            if (i < cnt) {
+                char rb[52];
+                snprintf(rb, sizeof(rb), "T%d  X:%.1f  Y:%.1f  V:%d",
+                         i + 1,
+                         (double)tgts[i].x_mm / 1000.0,
+                         (double)tgts[i].y_mm / 1000.0,
+                         (int)tgts[i].speed_mm_s);
+                label_set_text_cached(s_motion_trows[i], rb);
+                lv_obj_set_style_text_color(s_motion_trows[i], COL_AMBER, 0);
+            } else {
+                label_set_text_cached(s_motion_trows[i], trow_blank[i]);
+                lv_obj_set_style_text_color(s_motion_trows[i], COL_DIM, 0);
+            }
+        }
+
+        /* Update gimbal (artificial horizon) from IMU orientation. */
+        if (s_motion_gimbal_line) {
+            float pitch_deg = 0.0f, roll_deg = 0.0f;
+            prop_imu_get_orientation(&pitch_deg, &roll_deg, NULL);
+            /* Pitch shifts horizon vertically: nose up → horizon moves down. */
+            int py = (int)(pitch_deg * 1.5f);
+            if (py < -80) py = -80;
+            if (py >  80) py =  80;
+            /* Roll tilts the line: endpoints diverge from center up/down. */
+            float rrad = roll_deg * (3.14159265f / 180.0f);
+            int dx = (int)(cosf(rrad) * 70.0f);
+            int dy = (int)(sinf(rrad) * 70.0f);
+            s_motion_gimbal_pts[0].x = (int16_t)(95 - dx);
+            s_motion_gimbal_pts[0].y = (int16_t)(95 + py + dy);
+            s_motion_gimbal_pts[1].x = (int16_t)(95 + dx);
+            s_motion_gimbal_pts[1].y = (int16_t)(95 + py - dy);
+            lv_line_set_points(s_motion_gimbal_line, s_motion_gimbal_pts, 2);
+        }
+        if (s_motion_gimbal_orient) {
+            float p2 = 0.0f, r2 = 0.0f;
+            prop_imu_get_orientation(&p2, &r2, NULL);
+            char ob[32];
+            snprintf(ob, sizeof(ob), "P: %.1f  R: %.1f", (double)p2, (double)r2);
+            label_set_text_cached(s_motion_gimbal_orient, ob);
+        }
+
+        /* Aux radar status labels — throttled to 2 Hz (every 10 ticks at 20 Hz). */
+        if (st->tick % 10 == 0) {
+            static const char *const s_aux_str[] = {"OFFLINE", "CLEAR", "PRESENT"};
+            aux_radar_state_t ss = prop_aux_radar_seeed();
+            aux_radar_state_t sn = prop_aux_radar_sen0395();
+            if (s_motion_aux_seeed) {
+                char sb[32];
+                snprintf(sb, sizeof(sb), "SEEED  %s", s_aux_str[ss]);
+                label_set_text_cached(s_motion_aux_seeed, sb);
+                lv_obj_set_style_text_color(s_motion_aux_seeed,
+                    ss == AUX_PRESENT ? COL_ALERT :
+                    ss == AUX_CLEAR   ? COL_MUTE  : COL_DIM, 0);
+            }
+            if (s_motion_aux_sen) {
+                char nb[32];
+                snprintf(nb, sizeof(nb), "SEN0395  %s", s_aux_str[sn]);
+                label_set_text_cached(s_motion_aux_sen, nb);
+                lv_obj_set_style_text_color(s_motion_aux_sen,
+                    sn == AUX_PRESENT ? COL_ALERT :
+                    sn == AUX_CLEAR   ? COL_MUTE  : COL_DIM, 0);
+            }
+        }
+    }
+
     lvgl_port_unlock();
 }
 
@@ -3984,6 +4306,7 @@ void prop_ui_goto(const char *screen)
     else if (strcmp(screen, "csiset") == 0)  open_panel(PK_CSISET);
     else if (strcmp(screen, "instruments") == 0) open_panel(PK_INSTRUMENTS);
     else if (strcmp(screen, "sensors") == 0)     open_panel(PK_SENSORS);
+    else if (strcmp(screen, "motion") == 0)      open_panel(PK_MOTION);
     else if (strcmp(screen, "archive") == 0) open_panel(PK_ARCHIVE);
     else if (strcmp(screen, "cassette") == 0) open_panel(PK_CASSETTE);
     else if (strcmp(screen, "insights") == 0) open_panel(PK_INSIGHTS);
