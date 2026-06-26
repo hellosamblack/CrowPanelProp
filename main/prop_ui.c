@@ -10,6 +10,7 @@
 #include "prop_csi.h"
 #include "prop_calib.h"
 #include "prop_coproc.h"
+#include "prop_imu.h"
 #include "prop_content.h"
 #include "bsp_io.h"
 #include "bsp_aio.h"
@@ -145,6 +146,10 @@ static lv_obj_t *s_about_ip, *s_about_uptime;
 static lv_obj_t *s_vit_temp, *s_vit_ram, *s_vit_uptime, *s_vit_cell;
 static lv_obj_t *s_vit_temp_bar, *s_vit_ram_bar, *s_vit_cell_bar;
 static lv_obj_t *s_vit_up_net, *s_vit_up_ap, *s_vit_up_link;   /* UPLINK dossier rows */
+/* IMU motion sensor rows */
+static lv_obj_t *s_vit_yaw, *s_vit_pitch, *s_vit_roll;
+static lv_obj_t *s_vit_yaw_bar, *s_vit_pitch_bar, *s_vit_roll_bar;
+static lv_obj_t *s_vit_accel;
 
 /* SIGNAL SCAN instrument (valid only while PK_SCAN is current). */
 static lv_obj_t *s_sig_list, *s_sig_status;
@@ -315,6 +320,9 @@ static void close_panel(void)
     s_vit_temp = NULL; s_vit_ram = NULL; s_vit_uptime = NULL; s_vit_cell = NULL;
     s_vit_temp_bar = NULL; s_vit_ram_bar = NULL; s_vit_cell_bar = NULL;
     s_vit_up_net = NULL; s_vit_up_ap = NULL; s_vit_up_link = NULL;
+    s_vit_yaw = NULL; s_vit_pitch = NULL; s_vit_roll = NULL;
+    s_vit_yaw_bar = NULL; s_vit_pitch_bar = NULL; s_vit_roll_bar = NULL;
+    s_vit_accel = NULL;
     s_sig_list = NULL; s_sig_status = NULL;
     s_spec_db = NULL; s_spec_db_bar = NULL; s_spec_status = NULL;
     s_spec_src_label = NULL;
@@ -994,6 +1002,18 @@ static lv_obj_t *build_vitals_panel(lv_obj_t *parent)
     s_vit_up_net  = kit_info_row(card, "NET",  "--");
     s_vit_up_ap   = kit_info_row(card, "AP",   "--");
     s_vit_up_link = kit_info_row(card, "LINK", "--");
+
+    /* IMU MOTION section (MPU-6050 DMP — absent if sensor not wired) */
+    lv_obj_t *imuhdr = lv_label_create(b);
+    lv_label_set_text(imuhdr, "MOTION  [MPU-6050]");
+    lv_obj_set_style_text_color(imuhdr, COL_AMBER, 0);
+    lv_obj_set_style_text_font(imuhdr, FONT_HEAD, 0);
+    s_vit_yaw   = kit_meter_row(b, "YAW",   &s_vit_yaw_bar);
+    s_vit_pitch = kit_meter_row(b, "PITCH", &s_vit_pitch_bar);
+    s_vit_roll  = kit_meter_row(b, "ROLL",  &s_vit_roll_bar);
+    lv_obj_t *accel_card = kit_card(b, lv_pct(100), LV_SIZE_CONTENT);
+    s_vit_accel = kit_info_row(accel_card, "ACCEL", "--");
+
     return p;
 }
 
@@ -3698,6 +3718,49 @@ static void ui_observer(const prop_state_t *st, void *ctx)
                 lv_label_set_text(s_vit_up_net, "-- NO UPLINK --");
                 lv_label_set_text(s_vit_up_ap, "--");
                 lv_label_set_text(s_vit_up_link, "--");
+            }
+        }
+
+        /* IMU — yaw/pitch/roll bars + accel readout. */
+        if (s_vit_yaw) {
+            prop_imu_data_t imu;
+            prop_imu_get_data(&imu);
+            if (imu.online && imu.valid) {
+                /* Convert radians to degrees; map ±180° to 0..100% bar. */
+                float yaw_d   = imu.yaw   * (180.0f / (float)M_PI);
+                float pitch_d = imu.pitch * (180.0f / (float)M_PI);
+                float roll_d  = imu.roll  * (180.0f / (float)M_PI);
+                char fbuf[32];
+
+                snprintf(fbuf, sizeof(fbuf), "%.1f \xc2\xb0", yaw_d);  /* UTF-8 degree sign */
+                lv_label_set_text(s_vit_yaw, fbuf);
+                int yaw_pct = (int)((yaw_d + 180.0f) * 100.0f / 360.0f);
+                set_meter(s_vit_yaw_bar, yaw_pct, COL_AMBER);
+
+                snprintf(fbuf, sizeof(fbuf), "%.1f \xc2\xb0", pitch_d);
+                lv_label_set_text(s_vit_pitch, fbuf);
+                int pitch_pct = (int)((pitch_d + 90.0f) * 100.0f / 180.0f);
+                set_meter(s_vit_pitch_bar, pitch_pct, COL_AMBER);
+
+                snprintf(fbuf, sizeof(fbuf), "%.1f \xc2\xb0", roll_d);
+                lv_label_set_text(s_vit_roll, fbuf);
+                int roll_pct = (int)((roll_d + 90.0f) * 100.0f / 180.0f);
+                set_meter(s_vit_roll_bar, roll_pct, COL_AMBER);
+
+                if (s_vit_accel) {
+                    lv_label_set_text_fmt(s_vit_accel, "X%+.2fg  Y%+.2fg  Z%+.2fg",
+                                          (float)imu.ax / 16384.0f,
+                                          (float)imu.ay / 16384.0f,
+                                          (float)imu.az / 16384.0f);
+                }
+            } else {
+                lv_label_set_text(s_vit_yaw,   imu.online ? "-- \xc2\xb0" : "OFFLINE");
+                lv_label_set_text(s_vit_pitch, imu.online ? "-- \xc2\xb0" : "OFFLINE");
+                lv_label_set_text(s_vit_roll,  imu.online ? "-- \xc2\xb0" : "OFFLINE");
+                set_meter(s_vit_yaw_bar,   0, COL_DIM);
+                set_meter(s_vit_pitch_bar, 0, COL_DIM);
+                set_meter(s_vit_roll_bar,  0, COL_DIM);
+                if (s_vit_accel) lv_label_set_text(s_vit_accel, "--");
             }
         }
     }

@@ -176,12 +176,12 @@ gpios:
     notes: MIC_CLK_GPIO
 
   - gpio: 25
-    status: shared          # bsp_aio "IO25 HDR"
-    function: AIO bench (general digital I/O)
+    status: claimed         # IMU INT (data-ready interrupt from MPU-6050)
+    function: MPU-6050 INT — DMP data-ready (rising edge)
     connector_pin: J7/17
-    file: peripheral/bsp_aio/bsp_aio.c:23
+    file: main/prop_imu.c
     caps: [gpio_matrix]
-    notes: No LP, no touch, no ADC.
+    notes: Removed from bsp_aio s_pins[]. Active-high INT from MPU-6050 DMP FIFO.
 
   - gpio: 26
     status: claimed
@@ -192,20 +192,20 @@ gpios:
     notes: MIC_DIN_GPIO
 
   - gpio: 27
-    status: shared          # bsp_aio "IO27 HDR"
-    function: AIO bench (general digital I/O)
+    status: claimed         # IMU I2C_NUM_1 SCL (MPU-6050)
+    function: MPU-6050 SCL — I2C_NUM_1 (dedicated, not the touch bus)
     connector_pin: J7/19
-    file: peripheral/bsp_aio/bsp_aio.c:24
-    caps: [gpio_matrix]
-    notes: No LP, no touch, no ADC. bsp_aio comment "free if no radio".
+    file: main/prop_imu.c
+    caps: [gpio_matrix, i2c]
+    notes: Removed from bsp_aio s_pins[]. Fresh I2C_NUM_1 at 400 kHz.
 
   - gpio: 28
-    status: shared          # bsp_aio "IO28 HDR"
-    function: AIO bench (general digital I/O)
+    status: claimed         # IMU I2C_NUM_1 SDA (MPU-6050)
+    function: MPU-6050 SDA — I2C_NUM_1 (dedicated, not the touch bus)
     connector_pin: J7/20
-    file: peripheral/bsp_aio/bsp_aio.c:25
-    caps: [gpio_matrix]
-    notes: No LP, no touch, no ADC.
+    file: main/prop_imu.c
+    caps: [gpio_matrix, i2c]
+    notes: Removed from bsp_aio s_pins[]. Adjacent to SCL (GPIO27) on J7.
 
   - gpio: 30
     status: claimed

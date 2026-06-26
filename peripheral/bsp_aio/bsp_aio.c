@@ -20,9 +20,8 @@ static const aio_pin_t s_pins[] = {
     {  3, "IO3",  "HDR",  false },
     {  4, "IO4",  "HDR",  false },
     {  5, "IO5",  "HDR",  false },
-    { 25, "IO25", "HDR",  false },
-    { 27, "IO27", "HDR",  false },
-    { 28, "IO28", "HDR",  false },
+    /* GPIO25/27/28 removed — claimed by MPU-6050 IMU (prop_imu.c):
+     *   GPIO25 = INT, GPIO27 = I2C_NUM_1 SCL, GPIO28 = I2C_NUM_1 SDA */
     { 49, "IO49", "HDR",  true  },
     { 50, "IO50", "HDR",  true  },
     { 51, "IO51", "HDR",  true  },
