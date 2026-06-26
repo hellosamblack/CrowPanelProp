@@ -23,7 +23,7 @@ static const struct {
     int gpio;
     const char *name;
 } button_table[BTN_COUNT] = {
-    [BTN_MODE]   = { 33, "mode"   },  /* UART3-IN header pin; verify before wiring */
+    [BTN_MODE]   = { 28, "mode"   },  /* reassigned to J7/B20; GPIO33 freed for Seeed UART3 */
     [BTN_ACTION] = { 11, "action" },  /* candidate free pin; verify before wiring  */
 };
 

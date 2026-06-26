@@ -20,9 +20,6 @@ static const aio_pin_t s_pins[] = {
     {  3, "IO3",  "HDR",  false },
     {  4, "IO4",  "HDR",  false },
     {  5, "IO5",  "HDR",  false },
-    { 25, "IO25", "HDR",  false },
-    { 27, "IO27", "HDR",  false },
-    { 28, "IO28", "HDR",  false },
     { 49, "IO49", "HDR",  true  },
     { 50, "IO50", "HDR",  true  },
     { 51, "IO51", "HDR",  true  },
@@ -31,8 +28,6 @@ static const aio_pin_t s_pins[] = {
     {  7, "IO7",  "COMM", false },
     {  8, "IO8",  "COMM", false },
     { 10, "IO10", "COMM", false },
-    { 53, "IO53", "COMM", true  },
-    { 54, "IO54", "COMM", true  },
 };
 #define AIO_N ((int)(sizeof(s_pins) / sizeof(s_pins[0])))
 
