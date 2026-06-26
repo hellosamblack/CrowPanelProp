@@ -33,14 +33,12 @@
 static bool                   s_available;
 static i2c_master_dev_handle_t s_dev;
 
-/* Orientation (degrees), computed by the filter. */
-static float s_pitch;
-static float s_roll;
-static float s_yaw;
-
 /* Fixed-point cache: ×1000 integer so the spinlock critical section never
  * touches floats (avoids undefined behaviour on targets without hardware FP
  * in a critical section, and matches the public API contract). */
+static int32_t s_pitch_milli;    /* pitch in milli-degrees */
+static int32_t s_roll_milli;     /* roll  in milli-degrees */
+static int32_t s_yaw_milli;      /* yaw   in milli-degrees */
 static int32_t s_accel_mg[3];    /* accel in milli-g   [X,Y,Z] */
 static int32_t s_gyro_mdps[3];   /* gyro  in m°/s      [X,Y,Z] */
 
@@ -107,11 +105,16 @@ static void imu_task(void *arg)
         float new_pitch, new_roll, new_yaw;
 
         portENTER_CRITICAL(&s_mux);
-        bool seeded = s_has_data;
-        float prev_pitch = s_pitch;
-        float prev_roll  = s_roll;
-        float prev_yaw   = s_yaw;
+        bool    seeded          = s_has_data;
+        int32_t prev_pitch_i    = s_pitch_milli;
+        int32_t prev_roll_i     = s_roll_milli;
+        int32_t prev_yaw_i      = s_yaw_milli;
         portEXIT_CRITICAL(&s_mux);
+
+        /* Reconstruct floats from the integer cache (outside the critical section). */
+        float prev_pitch = (float)prev_pitch_i * 0.001f;
+        float prev_roll  = (float)prev_roll_i  * 0.001f;
+        float prev_yaw   = (float)prev_yaw_i   * 0.001f;
 
         if (!seeded) {
             /* First sample: seed from accel; yaw starts at 0. */
@@ -149,11 +152,9 @@ static void imu_task(void *arg)
         portENTER_CRITICAL(&s_mux);
         memcpy(s_accel_mg,  accel_mg,  sizeof(s_accel_mg));
         memcpy(s_gyro_mdps, gyro_mdps, sizeof(s_gyro_mdps));
-        /* Reconstruct floats from the integers so the stored values
-         * are consistent with what the getter will return. */
-        s_pitch    = (float)pitch_milli * 0.001f;
-        s_roll     = (float)roll_milli  * 0.001f;
-        s_yaw      = (float)yaw_milli   * 0.001f;
+        s_pitch_milli = pitch_milli;
+        s_roll_milli  = roll_milli;
+        s_yaw_milli   = yaw_milli;
         s_has_data = true;
         portEXIT_CRITICAL(&s_mux);
 
@@ -219,18 +220,18 @@ bool prop_imu_get_orientation(float *pitch, float *roll, float *yaw)
     }
 
     portENTER_CRITICAL(&s_mux);
-    bool ready = s_has_data;
-    float p = s_pitch;
-    float r = s_roll;
-    float y = s_yaw;
+    bool    ready   = s_has_data;
+    int32_t p_milli = s_pitch_milli;
+    int32_t r_milli = s_roll_milli;
+    int32_t y_milli = s_yaw_milli;
     portEXIT_CRITICAL(&s_mux);
 
     if (!ready) {
         return false;
     }
-    if (pitch) *pitch = p;
-    if (roll)  *roll  = r;
-    if (yaw)   *yaw   = y;
+    if (pitch) *pitch = (float)p_milli * 0.001f;
+    if (roll)  *roll  = (float)r_milli * 0.001f;
+    if (yaw)   *yaw   = (float)y_milli * 0.001f;
     return true;
 }
 
