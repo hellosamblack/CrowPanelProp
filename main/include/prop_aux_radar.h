@@ -1,6 +1,3 @@
-#ifndef _PROP_AUX_RADAR_H_
-#define _PROP_AUX_RADAR_H_
-
 /* prop_aux_radar — optional auxiliary radar sensors.
  *
  * Drives two plug-in 24 GHz mmWave sensors over dedicated UARTs:
@@ -33,5 +30,3 @@ esp_err_t prop_aux_radar_init(void);
 /* Latest state for each sensor (AUX_OFFLINE / AUX_CLEAR / AUX_PRESENT). */
 aux_radar_state_t prop_aux_radar_seeed(void);
 aux_radar_state_t prop_aux_radar_sen0395(void);
-
-#endif /* _PROP_AUX_RADAR_H_ */

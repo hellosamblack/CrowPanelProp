@@ -183,7 +183,7 @@ check_timeout:
             portENTER_CRITICAL(&s_mux);
             s_seeed = AUX_OFFLINE;
             portEXIT_CRITICAL(&s_mux);
-            ESP_LOGD(TAG, "SEEED offline (no frame for %u ms)", OFFLINE_MS);
+            ESP_LOGW(TAG, "SEEED offline (no frame for %u ms)", OFFLINE_MS);
         }
     }
 }
@@ -256,7 +256,7 @@ check_timeout_sen:
             portENTER_CRITICAL(&s_mux);
             s_sen0395 = AUX_OFFLINE;
             portEXIT_CRITICAL(&s_mux);
-            ESP_LOGD(TAG, "SEN0395 offline (no frame for %u ms)", OFFLINE_MS);
+            ESP_LOGW(TAG, "SEN0395 offline (no frame for %u ms)", OFFLINE_MS);
         }
     }
 }
@@ -266,7 +266,7 @@ check_timeout_sen:
 esp_err_t prop_aux_radar_init(void)
 {
     const uart_config_t cfg = {
-        .baud_rate  = 115200,
+        .baud_rate  = SEEED_BAUD,
         .data_bits  = UART_DATA_8_BITS,
         .parity     = UART_PARITY_DISABLE,
         .stop_bits  = UART_STOP_BITS_1,
