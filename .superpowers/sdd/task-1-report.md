@@ -46,3 +46,7 @@ The integrating developer must wire exactly one init call.
 No commit created — the task brief requests a commit but this is a sub-agent step; commit will
 be made by the orchestrator or the developer after integrating the module.
 (Suggested message: `Add prop_motion module — LD2450 UART2 multi-target mmWave driver`)
+
+## Fix note
+
+`prop_motion.c` line 142: changed `s_last_seen_ms = ts` to `s_last_seen_ms = ts ? ts : 1` so a real timestamp of 0 ms at boot is never confused with the "never received a frame" sentinel.

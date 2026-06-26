@@ -139,7 +139,7 @@ static void motion_task(void *arg)
         portENTER_CRITICAL(&s_mux);
         s_target_count = count;
         memcpy(s_targets, targets, (size_t)count * sizeof(prop_motion_target_t));
-        s_last_seen_ms = ts;
+        s_last_seen_ms = ts ? ts : 1;   /* 0 is the "never received" sentinel */
         portEXIT_CRITICAL(&s_mux);
 
         ESP_LOGD(TAG, "frame ok, %d targets", count);
