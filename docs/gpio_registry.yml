@@ -1,0 +1,386 @@
+# GPIO Registry — CrowPanel ESP32-P4 7" (Elecrow V1.0)
+#
+# Single source of truth for pin assignments in this project.
+# Claude reads this before recommending pins and UPDATES it when assigning new ones.
+#
+# status values:
+#   claimed   — permanently in use by core firmware; never reassign
+#   shared    — managed by bsp_aio as general-purpose AIO; can be re-purposed by agreement
+#   radar     — used when radar peripheral is active (prop_radar.c); free when radar is disabled
+#   radio     — allocated for SX1262/nRF24 when a radio module is fitted; free otherwise
+#   pending   — placeholder wiring not yet hardware-verified (bsp_io.c comment warns)
+#   available — free for new peripheral assignment
+#
+# connector_pin: "J7/9" means connector J7, physical pin 9
+# gpio_caps: abbreviated capability flags (see board-io skill for full table)
+
+gpios:
+
+  # ── LP-domain GPIOs (GPIO0–15) ─────────────────────────────────────────────
+  # These survive deep-sleep when powered by VDD_LP. All support capacitive touch
+  # sensing and are in the fully-connected GPIO matrix for UART/SPI/I2C/PWM/etc.
+
+  - gpio: 2
+    status: shared          # bsp_aio "IO2 HDR"
+    function: AIO bench (general digital I/O)
+    connector_pin: J7/9
+    file: peripheral/bsp_aio/bsp_aio.c:19
+    caps: [lp_gpio, touch_ch1, jtag_tck, gpio_matrix]
+    notes: JTAG TCK alternate. LP-capable.
+
+  - gpio: 3
+    status: shared          # bsp_aio "IO3 HDR"
+    function: AIO bench (general digital I/O)
+    connector_pin: J7/11
+    file: peripheral/bsp_aio/bsp_aio.c:20
+    caps: [lp_gpio, touch_ch2, jtag_tdi, gpio_matrix]
+    notes: JTAG TDI alternate. LP-capable.
+
+  - gpio: 4
+    status: shared          # bsp_aio "IO4 HDR"
+    function: AIO bench (general digital I/O)
+    connector_pin: J7/13
+    file: peripheral/bsp_aio/bsp_aio.c:21
+    caps: [lp_gpio, touch_ch3, jtag_tms, gpio_matrix]
+    notes: JTAG TMS alternate. LP-capable.
+
+  - gpio: 5
+    status: shared          # bsp_aio "IO5 HDR"
+    function: AIO bench (general digital I/O)
+    connector_pin: J7/15
+    file: peripheral/bsp_aio/bsp_aio.c:22
+    caps: [lp_gpio, touch_ch4, jtag_tdo, gpio_matrix]
+    notes: JTAG TDO alternate. LP-capable.
+
+  - gpio: 6
+    status: radio           # bsp_aio "IO6 COMM" — radio SPI MOSI when radio fitted
+    function: Radio SPI MOSI / AIO comm socket
+    connector_pin: J9/4
+    file: peripheral/bsp_aio/bsp_aio.c:30
+    caps: [lp_gpio, touch_ch5, spi2_hold, gpio_matrix]
+    notes: J9 SPI2 MOSI. Free when no radio module. LP-capable.
+
+  - gpio: 7
+    status: radio           # bsp_aio "IO7 COMM" — radio SPI MISO when radio fitted
+    function: Radio SPI MISO / AIO comm socket
+    connector_pin: J9/3
+    file: peripheral/bsp_aio/bsp_aio.c:31
+    caps: [lp_gpio, touch_ch6, spi2_cs, gpio_matrix]
+    notes: J9 SPI2 MISO. Free when no radio module. LP-capable.
+
+  - gpio: 8
+    status: radio           # bsp_aio "IO8 COMM" — radio SPI CLK when radio fitted
+    function: Radio SPI CLK / AIO comm socket
+    connector_pin: J9/2
+    file: peripheral/bsp_aio/bsp_aio.c:32
+    caps: [lp_gpio, touch_ch7, spi2_d, gpio_matrix]
+    notes: J9 SPI2 SCK. Free when no radio module. LP-capable.
+
+  - gpio: 9
+    status: radio           # reserved for Radio IRQ (CLAUDE.md)
+    function: Radio IRQ (SX1262 DIO1 / nRF24 IRQ)
+    connector_pin: J11/5
+    file: CLAUDE.md
+    caps: [lp_gpio, touch_ch8, spi2_ck, gpio_matrix]
+    notes: J11 IO9_W header pin. Free when no radio. LP-capable.
+
+  - gpio: 10
+    status: radio           # bsp_aio "IO10 COMM" — radio NSS/CS when radio fitted
+    function: Radio NSS/CS / AIO comm socket
+    connector_pin: J11/6
+    file: peripheral/bsp_aio/bsp_aio.c:33
+    caps: [lp_gpio, touch_ch9, spi2_q, gpio_matrix]
+    notes: J11 IO10_W_BUSY header pin. Free when no radio. LP-capable.
+
+  - gpio: 11
+    status: pending         # BTN_ACTION placeholder — needs schematic verification
+    function: Button Action (placeholder)
+    connector_pin: ~        # not yet mapped to a header pin
+    file: peripheral/bsp_io/bsp_io.c:27
+    caps: [lp_gpio, touch_ch10, gpio_matrix]
+    notes: "bsp_io.c comment: candidate free pin; verify before wiring"
+
+  - gpio: 14
+    status: claimed
+    function: SDIO D0 — ESP32-C6 WiFi co-processor
+    connector_pin: ~
+    file: sdkconfig.defaults:56
+    caps: [lp_gpio, touch_ch13, gpio_matrix]
+    notes: CONFIG_ESP_HOSTED_SDIO_PIN_D0. Do not reassign.
+
+  - gpio: 15
+    status: claimed
+    function: SDIO D1 — ESP32-C6 WiFi co-processor
+    connector_pin: ~
+    file: sdkconfig.defaults:57
+    caps: [lp_gpio, touch_ch14, gpio_matrix]
+    notes: CONFIG_ESP_HOSTED_SDIO_PIN_D1. Do not reassign.
+
+  # ── HP-domain GPIOs (GPIO16+) ───────────────────────────────────────────────
+  # No LP/deep-sleep capability. No capacitive touch. Full GPIO matrix.
+
+  - gpio: 18
+    status: claimed
+    function: SDIO CLK — ESP32-C6 WiFi co-processor
+    connector_pin: ~
+    file: sdkconfig.defaults:55
+    caps: [gpio_matrix]
+    notes: CONFIG_ESP_HOSTED_SDIO_PIN_CLK. Do not reassign.
+
+  - gpio: 19
+    status: claimed
+    function: SDIO CMD — ESP32-C6 WiFi co-processor
+    connector_pin: ~
+    file: sdkconfig.defaults:54
+    caps: [gpio_matrix]
+    notes: CONFIG_ESP_HOSTED_SDIO_PIN_CMD. Do not reassign.
+
+  - gpio: 20
+    status: pending         # LED_ALERT placeholder — needs verification
+    function: LED Alert (placeholder)
+    connector_pin: ~
+    file: peripheral/bsp_io/bsp_io.c:19
+    caps: [gpio_matrix]
+    notes: "bsp_io.c comment: candidate free pin; verify before wiring"
+
+  - gpio: 21
+    status: claimed
+    function: I2S1 LRCLK — audio output
+    connector_pin: ~
+    file: peripheral/bsp_audio/include/bsp_audio.h:18
+    caps: [gpio_matrix, i2s]
+    notes: AUDIO_GPIO_LRCLK
+
+  - gpio: 22
+    status: claimed
+    function: I2S1 BCLK — audio output
+    connector_pin: ~
+    file: peripheral/bsp_audio/include/bsp_audio.h:19
+    caps: [gpio_matrix, i2s]
+    notes: AUDIO_GPIO_BCLK
+
+  - gpio: 23
+    status: claimed
+    function: I2S1 SDATA — audio output
+    connector_pin: ~
+    file: peripheral/bsp_audio/include/bsp_audio.h:20
+    caps: [gpio_matrix, i2s]
+    notes: AUDIO_GPIO_SDATA
+
+  - gpio: 24
+    status: claimed
+    function: PDM Clock — microphone (I2S0)
+    connector_pin: ~
+    file: main/prop_mic.c:24
+    caps: [gpio_matrix, i2s]
+    notes: MIC_CLK_GPIO
+
+  - gpio: 25
+    status: shared          # bsp_aio "IO25 HDR"
+    function: AIO bench (general digital I/O)
+    connector_pin: J7/17
+    file: peripheral/bsp_aio/bsp_aio.c:23
+    caps: [gpio_matrix]
+    notes: No LP, no touch, no ADC.
+
+  - gpio: 26
+    status: claimed
+    function: PDM Data In — microphone (I2S0)
+    connector_pin: ~
+    file: main/prop_mic.c:25
+    caps: [gpio_matrix, i2s]
+    notes: MIC_DIN_GPIO
+
+  - gpio: 27
+    status: shared          # bsp_aio "IO27 HDR"
+    function: AIO bench (general digital I/O)
+    connector_pin: J7/19
+    file: peripheral/bsp_aio/bsp_aio.c:24
+    caps: [gpio_matrix]
+    notes: No LP, no touch, no ADC. bsp_aio comment "free if no radio".
+
+  - gpio: 28
+    status: shared          # bsp_aio "IO28 HDR"
+    function: AIO bench (general digital I/O)
+    connector_pin: J7/20
+    file: peripheral/bsp_aio/bsp_aio.c:25
+    caps: [gpio_matrix]
+    notes: No LP, no touch, no ADC.
+
+  - gpio: 30
+    status: claimed
+    function: Amp Enable (active-low) — audio output
+    connector_pin: ~
+    file: peripheral/bsp_audio/include/bsp_audio.h:21
+    caps: [gpio_matrix]
+    notes: AUDIO_GPIO_CTRL
+
+  - gpio: 31
+    status: claimed
+    function: LCD Backlight PWM (LEDC Timer 0, Channel 0)
+    connector_pin: ~
+    file: peripheral/bsp_illuminate/include/bsp_illuminate.h:28
+    caps: [gpio_matrix, ledc, pwm]
+    notes: LCD_GPIO_BLIGHT
+
+  - gpio: 32
+    status: claimed
+    function: SDIO Reset — ESP32-C6 WiFi co-processor
+    connector_pin: ~
+    file: sdkconfig.defaults:53
+    caps: [gpio_matrix]
+    notes: CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE
+
+  - gpio: 33
+    status: pending         # BTN_MODE placeholder on UART3-RX header pin
+    function: Button Mode (placeholder) / UART3 RX
+    connector_pin: J10/2
+    file: peripheral/bsp_io/bsp_io.c:26
+    caps: [gpio_matrix, uart3_rx, adc_capable]
+    notes: >
+      J10 UART3 RX (level-shifted, 5V-tolerant). bsp_io.c comment says
+      "UART3-IN header pin; verify before wiring". Currently configured as
+      button input. Reassign to uart_driver if using J10 for UART.
+
+  - gpio: 34
+    status: available
+    function: UART3 TX (unassigned in firmware)
+    connector_pin: J10/1
+    file: ~
+    caps: [gpio_matrix, uart3_tx, strapping_jtag_sel]
+    notes: >
+      J10 UART3 TX (level-shifted, 5V-tolerant). Strapping pin: JTAG_SEL
+      is sampled at boot. Pull-up on J10 level-shifter holds it high during
+      reset (JTAG disabled) — correct for normal operation. Bidirectional
+      after boot despite strapping role.
+
+  - gpio: 40
+    status: claimed
+    function: Touch Reset
+    connector_pin: ~
+    file: peripheral/bsp_display/include/bsp_display.h:26
+    caps: [gpio_matrix]
+    notes: Touch_GPIO_RST
+
+  - gpio: 42
+    status: claimed
+    function: Touch Interrupt
+    connector_pin: ~
+    file: peripheral/bsp_display/include/bsp_display.h:27
+    caps: [gpio_matrix]
+    notes: Touch_GPIO_INT
+
+  - gpio: 45
+    status: claimed
+    function: I2C SDA — GT911 touchscreen
+    connector_pin: ~
+    file: peripheral/bsp_i2c/include/bsp_i2c.h:18
+    caps: [gpio_matrix, i2c]
+    notes: I2C_GPIO_SDA (I2C_NUM_0, bsp_i2c driver)
+
+  - gpio: 46
+    status: claimed
+    function: I2C SCL — GT911 touchscreen
+    connector_pin: ~
+    file: peripheral/bsp_i2c/include/bsp_i2c.h:17
+    caps: [gpio_matrix, i2c]
+    notes: I2C_GPIO_SCL (I2C_NUM_0, bsp_i2c driver)
+
+  - gpio: 47
+    status: pending         # LED_SIGNAL placeholder on UART1-TX header pin
+    function: LED Signal (placeholder) / UART1 TX
+    connector_pin: J2/2
+    file: peripheral/bsp_io/bsp_io.c:18
+    caps: [gpio_matrix, uart1_tx]
+    notes: >
+      J2 UART1 TX. bsp_io.c comment "UART1-TX header pin; verify before wiring".
+      Reassign to uart_driver if using J2 for UART1.
+
+  - gpio: 48
+    status: pending         # LED_POWER — bsp_io.c marks as "confirmed broken-out"
+    function: LED Power / UART1 RX
+    connector_pin: J2/1
+    file: peripheral/bsp_io/bsp_io.c:17
+    caps: [gpio_matrix, uart1_rx]
+    notes: >
+      J2 UART1 RX. bsp_io.c: "Only GPIO48 is confirmed broken-out + free
+      (UART1-RX header)." Using as LED output; reassign to uart_driver for UART1.
+
+  - gpio: 49
+    status: shared          # bsp_aio "IO49 HDR" — ADC2 ch0
+    function: AIO bench (ADC2 ch0 / digital I/O)
+    connector_pin: J7/18
+    file: peripheral/bsp_aio/bsp_aio.c:26
+    caps: [gpio_matrix, adc2_ch0, acomp_capable]
+    notes: ADC2 channel 0. Formula adc_ch = gpio - 49. No LP, no touch.
+
+  - gpio: 50
+    status: shared          # bsp_aio "IO50 HDR" — ADC2 ch1
+    function: AIO bench (ADC2 ch1 / digital I/O)
+    connector_pin: J7/16
+    file: peripheral/bsp_aio/bsp_aio.c:27
+    caps: [gpio_matrix, adc2_ch1, acomp_capable]
+    notes: ADC2 channel 1.
+
+  - gpio: 51
+    status: shared          # bsp_aio "IO51 HDR" — ADC2 ch2
+    function: AIO bench (ADC2 ch2 / digital I/O)
+    connector_pin: J7/14
+    file: peripheral/bsp_aio/bsp_aio.c:28
+    caps: [gpio_matrix, adc2_ch2, acomp_ref]
+    notes: ADC2 ch2. Also Analog Comparator 0 reference input.
+
+  - gpio: 52
+    status: shared          # bsp_aio "IO52 HDR" — ADC2 ch3
+    function: AIO bench (ADC2 ch3 / digital I/O)
+    connector_pin: J7/12
+    file: peripheral/bsp_aio/bsp_aio.c:29
+    caps: [gpio_matrix, adc2_ch3, acomp_in]
+    notes: ADC2 ch3. Also Analog Comparator 0 non-inverting input.
+
+  - gpio: 53
+    status: radar           # RADAR_TX_GPIO — UART2 TX to radar module via J9/J11
+    function: Radar TX (UART2) / UART2 TX / ADC2 ch4
+    connector_pin: J9/1
+    file: main/prop_radar.c:18
+    caps: [gpio_matrix, uart2_tx, adc2_ch4, acomp_ref]
+    notes: >
+      RADAR_TX_GPIO = 53. Also Analog Comparator 1 reference. Free when
+      radar is disabled. bsp_aio "IO53 COMM". Also accessible as J9 pin 1
+      (series R49) — UART2 TX from ESP32-P4 perspective.
+
+  - gpio: 54
+    status: radar           # RADAR_RX_GPIO — UART2 RX from radar module via J11
+    function: Radar RX (UART2) / UART2 RX / ADC2 ch5
+    connector_pin: J11/1
+    file: main/prop_radar.c:17
+    caps: [gpio_matrix, uart2_rx, adc2_ch5, acomp_in]
+    notes: >
+      RADAR_RX_GPIO = 54. Also Analog Comparator 1 non-inverting input. Free
+      when radar is disabled. bsp_aio "IO54 COMM". Also accessible as J11
+      pin 1 (series R48) — UART2 RX from ESP32-P4 perspective.
+
+  # ── I2C1 bus (shared with touchscreen — use with caution) ──────────────────
+  # These are not standard GPIO entries because they're managed by the touch
+  # driver at 1.8V (ESP32-P4 side) with BSS138 level shifters to 3.3V on headers.
+  # The 3.3V side is broken out on J11 pins 2-3 and J13 pins 1-2.
+
+  - gpio: i2c1_scl_3v3     # not a GPIO number — a shared bus endpoint
+    status: pseudo_available
+    function: I2C1 SCL (touchscreen bus, 3.3V side)
+    connector_pin: J11/2, J13/1
+    file: peripheral/bsp_i2c/include/bsp_i2c.h
+    caps: [i2c]
+    notes: >
+      Shared with GT911 touchscreen (always active), STC8 co-processor
+      (via R188), and unpopulated ES8311/ES7210 footprints. Check I2C
+      address conflicts before attaching devices. Prefer a separate I2C
+      peripheral on dedicated GPIO for new devices.
+
+  - gpio: i2c1_sda_3v3
+    status: pseudo_available
+    function: I2C1 SDA (touchscreen bus, 3.3V side)
+    connector_pin: J11/3, J13/2
+    file: peripheral/bsp_i2c/include/bsp_i2c.h
+    caps: [i2c]
+    notes: Same sharing constraints as I2C1 SCL.
