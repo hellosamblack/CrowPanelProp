@@ -5,6 +5,9 @@
  * the screen UI, WiFi, and the live control API.
  */
 #include "main.h"
+#include "prop_motion.h"
+#include "prop_imu.h"
+#include "prop_aux_radar.h"
 #include "esp_ota_ops.h"
 
 static esp_ldo_channel_handle_t ldo3;
@@ -122,10 +125,25 @@ void app_main(void)
                    esp_err_to_name(audio_err));
     }
 
-    /* mmWave presence radar on the UART3-IN header (GPIO33). NON-fatal. */
-    esp_err_t radar_err = prop_radar_init();
-    if (radar_err != ESP_OK) {
-        MAIN_ERROR("radar init failed: %s", esp_err_to_name(radar_err));
+    /* LD2450 24 GHz multi-target radar on UART2 (GPIO53/54). NON-fatal. */
+    esp_err_t motion_err = prop_motion_init();
+    if (motion_err != ESP_OK) {
+        MAIN_ERROR("motion radar unavailable (%s) — MOTION SCAN will show offline",
+                   esp_err_to_name(motion_err));
+    }
+
+    /* MPU-6050 IMU on I2C (addr 0x68, shared bus). NON-fatal: sensor may not be wired. */
+    esp_err_t imu_err = prop_imu_init();
+    if (imu_err != ESP_OK) {
+        MAIN_ERROR("IMU unavailable (%s) — gimbal display disabled",
+                   esp_err_to_name(imu_err));
+    }
+
+    /* Seeed 24 GHz (UART3, GPIO33/34) + SEN0395 (UART1, GPIO25/27). NON-fatal. */
+    esp_err_t aux_err = prop_aux_radar_init();
+    if (aux_err != ESP_OK) {
+        MAIN_ERROR("aux radar init partial (%s) — offline sensors will show AUX_OFFLINE",
+                   esp_err_to_name(aux_err));
     }
 
     /* WiFi (AP+STA via the C6) then the live control API. Both are NON-fatal:
