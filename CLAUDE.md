@@ -38,7 +38,7 @@ ESP-IDF **6.0.1** is required; target `esp32p4`. Build from the repo root.
 idf.py -C "f:\git\personal\CrowPanelProp" build
 idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 flash
 ```
-Or use the helper: `pwsh tools/dev.ps1 bf -Port COM7` (build+flash) or `pwsh tools/dev.ps1 ota`. Board details: COM7 (CH341 driver).
+Or use the helper: `pwsh tools/dev.ps1 bf -Port COM7` (build+flash) or `pwsh tools/dev.ps1 ota`. Board details: COM7 (CH341 driver) — **but the port varies** (seen as COM4 / CH340K on another host); confirm with `[System.IO.Ports.SerialPort]::GetPortNames()` before flashing.
 
 **Linux / Debian (Bash):**
 ```bash
@@ -99,7 +99,9 @@ cache-invalidate). `tools/screenshot.py` is the stdlib (no-Pillow) RGB565→PNG 
   `LV_COLOR_FORMAT_RGB565_SWAPPED`). Most v8 names still work via the unconditionally-included
   `lv_api_map_v8.h` shim, but structural things changed: **`lv_point_precise_t`** for line points,
   **no `lv_color_t.full`** (use `lv_color_eq`/`lv_color_to_u16`), **`lv_canvas_draw_rect` removed**,
-  display frame monitor is event-based (`LV_EVENT_RENDER_READY`). LVGL calls from any non-LVGL task
+  display frame monitor is event-based (`LV_EVENT_RENDER_READY`). **`lv_label_set_text_fmt` uses
+  LVGL's own printf with NO `%f` support** — floats render empty (`"%.1f"` → `""`); format with
+  `snprintf` into a buffer then `lv_label_set_text` (see the `lvgl-textfmt-no-float` memory). LVGL calls from any non-LVGL task
   MUST hold `lvgl_port_lock()/unlock()` — but do NOT run the draw pipeline under that lock from a
   non-LVGL task: canvas layer-draw and `lv_snapshot` deadlock (that's why `prop_fx` paints pixels
   directly and `/screenshot` reads the FB). Display registration is also locked (esp_lvgl_port 2.8
@@ -167,6 +169,9 @@ Palette + helpers are at the top of `prop_ui.c` (and mirrored in `ui/globals.xml
 | `main/prop_audio.c` | **Synthesized feedback tones** (square/sine/noise + envelope) over the I2S **speaker amp** (I2S1, `bsp_audio`) — queue + dedicated task; events from `prop_ui_input` (dial/open/back/tab) and `prop_engine` scene stings + boot chime; volume/mute from NVS (`audio_vol`/`audio_mute`) |
 | `main/prop_ble.c` | **Passive BLE scan via the C6** (NimBLE host, controller on the C6 over esp_hosted VHCI) → cached contact table (MAC/RSSI/name/Company-ID/appearance, LRU age-out) + distance estimate. Drives the CONTACTS instrument |
 | `main/prop_csi.c` | **WiFi CSI "signal environment"** — best-effort real CSI from the C6 with a **synthetic RSSI-variance fallback** (real CSI returns `ESP_ERR_NOT_SUPPORTED` on this esp_hosted/slave; the panel self-labels LIVE vs SYNTHETIC). Drives SIGNAL ENV |
+| `main/prop_imu.c` | **IMU DMP** — the soldered chip is an **MPU-6500 (WHO_AM_I 0x70), NOT an MPU-6050**. Wraps the vendored LibDriver `mpu6500` eMD core (`components/mpu6500/`) via the `prop_imu_iic.c` bsp_i2c link layer (shared I2C bus, addr 0x68). Delivers quaternion/YPR, calibrated gyro, raw accel, **tap**, **pedometer**, gyro auto-cal, die temp. Drives the VITALS MOTION section + the MOTION SCAN gimbals/direction-ring. See the `imu-is-mpu6500` memory |
+| `main/prop_motion.c` | **HLK-LD2450** 24 GHz multi-target mmWave radar (UART2, GPIO53/54, 256000). Cartesian X/Y/speed per target → MOTION SCAN blips. **X/Y/speed are sign-magnitude (bit15=sign, 1=positive), not two's complement** — decode via `ld2450_signmag()`. FOV ±60°. See the `ld2450-sign-magnitude` memory |
+| `main/prop_aux_radar.c` | Dual auxiliary mmWave presence sensors — Seeed MR24HPC1 (J2) + DFRobot SEN0395 (J10); both query/command-driven (must send init each second / `sensorStart` at boot). OFFLINE/CLEAR/PRESENT → MOTION SCAN status |
 | `peripheral/bsp_*` | display/touch/backlight (bsp_illuminate, bsp_display, bsp_i2c), LEDs+buttons (bsp_io), I2S speaker amp (bsp_audio: I2S1 TX, amp enable IO30 active-low) |
 
 ### Rail layout (grouped)
