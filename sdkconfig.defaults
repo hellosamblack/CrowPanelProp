@@ -57,9 +57,10 @@ CONFIG_ESP_HOSTED_SDIO_PIN_D0=14
 CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
 
 # Build with -O2 (performance), not the IDF default -Og (debug). The UI is
-# software-rendered by LVGL (no GPU/PPA blend on this rev v1.3 board), so the CRT
-# overlay's full-screen ARGB8888 alpha blends from PSRAM are CPU-bound — -O2 speeds
-# those pixel loops 2-4x and is the single biggest frame-rate lever here.
+# largely software-rendered by LVGL; the CRT overlay's full-screen ARGB8888 alpha
+# blends from PSRAM are CPU-bound — -O2 speeds those pixel loops 2-4x and is a big
+# frame-rate lever. (PPA hardware fill/blit is also enabled now — see CONFIG_LV_USE_PPA
+# below; Espressif errata show no PPA defect on this rev v1.3 silicon.)
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
 # Log level
@@ -106,3 +107,21 @@ CONFIG_LV_USE_CUSTOM_MALLOC=y
 # but the inter-unit FreeRTOS semaphore overhead outweighed the parallelism gain on
 # spectrum (7-8 fps vs 12-20 fps with DRAW_UNIT_CNT=1). Keeping at 1.
 CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
+
+# Espressif PPA (Pixel-Processing Accelerator) draw unit — LVGL 9.4 ships an ESP32-P4
+# PPA backend (lv_init.c calls lv_draw_ppa_init() when set). It bids ONLY on opaque
+# square non-gradient FILLs (bar/background/card bodies); everything else stays on the
+# SW draw unit, so it's inherently hybrid and can't force a bad op through hardware.
+# The v1.3 errata show NO PPA/MIPI-DSI/L2/2D-DMA defect (MSPI-750 is v3.0-only); the
+# earlier "broken silicon" belief was actually LVGL 8.4 having no PPA backend at all.
+# Phase 0 of docs/superpowers/specs/2026-06-27-ppa-reenablement-framerate-plan.md.
+CONFIG_LV_USE_PPA=y
+
+# The LVGL PPA draw unit requires its draw/attribute buffers aligned to the L1 cache
+# line (64 B on ESP32-P4) — lv_draw_ppa_private.h hard #errors otherwise. These were
+# 4/1 under the pure-SW build; PPA's 2D-DMA reads/writes must start on a cache-line so
+# the cache invalidate/writeback around each op is coherent. (STRIDE_ALIGN stays 1 —
+# the guard only checks start-address + attribute alignment, and prop_fx's hand-packed
+# ARGB canvas relies on a packed w*4 stride.)
+CONFIG_LV_DRAW_BUF_ALIGN=64
+CONFIG_LV_ATTRIBUTE_MEM_ALIGN_SIZE=64

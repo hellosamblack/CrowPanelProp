@@ -217,6 +217,11 @@ static void ppa_execute_drawing(lv_draw_ppa_unit_t * u)
 
     if(!lv_area_intersect(&area, &t->area, &t->clip_area)) return;
 
+    /* LOCAL PATCH (CrowPanelProp, Phase 0 PPA re-enablement): draw_area was used
+     * uninitialized — lv_area_move() shifted garbage, so the pre-op cache invalidation
+     * targeted a bogus region (stale cache over the real fill area). Seed it from the
+     * clipped area, then move to buffer-relative coords. */
+    draw_area = area;
     lv_area_move(&draw_area, -layer->buf_area.x1, -layer->buf_area.y1);
     lv_draw_buf_invalidate_cache(buf, &draw_area);
 
