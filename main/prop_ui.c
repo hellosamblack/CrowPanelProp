@@ -122,6 +122,7 @@ typedef enum {
     PK_HOME,       /* the in-world console (default landing screen) */
     PK_MENU, PK_WIFI, PK_DISPLAY, PK_AUDIO, PK_LEDS, PK_ABOUT, PK_VITALS,
     PK_SCAN, PK_SPECTRUM, PK_RFBAND, PK_BLE, PK_CSI, PK_CSICFG, PK_CSISET, PK_MOTION,
+    PK_DIRCAL,        /* travel-direction calibration (opened from the SCANNER apex dot) */
     PK_INSTRUMENTS,   /* submenu: SCANNER / SIGNAL SCAN / SPECTRUM / VITALS */
     PK_SENSORS,       /* submenu: RF BAND / CONTACTS / SIGNAL ENV / CSI CONFIG */
     PK_ARCHIVE,    /* data-archive browser (tabs = sections) */
@@ -195,8 +196,7 @@ static lv_obj_t *s_csi_fp_cells[64]; /* NBVI subcarrier fingerprint (lit cells) 
 static lv_obj_t *s_csi_geiger_lbl; /* SPECTRE GEIGER button label */
 
 /* MOTION SCAN instrument (valid only while PK_MOTION is current). */
-static lv_obj_t *s_motion_tgt_label;    /* "TARGETS: N" header */
-static lv_obj_t *s_motion_alert;        /* "MOTION DETECTED" flash */
+static lv_obj_t *s_motion_tgt_label;    /* merged headline: "N TARGETS DETECTED" / "NO TARGETS" */
 static lv_obj_t *s_motion_blips[3];     /* target blips (amber circles) */
 static lv_obj_t *s_motion_tdist[3];     /* T1/T2/T3 distance labels (large) */
 static lv_obj_t *s_motion_tvel[3];      /* T1/T2/T3 velocity labels */
@@ -213,8 +213,8 @@ static lv_obj_t *s_motion_ble_dbm[3];   /* contact RSSI (small, corner) */
 /* All-sensor dashboard widgets (live inside the radar box, reference style). */
 #define MOTION_FLAG_COUNT 5
 static lv_obj_t *s_motion_flags[MOTION_FLAG_COUNT];   /* MOV IMU MIC BLE NET */
-#define MOTION_BAR_COUNT 5
-static lv_obj_t *s_motion_bars[MOTION_BAR_COUNT];     /* CSI RF MIC SIG ACC analog bars */
+#define MOTION_BAR_COUNT 6
+static lv_obj_t *s_motion_bars[MOTION_BAR_COUNT];     /* CSI RF MIC SIG ACC FRQ analog bars */
 static lv_obj_t *s_motion_bar_lbls[MOTION_BAR_COUNT];
 static lv_obj_t *s_motion_dir_q[4];     /* N/E/S/W direction-ring quadrant arcs */
 static lv_obj_t *s_motion_dir_dot;      /* operator dot at the ring centre (fan apex) */
@@ -253,6 +253,25 @@ static lv_obj_t *s_scan_spk;             /* speaker toggle icon */
 static bool      s_scan_ping_en;         /* feedback enabled (persisted in NVS) */
 static uint32_t  s_scan_ping_next;       /* tick at which the next chirp may fire */
 
+/* Travel-direction calibration. s_dir_phi rotates the gravity-removed accel vector
+ * before the quadrant pick, so the ring's North (top) lines up with the radar
+ * boresight ("forward"). Default 0 = identity = legacy behaviour until calibrated.
+ * The guided walk flow (PK_DIRCAL) captures one accel accumulator per cardinal. */
+static float s_dir_phi;                   /* board->world yaw offset (rad), from NVS */
+static lv_obj_t *s_dcal_prompt;           /* big phase instruction word */
+static lv_obj_t *s_dcal_sub;              /* secondary line / countdown */
+static lv_obj_t *s_dcal_btn_lbl;          /* START / RESTART / DONE button label */
+static lv_obj_t *s_dcal_arrow;            /* line arrow pointing the requested way */
+static lv_point_precise_t s_dcal_apts[5]; /* arrow polyline (shaft + head; LVGL keeps ptr) */
+static int   s_dcal_phase;                /* -1 idle, 0..3 = FWD/BACK/LEFT/RIGHT, 4 done, 5 retry */
+static int   s_dcal_ms;                   /* ms elapsed in the current capture phase */
+static float s_dcal_acc[4][2];            /* hemisphere-aligned accel accumulator per phase */
+static float s_dcal_ref[2];               /* hemisphere reference for the active phase */
+static bool  s_dcal_ref_set;
+static float s_dcal_grav_lp[3];           /* gravity low-pass during the cal flow */
+static bool  s_dcal_grav_primed;
+#define DCAL_PHASE_MS 3000                /* capture window per cardinal walk */
+
 /* SCANNER (PK_MOTION) is a full-screen page (no header/back). The left radar box
  * fills the panel height; the right column of cells matches that height. */
 #define RADAR_X   8
@@ -260,12 +279,14 @@ static uint32_t  s_scan_ping_next;       /* tick at which the next chirp may fir
 #define RADAR_W   456
 #define RADAR_H   584
 
-/* Fan radar geometry (inside the radar box). Apex near the base centre; radius is
- * width-limited at ±60° (half-width = R*sin60 <= RADAR_W/2 => R <= RADAR_W/1.732). */
+/* Fan radar geometry (inside the radar box). Apex raised off the base so the travel
+ * ring + operator dot clear the bottom analog bars; the wedge is narrowed below the
+ * LD2450's true ±60° FOV so the width-limited radius grows and the fan fills more of
+ * the space above it (half-width = R*sin(half) <= RADAR_W/2 => R <= RADAR_W/(2 sin)). */
 #define FAN_APEX_X   228      /* RADAR_W / 2 */
-#define FAN_APEX_Y   474      /* near box bottom; fan sweeps upward */
-#define FAN_R        255      /* outer radius (fits the box at ±60°) */
-#define FAN_HALF_DEG  60      /* half opening angle = LD2450 horizontal FOV */
+#define FAN_APEX_Y   430      /* raised: ring/dot now clear the bottom bars */
+#define FAN_R        296      /* outer radius (width-limited at ±50°: 456/(2 sin50)) */
+#define FAN_HALF_DEG  50      /* display half-angle (< LD2450 ±60° FOV — see note) */
 #define FAN_LEFT_DEG  (270 - FAN_HALF_DEG)   /* LVGL: 270 = up */
 #define FAN_RIGHT_DEG (270 + FAN_HALF_DEG)
 
@@ -346,6 +367,7 @@ static lv_obj_t *build_sensors_panel(lv_obj_t *parent);
 static lv_obj_t *build_io_panel(lv_obj_t *parent);
 static lv_obj_t *build_io_pin_panel(lv_obj_t *parent);
 static lv_obj_t *build_motion_panel(lv_obj_t *parent);
+static lv_obj_t *build_dircal_panel(lv_obj_t *parent);
 static void wifi_panel_opened(void);
 static void start_signal_scan(void);
 static void start_rfband_scan(void);
@@ -455,7 +477,8 @@ static void close_panel(void)
     s_pin_aout = NULL; s_pin_slider = NULL; s_pin_entry = NULL;
     s_connect_pending = false;
     s_scan_spk = NULL;
-    s_motion_tgt_label = NULL; s_motion_alert = NULL;
+    s_motion_tgt_label = NULL;
+    s_dcal_prompt = NULL; s_dcal_sub = NULL; s_dcal_btn_lbl = NULL; s_dcal_arrow = NULL;
     for (int i = 0; i < 3; i++) {
         s_motion_blips[i]  = NULL;
         s_motion_tdist[i]  = NULL;
@@ -498,6 +521,7 @@ static void rail_sync(panel_kind_t kind)
         case PK_NONE: case PK_SCAN: case PK_SPECTRUM: case PK_VITALS:
             want = PK_INSTRUMENTS; break;
         case PK_RFBAND: case PK_BLE: case PK_CSI: case PK_CSICFG: case PK_CSISET: case PK_MOTION:
+        case PK_DIRCAL:
             want = PK_SENSORS; break;
         default: break;
     }
@@ -561,6 +585,7 @@ static void open_panel(panel_kind_t kind)
         case PK_IO:       s_cur_panel = build_io_panel(s_root); break;
         case PK_IO_PIN:   s_cur_panel = build_io_pin_panel(s_root); break;
         case PK_MOTION:   s_cur_panel = build_motion_panel(s_root); break;
+        case PK_DIRCAL:   s_cur_panel = build_dircal_panel(s_root); break;
         default: break;    /* PK_NONE: no panel - the SCANNER readout shows through */
     }
     s_cur_kind = kind;
@@ -3480,6 +3505,14 @@ static void scan_spk_toggle_cb(lv_event_t *e)
     prop_audio_play(PA_BUTTON);
 }
 
+/* Tapping the operator dot at the fan apex opens the travel-direction calibration. */
+static void dir_dot_cb(lv_event_t *e)
+{
+    (void)e;
+    prop_audio_play(PA_OPEN);
+    open_panel(PK_DIRCAL);
+}
+
 static lv_obj_t *build_motion_panel(lv_obj_t *parent)
 {
     /* SCANNER: full-screen page — no title header, no BACK button (the nav rail is
@@ -3638,20 +3671,13 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
 
     /* ---- Status above the wedge (the blank space at the top of the radar box) ---- */
 
-    /* "TARGETS: N" — centred above the fan. */
+    /* Merged headline — count folded into the alert: "NO TARGETS" (mute) when clear,
+     * "N TARGET[S] DETECTED" (alert red) when the radar has contacts. Large font. */
     s_motion_tgt_label = lv_label_create(rbox);
-    lv_label_set_text(s_motion_tgt_label, "TARGETS: 0");
+    lv_label_set_text(s_motion_tgt_label, "NO TARGETS");
     lv_obj_set_style_text_color(s_motion_tgt_label, COL_MUTE, 0);
-    lv_obj_set_style_text_font(s_motion_tgt_label, FONT_HEAD, 0);
-    lv_obj_align(s_motion_tgt_label, LV_ALIGN_TOP_MID, 0, 34);
-
-    /* "MOTION DETECTED" alert (hidden when no targets) — big, under the count. */
-    s_motion_alert = lv_label_create(rbox);
-    lv_label_set_text(s_motion_alert, "MOTION DETECTED");
-    lv_obj_set_style_text_color(s_motion_alert, COL_ALERT, 0);
-    lv_obj_set_style_text_font(s_motion_alert, FONT_HEAD, 0);
-    lv_obj_align(s_motion_alert, LV_ALIGN_TOP_MID, 0, 120);
-    lv_obj_add_flag(s_motion_alert, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_font(s_motion_tgt_label, FONT_STATUS, 0);
+    lv_obj_align(s_motion_tgt_label, LV_ALIGN_TOP_MID, 0, 24);
 
     /* ---- Right column ---- */
 
@@ -3823,10 +3849,12 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
     }
 
     /* Analog sensor bars, bottom-left — two columns, rows aligned, left-justified.
-     * Layout: col A = CSI / MIC / ACC, col B = RF / SIG (no dividers). */
-    static const char *const bar_txt[MOTION_BAR_COUNT] = { "CSI", "RF", "MIC", "SIG", "ACC" };
-    static const uint8_t bar_col[MOTION_BAR_COUNT] = { 0, 1, 0, 1, 0 };
-    static const uint8_t bar_row[MOTION_BAR_COUNT] = { 0, 0, 1, 1, 2 };
+     * Layout: col A = CSI / MIC / ACC, col B = RF / SIG / FRQ (no dividers). FRQ is
+     * the loudest audio frequency from the mic FFT — fills the 6th slot, balancing
+     * the grid into a clean 3x2. */
+    static const char *const bar_txt[MOTION_BAR_COUNT] = { "CSI", "RF", "MIC", "SIG", "ACC", "FRQ" };
+    static const uint8_t bar_col[MOTION_BAR_COUNT] = { 0, 1, 0, 1, 0, 1 };
+    static const uint8_t bar_row[MOTION_BAR_COUNT] = { 0, 0, 1, 1, 2, 2 };
     for (int i = 0; i < MOTION_BAR_COUNT; i++) {
         int lx = bar_col[i] ? 200 : 8;
         int ly = -10 - (2 - bar_row[i]) * 28;
@@ -3877,7 +3905,107 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
         lv_obj_set_style_bg_color(s_motion_dir_dot, COL_AMBER, 0);
         lv_obj_set_style_bg_opa(s_motion_dir_dot, LV_OPA_COVER, 0);
         lv_obj_set_pos(s_motion_dir_dot, cx - 6, cy - 6);
+        /* Tap target → travel-direction calibration. Generous hit area (small dot). */
+        lv_obj_add_flag(s_motion_dir_dot, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_ext_click_area(s_motion_dir_dot, 22);
+        lv_obj_add_event_cb(s_motion_dir_dot, dir_dot_cb, LV_EVENT_CLICKED, NULL);
     }
+
+    return p;
+}
+
+/* ---- Travel-direction calibration (PK_DIRCAL) ----------------------------------
+ * A guided four-step walk (forward / backward / left / right) that learns the
+ * board->world yaw so the SCANNER travel ring's North lines up with the radar
+ * boresight. "Forward" = the direction the radar pulses go. Built as a normal panel
+ * (one-alive-at-a-time) rather than an overlay — no perf hit, frees on exit. */
+
+static const char *const DCAL_NAME[4] =
+    { "WALK FORWARD", "WALK BACKWARD", "WALK LEFT", "WALK RIGHT" };
+#define DCAL_MIN_MAG 1.0f         /* reject a run with too little net motion */
+
+static void dcal_reset_run(void)
+{
+    s_dcal_phase = -1;
+    s_dcal_ms = 0;
+    s_dcal_ref_set = false;
+    s_dcal_grav_primed = false;
+    memset(s_dcal_acc, 0, sizeof(s_dcal_acc));
+}
+
+/* Point the on-screen arrow the way the user must walk (forward = up = boresight). */
+static void dcal_set_arrow(int phase)
+{
+    if (!s_dcal_arrow) return;
+    const int cx = SCAN_W / 2, cy = 286, L = 64, h = 24;
+    float dx = 0.0f, dy = 0.0f;
+    switch (phase) {
+        case 0: dy = -1.0f; break;   /* forward -> up */
+        case 1: dy =  1.0f; break;   /* backward -> down */
+        case 2: dx = -1.0f; break;   /* left */
+        case 3: dx =  1.0f; break;   /* right */
+        default: lv_obj_add_flag(s_dcal_arrow, LV_OBJ_FLAG_HIDDEN); return;
+    }
+    float px = -dy, py = dx;         /* perpendicular for the arrowhead wings */
+    int tipx = cx + (int)(dx * L), tipy = cy + (int)(dy * L);
+    int talx = cx - (int)(dx * L), taly = cy - (int)(dy * L);
+    s_dcal_apts[0].x = talx;                            s_dcal_apts[0].y = taly;
+    s_dcal_apts[1].x = tipx;                            s_dcal_apts[1].y = tipy;
+    s_dcal_apts[2].x = tipx - (int)(dx*h) + (int)(px*h); s_dcal_apts[2].y = tipy - (int)(dy*h) + (int)(py*h);
+    s_dcal_apts[3].x = tipx;                            s_dcal_apts[3].y = tipy;
+    s_dcal_apts[4].x = tipx - (int)(dx*h) - (int)(px*h); s_dcal_apts[4].y = tipy - (int)(dy*h) - (int)(py*h);
+    lv_line_set_points(s_dcal_arrow, s_dcal_apts, 5);
+    lv_obj_clear_flag(s_dcal_arrow, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void back_to_motion_cb(lv_event_t *e) { (void)e; open_panel(PK_MOTION); }
+
+/* Action button: START / CANCEL (while running) / DONE / RETRY. */
+static void dcal_action_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_dcal_phase == 4) {            /* DONE — calibration already saved */
+        prop_audio_play(PA_BACK);
+        open_panel(PK_MOTION);
+        return;
+    }
+    if (s_dcal_phase >= 0 && s_dcal_phase <= 3) {   /* CANCEL a run in progress */
+        dcal_reset_run();
+        prop_audio_play(PA_BACK);
+        return;
+    }
+    dcal_reset_run();                  /* idle (-1) or retry (5) -> START */
+    s_dcal_phase = 0;
+    prop_audio_play(PA_OPEN);
+}
+
+static lv_obj_t *build_dircal_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "CALIBRATE DIRECTION", back_to_motion_cb);
+    dcal_reset_run();
+
+    s_dcal_prompt = lv_label_create(p);
+    lv_label_set_text(s_dcal_prompt, "DIRECTION SETUP");
+    lv_obj_set_style_text_color(s_dcal_prompt, COL_MUTE, 0);
+    lv_obj_set_style_text_font(s_dcal_prompt, FONT_STATUS, 0);
+    lv_obj_align(s_dcal_prompt, LV_ALIGN_TOP_MID, 0, 96);
+
+    /* Direction arrow (line polyline; hidden until a walk phase is active). */
+    s_dcal_arrow = lv_line_create(p);
+    lv_obj_set_style_line_color(s_dcal_arrow, COL_AMBER, 0);
+    lv_obj_set_style_line_width(s_dcal_arrow, 8, 0);
+    lv_obj_set_style_line_rounded(s_dcal_arrow, true, 0);
+    lv_obj_align(s_dcal_arrow, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_add_flag(s_dcal_arrow, LV_OBJ_FLAG_HIDDEN);
+
+    s_dcal_sub = lv_label_create(p);
+    lv_label_set_text(s_dcal_sub, "PRESS START, THEN WALK AS PROMPTED");
+    lv_obj_set_style_text_color(s_dcal_sub, COL_MUTE, 0);
+    lv_obj_set_style_text_font(s_dcal_sub, FONT_HEAD, 0);
+    lv_obj_align(s_dcal_sub, LV_ALIGN_TOP_MID, 0, 410);
+
+    lv_obj_t *btn = make_btn(p, "START", 220, LV_ALIGN_BOTTOM_MID, 0, -40, dcal_action_cb);
+    s_dcal_btn_lbl = lv_obj_get_child(btn, 0);
 
     return p;
 }
@@ -4218,6 +4346,12 @@ static void build_screen(void)
     uint32_t ping = 0;
     prop_settings_get_u32("scan_ping", &ping, 0);
     s_scan_ping_en = (ping != 0);
+
+    /* Travel-direction calibration: stored as signed milli-radians (u32 two's-comp). */
+    uint32_t phi_mrad = 0;
+    prop_settings_get_u32("dir_phi", &phi_mrad, 0);
+    s_dir_phi = (float)(int32_t)phi_mrad / 1000.0f;
+
     open_panel(PK_MOTION);
     s_ui_ready = true;   /* subsequent navigations get the channel-change transition */
 }
@@ -4878,15 +5012,15 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             }
         }
 
-        /* Update target count label + motion alert. */
+        /* Merged headline: count folded into the alert text, alert-red when present. */
         if (s_motion_tgt_label) {
-            char cb[24];
-            snprintf(cb, sizeof(cb), "TARGETS: %d", cnt);
+            char cb[40];
+            if (cnt > 0)
+                snprintf(cb, sizeof(cb), "%d TARGET%s DETECTED", cnt, cnt == 1 ? "" : "S");
+            else
+                snprintf(cb, sizeof(cb), "NO TARGETS");
             label_set_text_cached(s_motion_tgt_label, cb);
-        }
-        if (s_motion_alert) {
-            if (cnt > 0) lv_obj_clear_flag(s_motion_alert, LV_OBJ_FLAG_HIDDEN);
-            else         lv_obj_add_flag(s_motion_alert, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_text_color(s_motion_tgt_label, cnt > 0 ? COL_ALERT : COL_MUTE, 0);
         }
 
         /* Update T1/T2/T3 three-column target readout. */
@@ -5017,6 +5151,23 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             lv_bar_set_value(s_motion_bars[1], turb_pct, LV_ANIM_OFF);
             lv_bar_set_value(s_motion_bars[2], mic_pct,  LV_ANIM_OFF);
             lv_bar_set_value(s_motion_bars[3], sig_pct,  LV_ANIM_OFF);
+
+            /* FRQ: loudest audio frequency. Find the strongest mic FFT band and map
+             * its centre Hz across the source's range (0..Nyquist) to the bar. Gated
+             * on a minimum band magnitude so silence reads empty, not noise-driven. */
+            if (s_motion_bars[5]) {
+                uint8_t bands[PROP_MIC_BANDS];
+                prop_mic_get_bands(bands);
+                int peak_b = 0, peak_v = 0;
+                for (int b = 0; b < PROP_MIC_BANDS; b++)
+                    if (bands[b] > peak_v) { peak_v = bands[b]; peak_b = b; }
+                int frq_pct = 0;
+                if (peak_v >= 10) {                       /* above the noise floor */
+                    int nyq = prop_mic_sample_rate() / 2;
+                    if (nyq > 0) frq_pct = clamp_pct(prop_mic_band_hz(peak_b) * 100 / nyq);
+                }
+                lv_bar_set_value(s_motion_bars[5], frq_pct, LV_ANIM_OFF);
+            }
         }
 
         /* 4-quadrant direction ring: light the quadrant of TRAVEL, not tilt.
@@ -5044,7 +5195,12 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             float lmag = sqrtf(lax * lax + lay * lay);
             int lit = -1;                          /* -1 = not moving (deadband) */
             if (lmag > 0.08f) {
-                float ang = atan2f(lay, lax);      /* -pi..pi */
+                /* Rotate the board-frame accel by the calibrated yaw so "forward"
+                 * (radar boresight) lights North. s_dir_phi == 0 -> legacy identity. */
+                float c = cosf(s_dir_phi), s = sinf(s_dir_phi);
+                float rx = lax * c - lay * s;
+                float ry = lax * s + lay * c;
+                float ang = atan2f(ry, rx);        /* -pi..pi */
                 if      (ang >= -0.785f && ang <  0.785f) lit = 1;  /* +x -> E */
                 else if (ang >=  0.785f && ang <  2.356f) lit = 0;  /* +y -> N */
                 else if (ang >= -2.356f && ang < -0.785f) lit = 2;  /* -y -> S */
@@ -5092,6 +5248,101 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
+    /* Drive the travel-direction calibration flow (PK_DIRCAL). Captures one
+     * hemisphere-aligned linear-accel accumulator per cardinal walk, then solves for
+     * the board->world yaw and persists it. */
+    if (s_cur_kind == PK_DIRCAL && s_dcal_prompt) {
+        if (s_dcal_phase >= 0 && s_dcal_phase <= 3) {
+            /* Gravity-removed horizontal accel (same low-pass trick as the ring). */
+            prop_imu_data_t im; prop_imu_get_data(&im);
+            float axg = (float)im.ax / 16384.0f;
+            float ayg = (float)im.ay / 16384.0f;
+            float azg = (float)im.az / 16384.0f;
+            if (!s_dcal_grav_primed) {
+                s_dcal_grav_lp[0] = axg; s_dcal_grav_lp[1] = ayg; s_dcal_grav_lp[2] = azg;
+                s_dcal_grav_primed = true;
+            } else {
+                const float a = 0.05f;
+                s_dcal_grav_lp[0] += a * (axg - s_dcal_grav_lp[0]);
+                s_dcal_grav_lp[1] += a * (ayg - s_dcal_grav_lp[1]);
+                s_dcal_grav_lp[2] += a * (azg - s_dcal_grav_lp[2]);
+            }
+            float lx = axg - s_dcal_grav_lp[0], ly = ayg - s_dcal_grav_lp[1];
+            float m = sqrtf(lx * lx + ly * ly);
+            if (m > 0.06f) {
+                /* Fold push + stop into one direction: flip samples to the hemisphere
+                 * of the first significant push so they reinforce instead of cancel. */
+                float vx = lx, vy = ly;
+                if (!s_dcal_ref_set) {
+                    s_dcal_ref[0] = vx; s_dcal_ref[1] = vy; s_dcal_ref_set = true;
+                } else if (vx * s_dcal_ref[0] + vy * s_dcal_ref[1] < 0.0f) {
+                    vx = -vx; vy = -vy;
+                }
+                s_dcal_acc[s_dcal_phase][0] += vx;
+                s_dcal_acc[s_dcal_phase][1] += vy;
+            }
+
+            label_set_text_cached(s_dcal_prompt, DCAL_NAME[s_dcal_phase]);
+            lv_obj_set_style_text_color(s_dcal_prompt, COL_AMBER, 0);
+            int secs = (DCAL_PHASE_MS - s_dcal_ms + 999) / 1000;
+            char sb[40];
+            snprintf(sb, sizeof(sb), "CAPTURING...  %d", secs < 0 ? 0 : secs);
+            label_set_text_cached(s_dcal_sub, sb);
+            dcal_set_arrow(s_dcal_phase);
+            if (s_dcal_btn_lbl) label_set_text_cached(s_dcal_btn_lbl, "CANCEL");
+
+            s_dcal_ms += 50;
+            if (s_dcal_ms >= DCAL_PHASE_MS) {
+                s_dcal_phase++;
+                s_dcal_ms = 0;
+                s_dcal_ref_set = false;
+                prop_audio_play(PA_TAB);
+                if (s_dcal_phase == 4) {
+                    /* Forward axis = forward-push minus backward-push; reinforce with
+                     * the left/right axis rotated +90° (board "east" -> forward). */
+                    float fx = s_dcal_acc[0][0] - s_dcal_acc[1][0];
+                    float fy = s_dcal_acc[0][1] - s_dcal_acc[1][1];
+                    float ex = s_dcal_acc[3][0] - s_dcal_acc[2][0];
+                    float ey = s_dcal_acc[3][1] - s_dcal_acc[2][1];
+                    float Fx = fx + (-ey);   /* rotate (ex,ey) by +90°: (x,y)->(-y,x) */
+                    float Fy = fy + ( ex);
+                    if (sqrtf(Fx * Fx + Fy * Fy) < DCAL_MIN_MAG) {
+                        s_dcal_phase = 5;    /* not enough motion — offer a retry */
+                        prop_audio_play(PA_DENY);
+                    } else {
+                        float theta = atan2f(Fy, Fx);
+                        s_dir_phi = (float)M_PI / 2.0f - theta;   /* forward -> North */
+                        while (s_dir_phi >  (float)M_PI) s_dir_phi -= 2.0f * (float)M_PI;
+                        while (s_dir_phi < -(float)M_PI) s_dir_phi += 2.0f * (float)M_PI;
+                        prop_settings_set_u32("dir_phi",
+                            (uint32_t)(int32_t)(s_dir_phi * 1000.0f));
+                        prop_audio_play(PA_SIGNAL);
+                    }
+                }
+            }
+        } else if (s_dcal_phase == 4) {
+            label_set_text_cached(s_dcal_prompt, "CALIBRATED");
+            lv_obj_set_style_text_color(s_dcal_prompt, COL_AMBER, 0);
+            char sb[48];
+            snprintf(sb, sizeof(sb), "FORWARD OFFSET %d\xc2\xb0", (int)(s_dir_phi * 57.2958f));
+            label_set_text_cached(s_dcal_sub, sb);
+            if (s_dcal_arrow) lv_obj_add_flag(s_dcal_arrow, LV_OBJ_FLAG_HIDDEN);
+            if (s_dcal_btn_lbl) label_set_text_cached(s_dcal_btn_lbl, "DONE");
+        } else if (s_dcal_phase == 5) {
+            label_set_text_cached(s_dcal_prompt, "NOT ENOUGH MOTION");
+            lv_obj_set_style_text_color(s_dcal_prompt, COL_ALERT, 0);
+            label_set_text_cached(s_dcal_sub, "WALK A FEW STEPS EACH WAY");
+            if (s_dcal_arrow) lv_obj_add_flag(s_dcal_arrow, LV_OBJ_FLAG_HIDDEN);
+            if (s_dcal_btn_lbl) label_set_text_cached(s_dcal_btn_lbl, "RETRY");
+        } else {   /* idle (-1) */
+            label_set_text_cached(s_dcal_prompt, "DIRECTION SETUP");
+            lv_obj_set_style_text_color(s_dcal_prompt, COL_MUTE, 0);
+            label_set_text_cached(s_dcal_sub, "PRESS START, THEN WALK AS PROMPTED");
+            if (s_dcal_arrow) lv_obj_add_flag(s_dcal_arrow, LV_OBJ_FLAG_HIDDEN);
+            if (s_dcal_btn_lbl) label_set_text_cached(s_dcal_btn_lbl, "START");
+        }
+    }
+
     lvgl_port_unlock();
 }
 
@@ -5119,6 +5370,7 @@ void prop_ui_goto(const char *screen)
     else if (strcmp(screen, "instruments") == 0) open_panel(PK_INSTRUMENTS);
     else if (strcmp(screen, "sensors") == 0)     open_panel(PK_SENSORS);
     else if (strcmp(screen, "motion") == 0)      open_panel(PK_MOTION);
+    else if (strcmp(screen, "dircal") == 0)      open_panel(PK_DIRCAL);
     else if (strcmp(screen, "archive") == 0) open_panel(PK_ARCHIVE);
     else if (strcmp(screen, "cassette") == 0) open_panel(PK_CASSETTE);
     else if (strcmp(screen, "insights") == 0) open_panel(PK_INSIGHTS);
