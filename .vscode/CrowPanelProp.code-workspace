@@ -6,5 +6,8 @@
 		{
 			"path": "C:/Users/hello/c6_updater"
 		}
-	]
+	],
+	"settings": {
+		"git.ignoreLimitWarning": true
+	}
 }

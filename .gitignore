@@ -23,3 +23,8 @@ __pycache__/
 # when NVS has no stored creds). Machine-specific, NOT for the repo. The committed
 # wifi_secret.env.example is the template; copy it to wifi_secret.env and fill it in.
 wifi_secret.env
+
+# Local reference materials — KiCad board files and datasheets are large binaries
+# that live locally for hardware analysis. Not firmware source; not for the repo.
+datasheets/
+reference/schematic/

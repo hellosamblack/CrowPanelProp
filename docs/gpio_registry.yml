@@ -176,12 +176,13 @@ gpios:
     notes: MIC_CLK_GPIO
 
   - gpio: 25
-    status: shared          # bsp_aio "IO25 HDR"
-    function: AIO bench (general digital I/O)
+    status: available
+    function: ~
     connector_pin: J7/17
-    file: peripheral/bsp_aio/bsp_aio.c:23
+    file: ~
     caps: [gpio_matrix]
-    notes: No LP, no touch, no ADC.
+    notes: >
+      Previously SEN0395 UART1 TX; SEN0395 moved to J10 (GPIO34/33). Now free.
 
   - gpio: 26
     status: claimed
@@ -192,20 +193,22 @@ gpios:
     notes: MIC_DIN_GPIO
 
   - gpio: 27
-    status: shared          # bsp_aio "IO27 HDR"
-    function: AIO bench (general digital I/O)
+    status: available
+    function: ~
     connector_pin: J7/19
-    file: peripheral/bsp_aio/bsp_aio.c:24
+    file: ~
     caps: [gpio_matrix]
-    notes: No LP, no touch, no ADC. bsp_aio comment "free if no radio".
+    notes: >
+      Previously SEN0395 UART1 RX; SEN0395 moved to J10 (GPIO34/33). Now free.
 
   - gpio: 28
-    status: shared          # bsp_aio "IO28 HDR"
-    function: AIO bench (general digital I/O)
+    status: claimed         # BTN_MODE reassigned here from GPIO33
+    function: Button Mode (BTN_MODE, bsp_io)
     connector_pin: J7/20
-    file: peripheral/bsp_aio/bsp_aio.c:25
+    file: peripheral/bsp_io/bsp_io.c
     caps: [gpio_matrix]
-    notes: No LP, no touch, no ADC.
+    notes: >
+      Reassigned from GPIO33 to free UART3 RX. Removed from bsp_aio s_pins[].
 
   - gpio: 30
     status: claimed
@@ -232,27 +235,25 @@ gpios:
     notes: CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE
 
   - gpio: 33
-    status: pending         # BTN_MODE placeholder on UART3-RX header pin
-    function: Button Mode (placeholder) / UART3 RX
+    status: claimed         # SEN0395 UART1 RX — prop_aux_radar.c
+    function: SEN0395 DFRobot 24GHz mmWave UART1 RX
     connector_pin: J10/2
-    file: peripheral/bsp_io/bsp_io.c:26
+    file: main/prop_aux_radar.c
     caps: [gpio_matrix, uart3_rx, adc_capable]
     notes: >
-      J10 UART3 RX (level-shifted, 5V-tolerant). bsp_io.c comment says
-      "UART3-IN header pin; verify before wiring". Currently configured as
-      button input. Reassign to uart_driver if using J10 for UART.
+      J10 UART1 RX (routed via GPIO matrix). SEN0395 moved here from J7/GPIO27.
+      BTN_MODE previously on GPIO33; moved to GPIO28.
 
   - gpio: 34
-    status: available
-    function: UART3 TX (unassigned in firmware)
+    status: claimed         # SEN0395 UART1 TX — prop_aux_radar.c
+    function: SEN0395 DFRobot 24GHz mmWave UART1 TX
     connector_pin: J10/1
-    file: ~
+    file: main/prop_aux_radar.c
     caps: [gpio_matrix, uart3_tx, strapping_jtag_sel]
     notes: >
-      J10 UART3 TX (level-shifted, 5V-tolerant). Strapping pin: JTAG_SEL
-      is sampled at boot. Pull-up on J10 level-shifter holds it high during
-      reset (JTAG disabled) — correct for normal operation. Bidirectional
-      after boot despite strapping role.
+      J10 UART1 TX (routed via GPIO matrix). SEN0395 moved here from J7/GPIO25.
+      Strapping pin: JTAG_SEL sampled at boot; pull-up holds high (JTAG
+      disabled) — safe for normal operation.
 
   - gpio: 40
     status: claimed
@@ -287,24 +288,24 @@ gpios:
     notes: I2C_GPIO_SCL (I2C_NUM_0, bsp_i2c driver)
 
   - gpio: 47
-    status: pending         # LED_SIGNAL placeholder on UART1-TX header pin
-    function: LED Signal (placeholder) / UART1 TX
+    status: claimed         # MR24HPC1 UART3 TX — prop_aux_radar.c
+    function: Seeed MR24HPC1 24GHz mmWave UART3 TX
     connector_pin: J2/2
-    file: peripheral/bsp_io/bsp_io.c:18
+    file: main/prop_aux_radar.c
     caps: [gpio_matrix, uart1_tx]
     notes: >
-      J2 UART1 TX. bsp_io.c comment "UART1-TX header pin; verify before wiring".
-      Reassign to uart_driver if using J2 for UART1.
+      J2 pin 2. UART3 TX routed via GPIO matrix (SEEED_TX_GPIO=47).
+      Previously placeholder for LED_SIGNAL — LED must be reassigned if needed.
 
   - gpio: 48
-    status: pending         # LED_POWER — bsp_io.c marks as "confirmed broken-out"
-    function: LED Power / UART1 RX
+    status: claimed         # MR24HPC1 UART3 RX — prop_aux_radar.c
+    function: Seeed MR24HPC1 24GHz mmWave UART3 RX
     connector_pin: J2/1
-    file: peripheral/bsp_io/bsp_io.c:17
+    file: main/prop_aux_radar.c
     caps: [gpio_matrix, uart1_rx]
     notes: >
-      J2 UART1 RX. bsp_io.c: "Only GPIO48 is confirmed broken-out + free
-      (UART1-RX header)." Using as LED output; reassign to uart_driver for UART1.
+      J2 pin 1. UART3 RX routed via GPIO matrix (SEEED_RX_GPIO=48).
+      Previously placeholder for LED_POWER — LED must be reassigned if needed.
 
   - gpio: 49
     status: shared          # bsp_aio "IO49 HDR" — ADC2 ch0
@@ -339,26 +340,24 @@ gpios:
     notes: ADC2 ch3. Also Analog Comparator 0 non-inverting input.
 
   - gpio: 53
-    status: radar           # RADAR_TX_GPIO — UART2 TX to radar module via J9/J11
-    function: Radar TX (UART2) / UART2 TX / ADC2 ch4
+    status: claimed         # LD2450 MOTION_TX_GPIO — UART2 TX — prop_motion.c
+    function: LD2450 24GHz mmWave UART2 TX
     connector_pin: J9/1
-    file: main/prop_radar.c:18
+    file: main/prop_motion.c
     caps: [gpio_matrix, uart2_tx, adc2_ch4, acomp_ref]
     notes: >
-      RADAR_TX_GPIO = 53. Also Analog Comparator 1 reference. Free when
-      radar is disabled. bsp_aio "IO53 COMM". Also accessible as J9 pin 1
-      (series R49) — UART2 TX from ESP32-P4 perspective.
+      MOTION_TX_GPIO = 53. UART2 at 256000 baud. Removed from bsp_aio
+      s_pins[]. Replaces prop_radar.c which is now dead code.
 
   - gpio: 54
-    status: radar           # RADAR_RX_GPIO — UART2 RX from radar module via J11
-    function: Radar RX (UART2) / UART2 RX / ADC2 ch5
+    status: claimed         # LD2450 MOTION_RX_GPIO — UART2 RX — prop_motion.c
+    function: LD2450 24GHz mmWave UART2 RX
     connector_pin: J11/1
-    file: main/prop_radar.c:17
+    file: main/prop_motion.c
     caps: [gpio_matrix, uart2_rx, adc2_ch5, acomp_in]
     notes: >
-      RADAR_RX_GPIO = 54. Also Analog Comparator 1 non-inverting input. Free
-      when radar is disabled. bsp_aio "IO54 COMM". Also accessible as J11
-      pin 1 (series R48) — UART2 RX from ESP32-P4 perspective.
+      MOTION_RX_GPIO = 54. UART2 at 256000 baud. Removed from bsp_aio
+      s_pins[]. Replaces prop_radar.c which is now dead code.
 
   # ── I2C1 bus (shared with touchscreen — use with caution) ──────────────────
   # These are not standard GPIO entries because they're managed by the touch
@@ -372,10 +371,11 @@ gpios:
     file: peripheral/bsp_i2c/include/bsp_i2c.h
     caps: [i2c]
     notes: >
-      Shared with GT911 touchscreen (always active), STC8 co-processor
-      (via R188), and unpopulated ES8311/ES7210 footprints. Check I2C
-      address conflicts before attaching devices. Prefer a separate I2C
-      peripheral on dedicated GPIO for new devices.
+      Shared with GT911 touchscreen (addr 0x14/0x5D, always active), STC8
+      co-processor (via R188), and unpopulated ES8311/ES7210 footprints.
+      MPU-6050 IMU (addr 0x68) added via J13 Grove connector (prop_imu.c);
+      no address conflict with GT911. Uses i2c_dev_register(0x68) on the
+      existing i2c_bus_handle.
 
   - gpio: i2c1_sda_3v3
     status: pseudo_available
@@ -383,4 +383,4 @@ gpios:
     connector_pin: J11/3, J13/2
     file: peripheral/bsp_i2c/include/bsp_i2c.h
     caps: [i2c]
-    notes: Same sharing constraints as I2C1 SCL.
+    notes: Same sharing constraints as I2C1 SCL. MPU-6050 also on this bus.

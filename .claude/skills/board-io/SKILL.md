@@ -12,7 +12,7 @@ description: >
 
 # CrowPanel ESP32-P4 7" — IO Map & Pin Advisor
 
-Source of truth: full netlist analysis of `F:\kicad\elecrow\ESP32-P4 Display 7.0 inch V1.0.net`
+Source of truth: full netlist analysis of `reference/schematic/ESP32-P4 Display 7.0 inch V1.0.net`
 plus firmware scan. GPIO numbers confirmed against firmware source.
 
 **Live pin registry:** `docs/gpio_registry.yml` — read this first, update it when you assign a pin.
@@ -100,7 +100,8 @@ Pin  A1 [+3.3V]  B2 [+5V  ]
     A23 [GND  ]  B24[GND  ]
 ```
 
-**Power available on J7:** +3.3 V (pins 1,3,5) and +5 V (pins 2,4,6).
+**Power available on J7:** +3.3 V (pins 1,3,5) and nominally +5 V (pins 2,4,6 = `/VDD5V` per netlist).
+⚠️ **Field note:** user measured no voltage on J7 5V pins and silkscreen shows NC — the schematic designator "J7" may not match the physical expansion header. Verify with a meter before relying on J7 for 5V.
 
 **Adjacent GPIO groups on J7:**
 - `GPIO3 / GPIO52` (A11/B12) — digital + ADC pair
@@ -118,10 +119,11 @@ Pin 3 [GPIO7  SPI-MISO]  ← radio when active
 Pin 4 [GPIO6  SPI-MOSI]  ← radio when active
 Pin 5 [+3.3V           ]
 Pin 6 [GND             ]
-Pin 7 [+5V  VDD5V_W    ]  ← same rail as ESP32-C6
+Pin 7 [+5V  VDD5V_W    ]  ← L4 is DNP (not populated), so VDD5V_W = VDD5V same net
 ```
 
 **Power available on J9:** +3.3 V (pin 5), +5 V (pin 7), GND (pin 6).
+Note: J9 pin 7 is the most reliable 5V breakout on the board (netlist-confirmed `/VDD5V_W`, same rail as `/VDD5V` since L4=NC).
 GPIO53, 8, 7, 6 are four adjacent signal pins on one connector.
 
 ### J11 — Combo Header (7-pin 2.54 mm, linear)
@@ -144,13 +146,14 @@ GPIO9 and GPIO10 (pins 5,6) are adjacent; GPIO54 (pin 1) is at the far end.
 ```
 Pin 1 [GPIO34 UART3-TX ]  strapping: JTAG_SEL; high at boot (safe)
 Pin 2 [GPIO33 UART3-RX ]  btn placeholder; UART3 RX
-Pin 3 [+5V             ]
+Pin 3 [+5V_IN          ]  ← /+5V_IN net — see power note below
 Pin 4 [GND             ]
 ```
 
-**Power available on J10:** +5 V (pin 3), GND (pin 4).
+**Power available on J10:** GND (pin 4) only when board-driven.
 **Both signal pins are 5 V-tolerant** via BSS138 level shifters.
-This is the only connector with a 5V-tolerant UART _and_ 5V power on the same connector.
+
+⚠️ **J10 pin 3 power direction:** pin 3 is on the `/+5V_IN` net, which connects to the ANODE side of D2 and D4 (Schottky diodes that OR into `/VCC5V` and `/VCC5V_IN`). No internal regulator or rail drives this net — it is an **external power injection point**, not a board-driven 5V output. If you need 5V for a sensor on J10, power it from J9 pin 7 (`/VDD5V_W`) with a separate wire, or use a self-powered sensor. A device that provides its own 5V on J10 pin 3 will OR that voltage into the board rails.
 
 ### J2 — UART1 (HY2.0 4-pin, 3.3 V logic)
 
@@ -194,16 +197,17 @@ For new I2C peripherals, prefer assigning a fresh I2C port to a pair of free GPI
 
 ## Common Module Wiring Templates
 
-### J10 — Best for "UART device needing 5V power"
+### J10 — UART3 (5V-tolerant logic; external 5V needed for powered sensors)
 
-J10 is the only header with both 5V-tolerant UART _and_ 5V supply on the same connector.
+J10 has 5V-tolerant UART via BSS138 level shifters. The 5V pin (pin 3) is an **external
+injection input** (`/+5V_IN`), not a board-driven output. Power your 5V sensor from
+J9 pin 7 (`/VDD5V_W`, ~4.5V) or self-power it separately.
 Update `gpio_registry.yml` status for GPIO33/GPIO34 from `pending` to your module name.
 
 ```
-Module → Board (J10)
-TX   → Pin 2  (GPIO33, UART3 RX)
-RX   → Pin 1  (GPIO34, UART3 TX)
-VCC  → Pin 3  (+5V)
+Module → Board (J10)                 Board → Sensor 5V
+TX   → Pin 2  (GPIO33, UART3 RX)    VCC  ← J9/7  (+5V VDD5V_W, separate wire)
+RX   → Pin 1  (GPIO34, UART3 TX)    GND  ← Pin 4 (GND)
 GND  → Pin 4  (GND)
 ```
 
@@ -260,6 +264,24 @@ Only LP-domain GPIOs (GPIO2–10 in our header set) survive deep-sleep.
 Best candidates for wake-on-signal: GPIO9 (J11/5) and GPIO10 (J11/6) — currently
 radio IRQ/NSS, free without radio. Touch channels on GPIO2–10 can also wake via
 touch controller in LP mode.
+
+### J3 — Battery (JST-PH 2.0mm 2-pin)
+
+```
+Pin 1 [VBAT +    ]  ← single-cell LiPo positive
+Pin 2 [GND       ]
+```
+
+**Charger:** TP4059 (U2), 500 mA (R16 = 2 kΩ), overcharge cutoff at 4.2 V built-in.
+Charging input comes from `/VCC5V_IN` (USB 5V post-Schottky) — charges whenever USB is connected.
+
+**Discharge path:** Q3 (NCE20P45Q dual P-channel FET) auto-switches:
+- USB present → Q3 off (VBAT isolated, no backfeed)
+- USB absent → Q3 on → VBAT passes to `/VCC5V` → `/VDD5V`
+
+**No boost converter** in the battery path. System runs at raw battery voltage (3.5–4.2 V) on battery-only — USB-derived 5V is NOT regenerated. External 5V accessories need USB or a separate boost module.
+
+**No hardware overdischarge or overcurrent protection** on the discharge path — use a **protected LiPo** (one with built-in PCM). Charging is safe with unprotected cells. Battery voltage monitored by ADC: R164 (39 kΩ) + R186 (100 kΩ) divider → STC8H1K08 pin 13 + ESP32-P4 ADC.
 
 ---
 

@@ -49,9 +49,10 @@ idf_component_register(SRCS ${main}
                                 esp_timer esp_lvgl_port lvgl
                                 esp_wifi esp_netif esp_event nvs_flash
                                 esp_http_server app_update cjson mdns
-                                esp_driver_tsens esp_driver_i2s
+                                esp_driver_tsens esp_driver_i2s esp_driver_i2c
                                 bt esp_hosted   # NimBLE host + C6 BT controller (prop_ble)
-                                esp_mm)   # esp_cache.h for the /screenshot framebuffer read
+                                esp_mm   # esp_cache.h for the /screenshot framebuffer read
+                                mpu6500)   # vendored LibDriver eMD DMP core (prop_imu, MPU-6500)
 
 # Force the linker to keep lv_port_mem.o (our custom LVGL allocator). LVGL's archive
 # references lv_malloc_core et al., but libmain.a is scanned before liblvgl.a, so the
