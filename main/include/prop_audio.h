@@ -27,6 +27,7 @@ typedef enum {
     PA_SIGNAL,          /* SIGNAL DETECTED — bright 3-note sting */
     PA_ALERT,           /* ALERT — square klaxon */
     PA_BOOT,            /* startup chime */
+    PA_PING,            /* radar range ping — soft rising sine chirp (pitched by distance) */
     PA_EVENT_COUNT,
 } prop_audio_event_t;
 

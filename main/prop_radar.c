@@ -196,7 +196,7 @@ esp_err_t prop_radar_init(void)
                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     ESP_LOGI(TAG, "param_config=%s set_pin=%s", esp_err_to_name(pe), esp_err_to_name(sp));
 
-    if (xTaskCreate(radar_task, "prop_radar", 4096, NULL, 5, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(radar_task, "prop_radar", 4096, NULL, 5, NULL, 0) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG, "mmWave radar: RXD2=GPIO%d TXD2=GPIO%d @ %d 8N1",

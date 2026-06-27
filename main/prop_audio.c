@@ -47,6 +47,9 @@ static const note_t EV_ALERT[]     = { { W_SQUARE, 520, 110, 65 }, { W_SQUARE, 3
 /* Boot chime: a soft ascending C-major arpeggio, pure sine, gentle level (not harsh). */
 static const note_t EV_BOOT[]      = { { W_SINE, 523, 130, 65 }, { W_SINE, 659, 130, 65 },
                                        { W_SINE, 784, 150, 70 }, { W_SINE, 1047, 240, 65 } };
+/* Range ping: a soft two-note rising sine chirp. Low base frequency + pure sine so it
+ * stays mellow, not shrill, even when transposed up for a close target. */
+static const note_t EV_PING[]      = { { W_SINE, 440, 28, 60 }, { W_SINE, 587, 42, 70 } };
 
 #define EV(arr) { (arr), sizeof(arr) / sizeof((arr)[0]) }
 static const struct { const note_t *notes; int n; } s_events[PA_EVENT_COUNT] = {
@@ -61,6 +64,7 @@ static const struct { const note_t *notes; int n; } s_events[PA_EVENT_COUNT] = {
     [PA_SIGNAL]    = EV(EV_SIGNAL),
     [PA_ALERT]     = EV(EV_ALERT),
     [PA_BOOT]      = EV(EV_BOOT),
+    [PA_PING]      = EV(EV_PING),
 };
 
 /* Queue message: which event + a semitone transpose for its tones. */

@@ -58,11 +58,17 @@ else()
     set_source_files_properties(${DEMO_MUSIC_SOURCES} COMPILE_FLAGS "-Wno-format")
   endif()
 
-  if(CONFIG_LV_USE_PPA)
-    set(IDF_COMPONENTS esp_driver_ppa esp_mm esp_timer log)
-  else()
-    set(IDF_COMPONENTS esp_timer log)
-  endif()
+  # LOCAL PATCH (CrowPanelProp, Phase 0 PPA re-enablement, see
+  # docs/superpowers/specs/2026-06-27-ppa-reenablement-framerate-plan.md):
+  # esp_driver_ppa/esp_mm were gated behind `if(CONFIG_LV_USE_PPA)`, but that conditional
+  # is NOT evaluated during IDF's component-requirement (dependency-graph) expansion pass,
+  # so esp_driver_ppa's include dir never propagated to lvgl and lv_draw_ppa_private.h's
+  # `#include "driver/ppa.h"` failed ("not in the requirements list of lvgl__lvgl") even
+  # with CONFIG_LV_USE_PPA=y. Making the dependency unconditional fixes the propagation.
+  # Harmless when PPA is off: the lvgl ppa sources are #if LV_USE_PPA-gated to empty.
+  # esp32p4-only project, where esp_driver_ppa always exists. Re-applying this patch is
+  # required if the lvgl managed component is re-resolved (idf.py update-dependencies).
+  set(IDF_COMPONENTS esp_driver_ppa esp_mm esp_timer log)
 
   idf_component_register(SRCS ${SOURCES} ${EXAMPLE_SOURCES} ${DEMO_SOURCES}
       INCLUDE_DIRS ${LVGL_ROOT_DIR} ${LVGL_ROOT_DIR}/src ${LVGL_ROOT_DIR}/../

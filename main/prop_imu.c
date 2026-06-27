@@ -224,6 +224,10 @@ static void imu_task(void *arg)
 /* ── Public API ───────────────────────────────────────────────────────────── */
 esp_err_t prop_imu_init(void)
 {
+    if (s_mutex) {                       /* already initialized — ignore repeat calls */
+        ESP_LOGW(TAG, "prop_imu_init called more than once — ignoring");
+        return s_data.online ? ESP_OK : ESP_ERR_NOT_FOUND;
+    }
     s_mutex = xSemaphoreCreateMutex();
     if (!s_mutex) return ESP_ERR_NO_MEM;
     s_event = PROP_IMU_EVT_NONE;
@@ -236,7 +240,7 @@ esp_err_t prop_imu_init(void)
     }
     s_data.online = true;
     ESP_LOGI(TAG, "MPU-6500 eMD DMP ready");
-    xTaskCreate(imu_task, "imu_dmp", 4096, NULL, 5, NULL);
+    xTaskCreatePinnedToCore(imu_task, "imu_dmp", 4096, NULL, 5, NULL, 0);
     return ESP_OK;
 }
 

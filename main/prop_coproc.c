@@ -125,7 +125,7 @@ esp_err_t prop_coproc_init(void)
              (unsigned)PROP_MSG_ID_CSI_STATS);
 
     /* Push persisted settings once the slave reports in (off the RX thread). */
-    xTaskCreate(push_task, "csi_push", 3072, NULL, 4, NULL);
+    xTaskCreatePinnedToCore(push_task, "csi_push", 3072, NULL, 4, NULL, 0);
     return ESP_OK;
 }
 

@@ -142,7 +142,7 @@ static void calib_task(void *arg)
 
 esp_err_t prop_calib_init(void)
 {
-    if (xTaskCreate(calib_task, "prop_calib", 4096, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(calib_task, "prop_calib", 4096, NULL, 4, NULL, 0) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
