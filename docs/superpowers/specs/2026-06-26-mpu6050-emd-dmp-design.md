@@ -141,6 +141,40 @@ prop_imu_event_t prop_imu_get_motion_event(void); /* returns + clears latest mot
 - **Safety:** preserve non-fatal sensor-absent behavior; never call I2C under the
   LVGL lock (poll task is independent; UI reads cache only).
 
+## MOTION SCAN screen → all-sensor dashboard (`build_motion_panel`)
+
+Rework the MOTION SCAN panel (`PK_MOTION`) into a single *Aliens motion-tracker*
+dashboard that surfaces every sensor at once, matching
+`resources/inspiration/alienMotionScanner/`. Visual rules:
+
+- **Headliners (large, center):**
+  - **Radar sweep fan** — existing rotating sweep + target blips, driven by the
+    aux radar (SEN0395 mmWave / Seeed) target list. Keep the fan/arc look.
+  - **Gimbal** — existing artificial-horizon line from `prop_imu_get_orientation()`.
+- **Direction ring (NEW):** a 4-quadrant ring around the dot at the **base apex** of
+  the radar fan (the dark quadrant ring in the reference). When the operator is
+  moving, the quadrant matching the movement direction lights bright; others stay
+  dim. Direction derived from IMU horizontal accel vector (`ax`,`ay`) → heading →
+  N/E/S/W quadrant; magnitude gates the "moving" state (deadband near rest). This
+  is **in addition to** the gimbal.
+- **Analog signals → progress bars** (bottom-left stack, reference style):
+  CSI movement (`prop_csi_get_motion` movement_milli vs threshold), CSI RF
+  turbulence (`prop_csi_get_rf`), mic level (`prop_mic_get_db`), WiFi RSSI
+  (`prop_net_get_rssi`), BLE strongest (`prop_ble_get_summary`), IMU accel
+  magnitude. Numeric readouts (pedometer steps, core temp) shown as values like
+  the reference "0.6579".
+- **Booleans → dim/bright 3-letter all-caps words** parked in a corner (the
+  "ATT/SUS/DEC" style): each is `COL_MUTE`/`COL_AMBER` when active, `COL_DIM` when
+  inactive. Set: `SEN`/`SEE` (aux radar present), `MOV` (CSI motion), `LIV` (CSI
+  live vs synthetic), `IMU` (online), `FFL` (free-fall latched), `MIC` (PDM up),
+  `BLE` (available), `NET` (STA linked), `GEI` (geiger mode). Camera-legibility
+  rule: active words use `COL_MUTE`+bold, never `COL_DIM`, per CLAUDE.md.
+
+All readouts update in `ui_observer` under the existing `PK_MOTION` guard; no new
+task. New widget pointers added to the `s_motion_*` block and NULLed in
+`close_panel`. The direction ring is four `lv_obj`/arc segments (or a small canvas)
+re-tinted per frame — cheap, one panel alive at a time.
+
 ## Out of scope (YAGNI)
 
 - Screen auto-rotation from orient events (panel is fixed-mount); orient is captured
