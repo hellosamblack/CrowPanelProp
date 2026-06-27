@@ -177,8 +177,10 @@ Palette + helpers are at the top of `prop_ui.c` (and mirrored in `ui/globals.xml
 ### Rail layout (grouped)
 
 The left rail is 7 top-level entries: CONSOLE, ARCHIVE, **INSTRUMENTS**, **SENSORS**, CASSETTE, INSIGHTS, SETUP. The instruments are not on the rail directly — they live in two submenu list-panels (mirroring how SETUP groups config), which keeps the rail uncluttered:
-- **INSTRUMENTS** (`PK_INSTRUMENTS`) → SCANNER (the bare readout, `PK_NONE`), SIGNAL SCAN, SPECTRUM, VITALS.
-- **SENSORS** (`PK_SENSORS`) → RF BAND, CONTACTS, SIGNAL ENV (the C6 radio sensors).
+- **INSTRUMENTS** (`PK_INSTRUMENTS`) → SCANNER (the bare console readout, `PK_NONE`), SIGNAL SCAN, SPECTRUM, VITALS.
+- **SENSORS** (`PK_SENSORS`) → RF BAND, CONTACTS, SIGNAL ENV, **SCANNER** (`PK_MOTION` — the LD2450 radar / IMU page, formerly "MOTION SCAN").
+
+> **SCANNER (`PK_MOTION`) is the full-screen default boot landing** (`prop_ui_init` opens it, not `PK_HOME`). It has **no title header or BACK button** — it draws its own bordered full-panel container instead of `make_panel`, so navigate away via the rail. (Note: the INSTRUMENTS submenu also lists a separate "SCANNER" = the bare `PK_NONE` console readout — two different things named SCANNER.)
 
 A panel's BACK returns to its group; `rail_sync()` maps each sub-panel back to its group cell for the highlight. Deep-link goto names (`spectrum`, `ble`, …) still open panels directly.
 
