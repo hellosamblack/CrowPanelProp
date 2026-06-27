@@ -146,6 +146,25 @@ static esp_err_t display_port_init(void)  // Initialize LCD port (MIPI DSI + pan
     err = esp_lcd_panel_init(panel_handle);   // Initialize panel
     if (err != ESP_OK)
         return err;
+
+    /* Phase B-alt: enable 2D-DMA on the DPI flush path.
+     * esp_lcd_dpi_panel_enable_dma2d() registers a built-in DMA2D draw-bitmap hook that
+     * offloads framebuffer copies from the CPU onto the hardware 2D-DMA engine.
+     * NOTE: if esp_lvgl_port is configured in direct-framebuffer mode the hook is unused
+     * (the port writes straight to the panel FB and never calls draw_bitmap), so this may
+     * be a no-op at runtime — that is expected.  Log and continue regardless; do NOT abort
+     * display bring-up on error (ESP_ERR_INVALID_STATE means a hook is already registered). */
+    err = esp_lcd_dpi_panel_enable_dma2d(panel_handle);
+    if (err == ESP_OK)
+    {
+        ESP_LOGI("BSP", "Phase B-alt: 2D-DMA enabled on DPI panel flush path");
+    }
+    else
+    {
+        ESP_LOGW("BSP", "Phase B-alt: esp_lcd_dpi_panel_enable_dma2d returned %s — continuing without 2D-DMA", esp_err_to_name(err));
+    }
+    err = ESP_OK;  // Non-fatal; reset err so display_port_init reports success
+
     return err;  // Return success
 }
 
