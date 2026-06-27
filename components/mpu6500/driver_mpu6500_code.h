@@ -21,21 +21,21 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE. 
  *
- * @file      driver_mpu6050_code.h
- * @brief     driver mpu6050 code header file
+ * @file      driver_mpu6500_code.h
+ * @brief     driver mpu6500 code header file
  * @version   1.0.0
  * @author    Shifeng Li
- * @date      2022-06-30
+ * @date      2024-07-30
  *
  * <h3>history</h3>
  * <table>
  * <tr><th>Date        <th>Version  <th>Author      <th>Description
- * <tr><td>2022/06/30  <td>1.0      <td>Shifeng Li  <td>first upload
+ * <tr><td>2024/07/30  <td>1.0      <td>Shifeng Li  <td>first upload
  * </table>
  */
 
-#ifndef DRIVER_MPU6050_CODE_H
-#define DRIVER_MPU6050_CODE_H
+#ifndef DRIVER_MPU6500_CODE_H
+#define DRIVER_MPU6500_CODE_H
 
 #include <stdio.h>
 #include <stdint.h>
@@ -46,19 +46,19 @@ extern "C"{
 #endif
 
 /**
- * @addtogroup mpu6050_dmp_driver
+ * @addtogroup mpu6500_dmp_driver
  * @{
  */
 
 /**
- * @brief mpu6050 dmp code definition
+ * @brief mpu6500 dmp code definition
  */
-#define MPU6050_DMP_CODE_SIZE        3062        /**< 3062 bytes */
+#define MPU6500_DMP_CODE_SIZE        3062        /**< 3062 bytes */
 
 /**
- * @brief mpu6050 dmp code definition
+ * @brief mpu6500 dmp code definition
  */
-static uint8_t gs_mpu6050_dmp_code[MPU6050_DMP_CODE_SIZE] = 
+static uint8_t gs_mpu6500_dmp_code[MPU6500_DMP_CODE_SIZE] = 
 {
     /* bank # 0 */
     0x00, 0x00, 0x70, 0x00, 0x00, 0x00, 0x00, 0x24, 0x00, 0x00, 0x00, 0x02, 0x00, 0x03, 0x00, 0x00,

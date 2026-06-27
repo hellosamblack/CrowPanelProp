@@ -2,7 +2,20 @@
 
 **Date:** 2026-06-26
 **Branch:** feature/alien-motion-tracker
-**Status:** approved design → implementation
+**Status:** approved design → implementation → **hardware correction (see addendum)**
+
+> **ADDENDUM (hardware reality):** The installed IMU is a genuine **MPU-6500**
+> (WHO_AM_I = **0x70**), not an MPU-6050 (0x68). The MPU-6050 DMP firmware does
+> not run on it (self-test + DMP FIFO fail). Per the user's direction, the
+> implementation vendors LibDriver's **mpu6500** eMD core instead
+> (`components/mpu6500`); the adapter, engine wiring, and radar dashboard are
+> otherwise unchanged. MPU-6500 specifics handled in the adapter: `set_interface
+> (IIC)` + non-NULL SPI link stubs, `set_fifo_1024kb`, temperature always-on,
+> and motion/free-fall derived in software (no wake-on-motion, which conflicts
+> with DMP gyro mode). A zero-length FIFO read (benign on STM32/RPi) is rejected
+> by the ESP-IDF I2C master, so the link layer treats len==0 as a no-op.
+> Everything designed below (tap, pedometer, gyro auto-cal, quaternion gimbal,
+> die-temp, dashboard) is delivered on the MPU-6500.
 
 ## Goal
 

@@ -1,13 +1,14 @@
 #ifndef _PROP_IMU_H_
 #define _PROP_IMU_H_
 
-/* prop_imu — MPU-6050 eMD DMP driver (LibDriver core) on the shared I2C bus.
+/* prop_imu — MPU-6500 eMD DMP driver (LibDriver core) on the shared I2C bus.
  *
- * The DMP on-chip processor produces a fused 6-axis quaternion + YPR + raw
- * accel + calibrated gyro via FIFO, plus tap gestures, a pedometer, and
- * on-chip gyro auto-calibration. The driver polls the FIFO every 20 ms and
- * caches the result under a mutex. (Was a MotionApps 2.0 port; now wraps the
- * vendored LibDriver eMD core in components/mpu6050.)
+ * The installed IMU is an MPU-6500 (WHO_AM_I 0x70), not an MPU-6050. The DMP
+ * on-chip processor produces a fused 6-axis quaternion + YPR + raw accel +
+ * calibrated gyro via FIFO, plus tap gestures, a pedometer, and on-chip gyro
+ * auto-calibration. The driver polls the FIFO every 20 ms and caches the result
+ * under a mutex. Wraps the vendored LibDriver mpu6500 eMD core in
+ * components/mpu6500. (Was a MotionApps 2.0 / MPU-6050 port.)
  *
  * Non-fatal: if the sensor does not ACK (not wired / powered off),
  * prop_imu_available() stays false and callers get zero / false — the prop

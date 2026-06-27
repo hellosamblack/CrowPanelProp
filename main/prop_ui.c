@@ -1043,7 +1043,7 @@ static lv_obj_t *build_vitals_panel(lv_obj_t *parent)
 
     /* IMU MOTION section (MPU-6050 DMP — absent if sensor not wired) */
     lv_obj_t *imuhdr = lv_label_create(b);
-    lv_label_set_text(imuhdr, "MOTION  [MPU-6050]");
+    lv_label_set_text(imuhdr, "MOTION  [MPU-6500]");
     lv_obj_set_style_text_color(imuhdr, COL_AMBER, 0);
     lv_obj_set_style_text_font(imuhdr, FONT_HEAD, 0);
     s_vit_yaw   = kit_meter_row(b, "YAW",   &s_vit_yaw_bar);

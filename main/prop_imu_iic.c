@@ -32,6 +32,11 @@ uint8_t prop_imu_iic_read(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
 {
     (void)addr;
     if (!s_dev) return 1;
+    /* LibDriver's dmp_read issues a 0-length FIFO read when fewer than one full
+     * packet is buffered. That's a benign no-op on STM32/RPi, but the ESP-IDF
+     * new I2C master rejects size-0 transfers ("buffer or size invalid"). Treat
+     * it as success so the DMP read loop continues cleanly. */
+    if (len == 0) return 0;
     return i2c_read_reg(s_dev, reg, buf, len) == ESP_OK ? 0 : 1;
 }
 
@@ -42,6 +47,7 @@ uint8_t prop_imu_iic_write(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len
 {
     (void)addr;
     if (!s_dev) return 1;
+    if (len == 0) return 0;   /* no-op (see prop_imu_iic_read) */
 
     uint8_t tx[257];
     if (len > sizeof(tx) - 1) {
