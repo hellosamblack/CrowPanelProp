@@ -165,6 +165,7 @@ static lv_obj_t *s_spec_db, *s_spec_db_bar, *s_spec_status;
 static lv_obj_t *s_spec_src_label;
 static lv_obj_t *s_spec_axis[5];    /* x-axis frequency labels */
 static float s_spec_decay[PROP_MIC_BANDS];   /* peak-hold / slow decay (UI-side) */
+static int8_t s_spec_band[PROP_MIC_BANDS];   /* -1=unset; last color band per bar (0=MUTE,1=AMBER,2=ALERT) */
 
 /* RF BAND instrument (2.4 GHz channel occupancy; valid only while PK_RFBAND is current). */
 #define RF_CHANNELS 13                      /* 2.4 GHz channels 1..13 */
@@ -172,6 +173,7 @@ static lv_obj_t *s_rf_bars[RF_CHANNELS];
 static lv_obj_t *s_rf_status;
 static uint8_t s_rf_chan[PROP_NET_CHAN_SLOTS]; /* cached histogram (filled by the scan task) */
 static float s_rf_decay[RF_CHANNELS];          /* UI-side rise/decay ballistics */
+static int8_t s_rf_band[RF_CHANNELS];          /* -1=unset; last color band per bar (0=MUTE,1=AMBER,2=ALERT) */
 static volatile bool s_rf_scanning;
 
 /* BLE CONTACT SIGNATURES instrument (valid only while PK_BLE is current). */
@@ -183,6 +185,7 @@ static ble_row_t s_ble_rows[PROP_BLE_MAX];
 
 /* SIGNAL ENVIRONMENT (CSI) instrument (valid only while PK_CSI is current). */
 static lv_obj_t *s_csi_bars[PROP_CSI_BINS];
+static int8_t s_csi_band[PROP_CSI_BINS];     /* -1=unset; last color band per bar (0=MUTE,1=AMBER,2=ALERT) */
 static lv_obj_t *s_csi_status;
 static lv_obj_t *s_csi_motion;   /* big MOTION / IDLE state readout */
 static lv_obj_t *s_csi_move;     /* movement-vs-threshold numeric readout */
@@ -1367,6 +1370,7 @@ static lv_obj_t *build_spectrum_panel(lv_obj_t *parent)
         lv_obj_set_style_bg_color(b, COL_AMBER, 0);
         s_spec_bars[i] = b;
         s_spec_decay[i] = 0.0f;
+        s_spec_band[i]  = -1;
     }
 
     /* X-axis frequency labels (just below baseline). Fixed two-line height so a
@@ -1481,6 +1485,7 @@ static lv_obj_t *build_rfband_panel(lv_obj_t *parent)
         lv_obj_set_style_bg_color(b, COL_AMBER, 0);
         s_rf_bars[i] = b;
         s_rf_decay[i] = 0.0f;
+        s_rf_band[i]  = -1;
 
         /* Channel number under the baseline. */
         lv_obj_t *cl = lv_label_create(p);
@@ -1704,6 +1709,7 @@ static lv_obj_t *build_csi_panel(lv_obj_t *parent)
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(b, COL_AMBER, 0);
         s_csi_bars[i] = b;
+        s_csi_band[i]  = -1;
     }
 
     lv_obj_t *note = lv_label_create(p);
@@ -4365,10 +4371,12 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             int pct = (int)s_spec_decay[i];
             int h = 2 + pct * SPEC_MAXH / 100;
             lv_obj_set_height(s_spec_bars[i], h);
-            lv_obj_align(s_spec_bars[i], LV_ALIGN_BOTTOM_LEFT,
-                         SPEC_X0 + i * (SPEC_BW + SPEC_GAP), -SPEC_BASE);
-            lv_obj_set_style_bg_color(s_spec_bars[i],
-                                      pct > 85 ? COL_ALERT : (pct > 35 ? COL_AMBER : COL_MUTE), 0);
+            int8_t band = (pct > 85) ? 2 : (pct > 35) ? 1 : 0;
+            if (band != s_spec_band[i]) {
+                s_spec_band[i] = band;
+                lv_obj_set_style_bg_color(s_spec_bars[i],
+                                          band == 2 ? COL_ALERT : (band == 1 ? COL_AMBER : COL_MUTE), 0);
+            }
         }
         if (st->tick % 4 == 0 && s_spec_db) {
             lv_label_set_text_fmt(s_spec_db, "%d dB", prop_mic_get_db());
@@ -4387,10 +4395,12 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             int pct = (int)s_rf_decay[i];
             int h = 2 + pct * RF_MAXH / 100;
             lv_obj_set_height(s_rf_bars[i], h);
-            lv_obj_align(s_rf_bars[i], LV_ALIGN_BOTTOM_LEFT,
-                         RF_X0 + i * (RF_BW + RF_GAP), -RF_BASE);
-            lv_obj_set_style_bg_color(s_rf_bars[i],
-                                      pct > 70 ? COL_ALERT : (pct > 20 ? COL_AMBER : COL_MUTE), 0);
+            int8_t band = (pct > 70) ? 2 : (pct > 20) ? 1 : 0;
+            if (band != s_rf_band[i]) {
+                s_rf_band[i] = band;
+                lv_obj_set_style_bg_color(s_rf_bars[i],
+                                          band == 2 ? COL_ALERT : (band == 1 ? COL_AMBER : COL_MUTE), 0);
+            }
         }
     }
 
@@ -4443,10 +4453,12 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             int pct = col[i];
             int h = 2 + pct * CSI_MAXH / 100;
             lv_obj_set_height(s_csi_bars[i], h);
-            lv_obj_align(s_csi_bars[i], LV_ALIGN_BOTTOM_LEFT,
-                         CSI_X0 + i * (CSI_BW + CSI_GAP), -CSI_BASE);
-            lv_obj_set_style_bg_color(s_csi_bars[i],
-                                      pct > 85 ? COL_ALERT : (pct > 35 ? COL_AMBER : COL_MUTE), 0);
+            int8_t band = (pct > 85) ? 2 : (pct > 35) ? 1 : 0;
+            if (band != s_csi_band[i]) {
+                s_csi_band[i] = band;
+                lv_obj_set_style_bg_color(s_csi_bars[i],
+                                          band == 2 ? COL_ALERT : (band == 1 ? COL_AMBER : COL_MUTE), 0);
+            }
         }
         /* Motion verdict + movement readout (real C6 data when live). */
         bool motion = false; int move_mi = 0, thr_mi = 0;
