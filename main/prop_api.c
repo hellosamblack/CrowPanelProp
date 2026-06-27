@@ -4,6 +4,7 @@
 #include "prop_net.h"
 #include "prop_ui.h"
 #include "prop_fx.h"
+#include "prop_ppa_spike.h"
 #include "prop_ble.h"
 #include "prop_csi.h"
 #include "prop_coproc.h"
@@ -118,6 +119,7 @@ static esp_err_t dispatch_command(const char *json, int len)
             if ((j = cJSON_GetObjectItem(root, "refresh"))  && cJSON_IsNumber(j)) { prop_fx_set_refresh  ((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
             if ((j = cJSON_GetObjectItem(root, "trans"))    && cJSON_IsNumber(j)) { prop_settings_set_u32("fx_trans", (uint32_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
             if ((j = cJSON_GetObjectItem(root, "fps"))      && cJSON_IsBool(j))   { prop_ui_set_fps(cJSON_IsTrue(j)); any = true; }
+            if ((j = cJSON_GetObjectItem(root, "ppaspike")) && cJSON_IsTrue(j))   { prop_ppa_spike_run(); any = true; }
             err = (cJSON_IsBool(on) || any) ? ESP_OK : ESP_ERR_INVALID_ARG;
         } else if (strcmp(c, "led") == 0) {
             const cJSON *on = cJSON_GetObjectItem(root, "on");
