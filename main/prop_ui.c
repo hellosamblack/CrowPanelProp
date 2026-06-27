@@ -196,9 +196,9 @@ static lv_obj_t *s_motion_tgt_label;    /* "TARGETS: N" header */
 static lv_obj_t *s_motion_alert;        /* "MOTION DETECTED" flash */
 static lv_obj_t *s_motion_blips[3];     /* target blips (amber circles) */
 static lv_obj_t *s_motion_trows[3];     /* T1/T2/T3 data label rows */
-static lv_obj_t *s_motion_sweep;        /* rotating sweep lv_line */
-static lv_obj_t *s_motion_gimbal_line;  /* artificial horizon lv_line */
-static lv_obj_t *s_motion_gimbal_orient; /* "P: XX  R: XX" orientation text */
+static lv_obj_t *s_motion_sweep;        /* oscillating fan sweep lv_line */
+static lv_obj_t *s_motion_gdial[3];     /* YAW/PITCH/ROLL gimbal needle lines */
+static lv_obj_t *s_motion_gval[3];      /* per-dial value labels */
 static lv_obj_t *s_motion_aux_seeed;    /* Seeed sensor status label */
 static lv_obj_t *s_motion_aux_sen;      /* SEN0395 sensor status label */
 /* All-sensor dashboard widgets (live inside the radar box, reference style). */
@@ -208,11 +208,19 @@ static lv_obj_t *s_motion_flags[MOTION_FLAG_COUNT];   /* SEN SEE MOV LIV IMU MIC
 static lv_obj_t *s_motion_bars[MOTION_BAR_COUNT];     /* CSI RF MIC SIG ACC analog bars */
 static lv_obj_t *s_motion_bar_lbls[MOTION_BAR_COUNT];
 static lv_obj_t *s_motion_dir_q[4];     /* N/E/S/W direction-ring quadrant arcs */
-static lv_obj_t *s_motion_dir_dot;      /* operator dot at the ring centre */
-static int       s_sweep_angle;         /* current sweep angle 0-359 */
+static lv_obj_t *s_motion_dir_dot;      /* operator dot at the ring centre (fan apex) */
+static int       s_sweep_angle;         /* sweep phase 0-359 (oscillates across the fan) */
 /* Module-scope point buffers — LVGL keeps a pointer; must outlive the widgets. */
 static lv_point_precise_t s_motion_sweep_pts[2];
-static lv_point_precise_t s_motion_gimbal_pts[2];
+static lv_point_precise_t s_motion_gpts[3][2];   /* needle points per gimbal dial */
+
+/* Fan radar geometry (inside the 440x440 radar box). Apex at the base centre. */
+#define FAN_APEX_X   220
+#define FAN_APEX_Y   410
+#define FAN_R        348      /* outer radius */
+#define FAN_HALF_DEG 35       /* half opening angle */
+#define FAN_LEFT_DEG  (270 - FAN_HALF_DEG)   /* LVGL: 270 = up */
+#define FAN_RIGHT_DEG (270 + FAN_HALF_DEG)
 
 /* CSI CONFIG / auto-calibration panel (valid only while PK_CSICFG is current). */
 static lv_obj_t *s_cfg_motion;   /* live MOTION / IDLE */
@@ -391,8 +399,8 @@ static void close_panel(void)
     s_connect_pending = false;
     s_motion_tgt_label = NULL; s_motion_alert = NULL;
     for (int i = 0; i < 3; i++) { s_motion_blips[i] = NULL; s_motion_trows[i] = NULL; }
-    s_motion_sweep = NULL; s_motion_gimbal_line = NULL;
-    s_motion_gimbal_orient = NULL;
+    s_motion_sweep = NULL;
+    for (int i = 0; i < 3; i++) { s_motion_gdial[i] = NULL; s_motion_gval[i] = NULL; }
     s_motion_aux_seeed = NULL; s_motion_aux_sen = NULL;
     for (int i = 0; i < MOTION_FLAG_COUNT; i++) s_motion_flags[i] = NULL;
     for (int i = 0; i < MOTION_BAR_COUNT; i++) { s_motion_bars[i] = NULL; s_motion_bar_lbls[i] = NULL; }
@@ -1021,35 +1029,60 @@ static lv_obj_t *make_meter_bar(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv
 
 static void set_meter(lv_obj_t *fill, int pct, lv_color_t col) { kit_set_meter(fill, pct, col); }
 
+/* A fixed-width flex column for multi-column panel bodies. */
+static lv_obj_t *vit_column(lv_obj_t *parent)
+{
+    lv_obj_t *c = lv_obj_create(parent);
+    lv_obj_remove_style_all(c);
+    lv_obj_set_width(c, LV_PCT(48));
+    lv_obj_set_height(c, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(c, 14, 0);
+    return c;
+}
+
 static lv_obj_t *build_vitals_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "VITALS", back_to_instruments_cb);
-    lv_obj_t *b = kit_body(p);
-    s_vit_temp   = kit_meter_row(b, "CORE TEMP", &s_vit_temp_bar);
-    s_vit_ram    = kit_meter_row(b, "FREE RAM",  &s_vit_ram_bar);
-    s_vit_cell   = kit_meter_row(b, "CELL",      &s_vit_cell_bar);
-    s_vit_uptime = kit_meter_row(b, "UPTIME",    NULL);
 
-    /* UPLINK dossier - info about the AP this unit is associated with (cached by
-     * prop_net's background poll; updated live by the observer). */
-    lv_obj_t *uphdr = lv_label_create(b);
+    /* Two-column body so everything fits on one 1024x600 screen (no scroll). */
+    lv_obj_t *b = lv_obj_create(p);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, LV_PCT(94), LV_PCT(84));
+    lv_obj_align(b, LV_ALIGN_TOP_MID, 0, 72);
+    lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(b, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    lv_obj_t *colL = vit_column(b);
+    lv_obj_t *colR = vit_column(b);
+
+    /* Left column: system vitals + uplink. */
+    s_vit_temp   = kit_meter_row(colL, "CORE TEMP", &s_vit_temp_bar);
+    s_vit_ram    = kit_meter_row(colL, "FREE RAM",  &s_vit_ram_bar);
+    s_vit_cell   = kit_meter_row(colL, "CELL",      &s_vit_cell_bar);
+    s_vit_uptime = kit_meter_row(colL, "UPTIME",    NULL);
+
+    lv_obj_t *uphdr = lv_label_create(colL);
     lv_label_set_text(uphdr, "UPLINK");
     lv_obj_set_style_text_color(uphdr, COL_AMBER, 0);
     lv_obj_set_style_text_font(uphdr, FONT_HEAD, 0);
-    lv_obj_t *card = kit_card(b, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_t *card = kit_card(colL, lv_pct(100), LV_SIZE_CONTENT);
     s_vit_up_net  = kit_info_row(card, "NET",  "--");
     s_vit_up_ap   = kit_info_row(card, "AP",   "--");
     s_vit_up_link = kit_info_row(card, "LINK", "--");
 
-    /* IMU MOTION section (MPU-6050 DMP — absent if sensor not wired) */
-    lv_obj_t *imuhdr = lv_label_create(b);
+    /* Right column: IMU MOTION (MPU-6500 DMP — absent if sensor not wired). */
+    lv_obj_t *imuhdr = lv_label_create(colR);
     lv_label_set_text(imuhdr, "MOTION  [MPU-6500]");
     lv_obj_set_style_text_color(imuhdr, COL_AMBER, 0);
     lv_obj_set_style_text_font(imuhdr, FONT_HEAD, 0);
-    s_vit_yaw   = kit_meter_row(b, "YAW",   &s_vit_yaw_bar);
-    s_vit_pitch = kit_meter_row(b, "PITCH", &s_vit_pitch_bar);
-    s_vit_roll  = kit_meter_row(b, "ROLL",  &s_vit_roll_bar);
-    lv_obj_t *accel_card = kit_card(b, lv_pct(100), LV_SIZE_CONTENT);
+    s_vit_yaw   = kit_meter_row(colR, "YAW",   &s_vit_yaw_bar);
+    s_vit_pitch = kit_meter_row(colR, "PITCH", &s_vit_pitch_bar);
+    s_vit_roll  = kit_meter_row(colR, "ROLL",  &s_vit_roll_bar);
+    lv_obj_t *accel_card = kit_card(colR, lv_pct(100), LV_SIZE_CONTENT);
     s_vit_accel    = kit_info_row(accel_card, "ACCEL", "--");
     s_vit_imu_temp = kit_info_row(accel_card, "CORE TEMP", "--");
     s_vit_steps    = kit_info_row(accel_card, "ON FOOT", "--");
@@ -3201,9 +3234,12 @@ static lv_obj_t *build_sensors_panel(lv_obj_t *parent)
     return m;
 }
 
-/* ---- MOTION SCAN panel — Alien-style radar + gimbal + aux sensors -------
- * Left 440x440: rotating sweep line + range rings + amber target blips.
- * Right: target count, 190x190 artificial horizon, T1/T2/T3 data, aux status. */
+/* ---- MOTION SCAN panel — Alien-style pie-slice radar + gimbals + sensors ----
+ * Left 440x440: pie-slice (fan) with oscillating sweep, range arcs, target blips
+ * within the slice, a 4-quadrant travel-direction ring at the base apex, plus
+ * boolean status words and analog sensor bars (all-sensor overlay).
+ * Right: target count, three orientation gimbal dials (YAW/PITCH/ROLL),
+ * T1/T2/T3 target data, and aux-radar status. */
 
 /* 3-letter status word: bright amber when active, dim when not (reference style). */
 static void set_flag_word(lv_obj_t *lbl, bool active)
@@ -3235,32 +3271,47 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
     lv_obj_set_style_pad_all(rbox, 0, 0);
     lv_obj_clear_flag(rbox, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* 6 range rings (COL_DIM circles, 1m per ring, max 6m) */
-    for (int r = 1; r <= 6; r++) {
-        int d = r * 70;   /* 70, 140, 210, 280, 350, 420 px */
-        lv_obj_t *ring = lv_obj_create(rbox);
-        lv_obj_remove_style_all(ring);
-        lv_obj_set_size(ring, d, d);
-        lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_color(ring, COL_DIM, 0);
-        lv_obj_set_style_border_width(ring, 1, 0);
-        lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_center(ring);
+    /* Range arcs forming the pie-slice (fan), centred on the base apex. ~1 m each. */
+    for (int r = 87; r <= FAN_R; r += 87) {
+        lv_obj_t *arc = lv_arc_create(rbox);
+        lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+        lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_size(arc, r * 2, r * 2);
+        lv_obj_set_pos(arc, FAN_APEX_X - r, FAN_APEX_Y - r);
+        lv_arc_set_rotation(arc, 0);
+        lv_arc_set_bg_angles(arc, FAN_LEFT_DEG, FAN_RIGHT_DEG);
+        lv_arc_set_angles(arc, FAN_LEFT_DEG, FAN_RIGHT_DEG);
+        lv_obj_set_style_arc_width(arc, 1, LV_PART_MAIN);
+        lv_obj_set_style_arc_color(arc, COL_DIM, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(arc, 0, LV_PART_INDICATOR);
     }
 
-    /* Center dot */
-    lv_obj_t *dot = lv_obj_create(rbox);
-    lv_obj_remove_style_all(dot);
-    lv_obj_set_size(dot, 6, 6);
-    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(dot, COL_AMBER, 0);
-    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-    lv_obj_center(dot);
+    /* Fan edge lines + boresight (static — never updated). */
+    static lv_point_precise_t s_fan_left[2], s_fan_right[2], s_fan_bore[2];
+    {
+        const float d2r = 3.14159265f / 180.0f;
+        float la = FAN_LEFT_DEG * d2r, ra = FAN_RIGHT_DEG * d2r;
+        s_fan_left[0].x = FAN_APEX_X; s_fan_left[0].y = FAN_APEX_Y;
+        s_fan_left[1].x = (lv_value_precise_t)(FAN_APEX_X + cosf(la) * FAN_R);
+        s_fan_left[1].y = (lv_value_precise_t)(FAN_APEX_Y + sinf(la) * FAN_R);
+        s_fan_right[0].x = FAN_APEX_X; s_fan_right[0].y = FAN_APEX_Y;
+        s_fan_right[1].x = (lv_value_precise_t)(FAN_APEX_X + cosf(ra) * FAN_R);
+        s_fan_right[1].y = (lv_value_precise_t)(FAN_APEX_Y + sinf(ra) * FAN_R);
+        s_fan_bore[0].x = FAN_APEX_X; s_fan_bore[0].y = FAN_APEX_Y;
+        s_fan_bore[1].x = FAN_APEX_X; s_fan_bore[1].y = FAN_APEX_Y - FAN_R;
+        lv_point_precise_t *segs[3] = { s_fan_left, s_fan_right, s_fan_bore };
+        for (int i = 0; i < 3; i++) {
+            lv_obj_t *ln = lv_line_create(rbox);
+            lv_line_set_points(ln, segs[i], 2);
+            lv_obj_set_style_line_color(ln, COL_DIM, 0);
+            lv_obj_set_style_line_width(ln, 1, 0);
+            lv_obj_align(ln, LV_ALIGN_TOP_LEFT, 0, 0);
+        }
+    }
 
-    /* Sweep line — points at module scope (observer updates them each tick) */
-    s_motion_sweep_pts[0].x = 220; s_motion_sweep_pts[0].y = 220;
-    s_motion_sweep_pts[1].x = 220; s_motion_sweep_pts[1].y = 10;  /* initial: north */
+    /* Sweep line pivoting at the apex (observer oscillates it across the fan). */
+    s_motion_sweep_pts[0].x = FAN_APEX_X; s_motion_sweep_pts[0].y = FAN_APEX_Y;
+    s_motion_sweep_pts[1].x = FAN_APEX_X; s_motion_sweep_pts[1].y = FAN_APEX_Y - FAN_R;
     s_motion_sweep = lv_line_create(rbox);
     lv_line_set_points(s_motion_sweep, s_motion_sweep_pts, 2);
     lv_obj_set_style_line_color(s_motion_sweep, COL_AMBER, 0);
@@ -3304,55 +3355,56 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
     lv_obj_set_style_bg_color(div1, COL_DIM, 0);
     lv_obj_set_style_bg_opa(div1, LV_OPA_COVER, 0);
 
-    /* Gimbal box (190x190) */
-    lv_obj_t *gbox = lv_obj_create(p);
-    lv_obj_set_size(gbox, 190, 190);
-    lv_obj_align(gbox, LV_ALIGN_TOP_LEFT, 462, 128);
-    lv_obj_set_style_bg_color(gbox, COL_PANEL_ITEM, 0);
-    lv_obj_set_style_bg_opa(gbox, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(gbox, COL_DIM, 0);
-    lv_obj_set_style_border_width(gbox, 1, 0);
-    lv_obj_set_style_radius(gbox, 0, 0);
-    lv_obj_set_style_pad_all(gbox, 0, 0);
-    lv_obj_clear_flag(gbox, LV_OBJ_FLAG_SCROLLABLE);
+    /* Three horizon-style attitude indicators — YAW / PITCH / ROLL (all axes).
+     * Each: a box with a fixed centre crosshair + an amber line driven by its
+     * axis in the artificial-horizon style (observer updates the line). */
+    static const char *const dial_name[3] = { "YAW", "PITCH", "ROLL" };
+    static lv_point_precise_t s_hz_h[2] = {{8, 65}, {142, 65}};   /* shared crosshair (box-local) */
+    static lv_point_precise_t s_hz_v[2] = {{75, 12}, {75, 118}};
+    for (int k = 0; k < 3; k++) {
+        lv_obj_t *box = lv_obj_create(p);
+        lv_obj_set_size(box, 150, 130);
+        lv_obj_align(box, LV_ALIGN_TOP_LEFT, 462 + k * 162, 132);
+        lv_obj_set_style_bg_color(box, COL_PANEL_ITEM, 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(box, COL_DIM, 0);
+        lv_obj_set_style_border_width(box, 1, 0);
+        lv_obj_set_style_radius(box, 0, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* "IMU" label inside gimbal */
-    lv_obj_t *g_label = lv_label_create(gbox);
-    lv_label_set_text(g_label, "IMU");
-    lv_obj_set_style_text_color(g_label, COL_DIM, 0);
-    lv_obj_set_style_text_font(g_label, FONT_BODY, 0);
-    lv_obj_align(g_label, LV_ALIGN_TOP_LEFT, 4, 4);
+        lv_obj_t *nm = lv_label_create(box);
+        lv_label_set_text(nm, dial_name[k]);
+        lv_obj_set_style_text_color(nm, COL_MUTE, 0);
+        lv_obj_set_style_text_font(nm, FONT_BODY, 0);
+        lv_obj_align(nm, LV_ALIGN_TOP_LEFT, 4, 2);
 
-    /* Thin cross lines (center reference grid; never update) */
-    static lv_point_precise_t s_gh_pts[2] = {{0, 95}, {190, 95}};
-    lv_obj_t *h_cross = lv_line_create(gbox);
-    lv_line_set_points(h_cross, s_gh_pts, 2);
-    lv_obj_set_style_line_color(h_cross, COL_DIM, 0);
-    lv_obj_set_style_line_width(h_cross, 1, 0);
-    lv_obj_align(h_cross, LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_obj_t *hc = lv_line_create(box);
+        lv_line_set_points(hc, s_hz_h, 2);
+        lv_obj_set_style_line_color(hc, COL_DIM, 0);
+        lv_obj_set_style_line_width(hc, 1, 0);
+        lv_obj_align(hc, LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_obj_t *vc = lv_line_create(box);
+        lv_line_set_points(vc, s_hz_v, 2);
+        lv_obj_set_style_line_color(vc, COL_DIM, 0);
+        lv_obj_set_style_line_width(vc, 1, 0);
+        lv_obj_align(vc, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    static lv_point_precise_t s_gv_pts[2] = {{95, 0}, {95, 190}};
-    lv_obj_t *v_cross = lv_line_create(gbox);
-    lv_line_set_points(v_cross, s_gv_pts, 2);
-    lv_obj_set_style_line_color(v_cross, COL_DIM, 0);
-    lv_obj_set_style_line_width(v_cross, 1, 0);
-    lv_obj_align(v_cross, LV_ALIGN_TOP_LEFT, 0, 0);
+        /* moving indicator line (box-local pts; observer updates) */
+        s_motion_gpts[k][0].x = 8;   s_motion_gpts[k][0].y = 65;
+        s_motion_gpts[k][1].x = 142; s_motion_gpts[k][1].y = 65;
+        s_motion_gdial[k] = lv_line_create(box);
+        lv_line_set_points(s_motion_gdial[k], s_motion_gpts[k], 2);
+        lv_obj_set_style_line_color(s_motion_gdial[k], COL_AMBER, 0);
+        lv_obj_set_style_line_width(s_motion_gdial[k], 3, 0);
+        lv_obj_align(s_motion_gdial[k], LV_ALIGN_TOP_LEFT, 0, 0);
 
-    /* Artificial horizon line — module-scope pts, updated by observer */
-    s_motion_gimbal_pts[0].x = 25;  s_motion_gimbal_pts[0].y = 95;
-    s_motion_gimbal_pts[1].x = 165; s_motion_gimbal_pts[1].y = 95;
-    s_motion_gimbal_line = lv_line_create(gbox);
-    lv_line_set_points(s_motion_gimbal_line, s_motion_gimbal_pts, 2);
-    lv_obj_set_style_line_color(s_motion_gimbal_line, COL_AMBER, 0);
-    lv_obj_set_style_line_width(s_motion_gimbal_line, 3, 0);
-    lv_obj_align(s_motion_gimbal_line, LV_ALIGN_TOP_LEFT, 0, 0);
-
-    /* Pitch/roll text below gimbal */
-    s_motion_gimbal_orient = lv_label_create(p);
-    lv_label_set_text(s_motion_gimbal_orient, "P: 0.0  R: 0.0");
-    lv_obj_set_style_text_color(s_motion_gimbal_orient, COL_MUTE, 0);
-    lv_obj_set_style_text_font(s_motion_gimbal_orient, FONT_BODY, 0);
-    lv_obj_align(s_motion_gimbal_orient, LV_ALIGN_TOP_LEFT, 462, 324);
+        s_motion_gval[k] = lv_label_create(box);
+        lv_label_set_text(s_motion_gval[k], "0\xc2\xb0");
+        lv_obj_set_style_text_color(s_motion_gval[k], COL_AMBER, 0);
+        lv_obj_set_style_text_font(s_motion_gval[k], FONT_BODY, 0);
+        lv_obj_align(s_motion_gval[k], LV_ALIGN_BOTTOM_RIGHT, -4, -2);
+    }
 
     /* Divider */
     lv_obj_t *div2 = lv_obj_create(p);
@@ -3430,10 +3482,10 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
         lv_bar_set_value(s_motion_bars[i], 0, LV_ANIM_OFF);
     }
 
-    /* 4-quadrant direction ring around the centre dot (N/E/S/W). Lit quadrant
-     * shows the operator's movement/lean direction. cx=cy=220 = radar centre. */
+    /* 4-quadrant direction ring around the operator dot at the fan apex (N/E/S/W).
+     * Lit quadrant shows the operator's direction of travel. */
     {
-        const int cx = 220, cy = 220, rr = 30;
+        const int cx = FAN_APEX_X, cy = FAN_APEX_Y, rr = 30;
         /* index 0=N(top) 1=E(right) 2=S(bottom) 3=W(left); 5° inset per side. */
         static const int q_start[4] = { 230, 320, 50, 140 };
         for (int i = 0; i < 4; i++) {
@@ -4050,14 +4102,19 @@ static void ui_observer(const prop_state_t *st, void *ctx)
                 int roll_pct = (int)((roll_d + 90.0f) * 100.0f / 180.0f);
                 set_meter(s_vit_roll_bar, roll_pct, COL_AMBER);
 
+                /* Floats via snprintf — lv_label_set_text_fmt's printf has no %f. */
                 if (s_vit_accel) {
-                    lv_label_set_text_fmt(s_vit_accel, "X%+.2fg  Y%+.2fg  Z%+.2fg",
-                                          (float)imu.ax / 16384.0f,
-                                          (float)imu.ay / 16384.0f,
-                                          (float)imu.az / 16384.0f);
+                    char ab[40];
+                    snprintf(ab, sizeof(ab), "X%+.2fg  Y%+.2fg  Z%+.2fg",
+                             (double)imu.ax / 16384.0, (double)imu.ay / 16384.0,
+                             (double)imu.az / 16384.0);
+                    lv_label_set_text(s_vit_accel, ab);
                 }
-                if (s_vit_imu_temp)
-                    lv_label_set_text_fmt(s_vit_imu_temp, "%.1f \xc2\xb0""C", imu.temp_c);
+                if (s_vit_imu_temp) {
+                    char tb[20];
+                    snprintf(tb, sizeof(tb), "%.1f \xc2\xb0""C", (double)imu.temp_c);
+                    lv_label_set_text(s_vit_imu_temp, tb);
+                }
                 if (s_vit_steps)
                     lv_label_set_text_fmt(s_vit_steps, "%u STEP  ~%um",
                                           (unsigned)imu.step_count,
@@ -4334,28 +4391,33 @@ static void ui_observer(const prop_state_t *st, void *ctx)
 
     /* Drive the MOTION SCAN panel: sweep rotation, target blips, gimbal, aux labels. */
     if (s_cur_kind == PK_MOTION && s_motion_sweep) {
-        /* Advance sweep angle 3° per tick (~60°/s at 20 Hz, one revolution per 6 s). */
-        s_sweep_angle = (s_sweep_angle + 3) % 360;
-        float rad = (float)s_sweep_angle * (3.14159265f / 180.0f);
-        /* +90° rotation maps angle 0 to "north" (top of display); forward = up. */
-        int16_t ex = (int16_t)(220.0f + cosf(rad - 1.5707963f) * 210.0f);
-        int16_t ey = (int16_t)(220.0f - sinf(rad - 1.5707963f) * 210.0f);
-        s_motion_sweep_pts[1].x = ex;
-        s_motion_sweep_pts[1].y = ey;
+        /* Oscillate the sweep across the fan (FAN_LEFT_DEG..FAN_RIGHT_DEG). */
+        s_sweep_angle = (s_sweep_angle + 4) % 360;
+        float ph = (sinf((float)s_sweep_angle * (3.14159265f / 180.0f)) + 1.0f) * 0.5f; /* 0..1 */
+        float sa = (FAN_LEFT_DEG + ph * (FAN_RIGHT_DEG - FAN_LEFT_DEG)) * (3.14159265f / 180.0f);
+        s_motion_sweep_pts[0].x = FAN_APEX_X; s_motion_sweep_pts[0].y = FAN_APEX_Y;
+        s_motion_sweep_pts[1].x = (lv_value_precise_t)(FAN_APEX_X + cosf(sa) * FAN_R);
+        s_motion_sweep_pts[1].y = (lv_value_precise_t)(FAN_APEX_Y + sinf(sa) * FAN_R);
         lv_line_set_points(s_motion_sweep, s_motion_sweep_pts, 2);
 
-        /* Update target blips from LD2450 cache. */
+        /* Update target blips from LD2450 cache, placed within the fan. */
         prop_motion_target_t tgts[3];
         int cnt = prop_motion_get_targets(tgts, 3);
+        const float maxoff = (float)FAN_HALF_DEG * (3.14159265f / 180.0f);
         for (int i = 0; i < 3; i++) {
             if (!s_motion_blips[i]) break;
             if (i < cnt) {
-                int bx = 220 + (int)((int32_t)tgts[i].x_mm * 210 / 6000);
-                int by = 220 - (int)((int32_t)tgts[i].y_mm * 210 / 6000);
-                if (bx < 6)   bx = 6;
-                if (bx > 434) bx = 434;
-                if (by < 6)   by = 6;
-                if (by > 434) by = 434;
+                /* Place by true range (sign-agnostic) so contacts always appear in
+                 * the slice — the LD2450 reports signed X/Y and Y is often negative. */
+                float fx = (float)tgts[i].x_mm, fy = (float)tgts[i].y_mm;
+                float dist = sqrtf(fx * fx + fy * fy);
+                float r = dist * (float)FAN_R / 6000.0f; if (r > FAN_R) r = (float)FAN_R;
+                float off = atan2f(fx, fabsf(fy) + 1.0f);   /* bearing into the forward fan */
+                if (off >  maxoff) off =  maxoff;
+                if (off < -maxoff) off = -maxoff;
+                float scr = (270.0f * (3.14159265f / 180.0f)) + off;
+                int bx = (int)(FAN_APEX_X + cosf(scr) * r);
+                int by = (int)(FAN_APEX_Y + sinf(scr) * r);
                 lv_obj_set_pos(s_motion_blips[i], bx - 6, by - 6);
                 lv_obj_set_style_bg_color(s_motion_blips[i],
                     (tgts[i].speed_mm_s > 200 || tgts[i].speed_mm_s < -200)
@@ -4396,30 +4458,42 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             }
         }
 
-        /* Update gimbal (artificial horizon) from IMU orientation. */
-        if (s_motion_gimbal_line) {
-            float pitch_deg = 0.0f, roll_deg = 0.0f;
-            prop_imu_get_orientation(&pitch_deg, &roll_deg, NULL);
-            /* Pitch shifts horizon vertically: nose up → horizon moves down. */
-            int py = (int)(pitch_deg * 1.5f);
-            if (py < -80) py = -80;
-            if (py >  80) py =  80;
-            /* Roll tilts the line: endpoints diverge from center up/down. */
-            float rrad = roll_deg * (3.14159265f / 180.0f);
-            int dx = (int)(cosf(rrad) * 70.0f);
-            int dy = (int)(sinf(rrad) * 70.0f);
-            s_motion_gimbal_pts[0].x = (int16_t)(95 - dx);
-            s_motion_gimbal_pts[0].y = (int16_t)(95 + py + dy);
-            s_motion_gimbal_pts[1].x = (int16_t)(95 + dx);
-            s_motion_gimbal_pts[1].y = (int16_t)(95 + py - dy);
-            lv_line_set_points(s_motion_gimbal_line, s_motion_gimbal_pts, 2);
-        }
-        if (s_motion_gimbal_orient) {
-            float p2 = 0.0f, r2 = 0.0f;
-            prop_imu_get_orientation(&p2, &r2, NULL);
-            char ob[32];
-            snprintf(ob, sizeof(ob), "P: %.1f  R: %.1f", (double)p2, (double)r2);
-            label_set_text_cached(s_motion_gimbal_orient, ob);
+        /* Horizon-style attitude indicators (YAW / PITCH / ROLL). Box-local
+         * geometry: centre (75,65), half-width ~67, half-height ~50. */
+        if (s_motion_gdial[0]) {
+            float pitch_deg = 0.0f, roll_deg = 0.0f, yaw_deg = 0.0f;
+            prop_imu_get_orientation(&pitch_deg, &roll_deg, &yaw_deg);
+
+            /* YAW: heading bug — vertical line slides L/R with heading (±180°). */
+            float yw = yaw_deg;
+            while (yw > 180.0f) yw -= 360.0f;
+            while (yw < -180.0f) yw += 360.0f;
+            int yx = 75 + (int)(yw / 180.0f * 60.0f);
+            if (yx < 10)  yx = 10;
+            if (yx > 140) yx = 140;
+            s_motion_gpts[0][0].x = yx; s_motion_gpts[0][0].y = 18;
+            s_motion_gpts[0][1].x = yx; s_motion_gpts[0][1].y = 112;
+            lv_line_set_points(s_motion_gdial[0], s_motion_gpts[0], 2);
+
+            /* PITCH: horizon climbs/dives — horizontal line shifts vertically. */
+            int py = 65 + (int)(pitch_deg * 1.1f);
+            if (py < 16)  py = 16;
+            if (py > 114) py = 114;
+            s_motion_gpts[1][0].x = 8;   s_motion_gpts[1][0].y = py;
+            s_motion_gpts[1][1].x = 142; s_motion_gpts[1][1].y = py;
+            lv_line_set_points(s_motion_gdial[1], s_motion_gpts[1], 2);
+
+            /* ROLL: horizon tilts — line through centre rotated by roll. */
+            float rr = roll_deg * (3.14159265f / 180.0f);
+            int dx = (int)(cosf(rr) * 60.0f), dy = (int)(sinf(rr) * 60.0f);
+            s_motion_gpts[2][0].x = 75 - dx; s_motion_gpts[2][0].y = 65 + dy;
+            s_motion_gpts[2][1].x = 75 + dx; s_motion_gpts[2][1].y = 65 - dy;
+            lv_line_set_points(s_motion_gdial[2], s_motion_gpts[2], 2);
+
+            float vals[3] = { yaw_deg, pitch_deg, roll_deg };
+            for (int k = 0; k < 3; k++)
+                if (s_motion_gval[k])
+                    lv_label_set_text_fmt(s_motion_gval[k], "%d\xc2\xb0", (int)vals[k]);
         }
 
         /* Aux radar status labels — throttled to 2 Hz (every 10 ticks at 20 Hz). */
@@ -4481,16 +4555,20 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             lv_bar_set_value(s_motion_bars[4], acc_pct,  LV_ANIM_OFF);
         }
 
-        /* 4-quadrant direction ring: light the quadrant the operator leans/moves
-         * toward (from horizontal accel). Mount-dependent — tune mapping on HW. */
+        /* 4-quadrant direction ring: light the quadrant of TRAVEL, not tilt.
+         * Subtract the gravity vector (from the DMP quaternion) from the measured
+         * accel to get linear acceleration; its horizontal direction = travel.
+         * Mount-dependent axis mapping — tune on HW. */
         if (s_motion_dir_q[0]) {
             prop_imu_data_t im; prop_imu_get_data(&im);
-            float hx = (float)im.ax / 16384.0f;
-            float hy = (float)im.ay / 16384.0f;
-            float hmag = sqrtf(hx * hx + hy * hy);
-            int lit = -1;                          /* -1 = at rest (deadband) */
-            if (hmag > 0.15f) {
-                float ang = atan2f(hy, hx);        /* -pi..pi */
+            float gx = 2.0f * (im.qx * im.qz - im.qw * im.qy);
+            float gy = 2.0f * (im.qw * im.qx + im.qy * im.qz);
+            float lax = (float)im.ax / 16384.0f - gx;   /* linear accel (g), gravity removed */
+            float lay = (float)im.ay / 16384.0f - gy;
+            float lmag = sqrtf(lax * lax + lay * lay);
+            int lit = -1;                          /* -1 = not moving (deadband) */
+            if (lmag > 0.12f) {
+                float ang = atan2f(lay, lax);      /* -pi..pi */
                 if      (ang >= -0.785f && ang <  0.785f) lit = 1;  /* +x -> E */
                 else if (ang >=  0.785f && ang <  2.356f) lit = 0;  /* +y -> N */
                 else if (ang >= -2.356f && ang < -0.785f) lit = 2;  /* -y -> S */
