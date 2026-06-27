@@ -166,18 +166,18 @@ fail:
 static void imu_task(void *arg)
 {
     (void)arg;
-    int16_t  accel_raw[1][3], gyro_raw[1][3];
-    float    accel_g[1][3], gyro_dps[1][3];
-    int32_t  quat[1][4];
+    int16_t  accel_raw[2][3], gyro_raw[2][3];
+    float    accel_g[2][3], gyro_dps[2][3];
+    int32_t  quat[2][4];
     float    pitch, roll, yaw;
     uint16_t len;
     int      ff_run_ms = 0;
     int      mv_run_ms = 0;
 
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(40));
 
-        len = 1;
+        len = 2;
         if (mpu6500_dmp_read(&s_handle, accel_raw, accel_g, gyro_raw, gyro_dps,
                              quat, &pitch, &roll, &yaw, &len) != 0) {
             continue;

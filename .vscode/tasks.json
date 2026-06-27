@@ -20,7 +20,7 @@
             },
             "windows": {
                 "command": "pwsh",
-                "args": ["-NoProfile", "-File", "${workspaceFolder}\\tools\\dev.ps1", "build"]
+                "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\tools\\dev.ps1", "build"]
             },
             "problemMatcher": [],
             "group": {
@@ -47,7 +47,7 @@
             },
             "windows": {
                 "command": "pwsh",
-                "args": ["-NoProfile", "-File", "${workspaceFolder}\\tools\\dev.ps1", "bf"]
+                "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\tools\\dev.ps1", "bf"]
             },
             "problemMatcher": [],
             "group": "build",

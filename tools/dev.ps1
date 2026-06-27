@@ -23,7 +23,77 @@ param(
   [string]$Token = "prop-ota-2024"
 )
 
-& "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"
+function Get-IDFActivationScript {
+  # 1. Check if idf.py is already available in PATH
+  if (Get-Command "idf.py" -ErrorAction SilentlyContinue) {
+    Write-Host "idf.py is already available in PATH."
+    return $null
+  }
+
+  # 2. Check the default path first
+  $defaultPath = "C:\Espressif\tools\Microsoft.v6.0.1.PowerShell_profile.ps1"
+  if (Test-Path $defaultPath) {
+    Write-Host "Found default IDF activation script: $defaultPath"
+    return $defaultPath
+  }
+
+  # 3. Check eim_idf.json in common locations
+  $eimPaths = @(
+    "C:\Espressif\tools\eim_idf.json",
+    "$env:USERPROFILE\Espressif\tools\eim_idf.json",
+    "$env:USERPROFILE\.espressif\tools\eim_idf.json",
+    "$env:APPDATA\.espressif\tools\eim_idf.json"
+  )
+  foreach ($eimPath in $eimPaths) {
+    if (Test-Path $eimPath) {
+      try {
+        $eim = Get-Content $eimPath -Raw | ConvertFrom-Json
+        $idf = $null
+        if ($eim.idfSelectedId) {
+          $idf = $eim.idfInstalled | Where-Object { $_.id -eq $eim.idfSelectedId } | Select-Object -First 1
+        }
+        if (-not $idf) {
+          $idf = $eim.idfInstalled | Select-Object -First 1
+        }
+        if ($idf -and $idf.activationScript -and (Test-Path $idf.activationScript)) {
+          Write-Host "Found IDF activation script from '$eimPath': $($idf.activationScript)"
+          return $idf.activationScript
+        }
+      } catch {
+        # Ignore JSON parsing errors
+      }
+    }
+  }
+
+  # 4. Scan C:\Espressif\tools and other directories for Microsoft.*.PowerShell_profile.ps1
+  $searchDirs = @(
+    "C:\Espressif\tools",
+    "$env:USERPROFILE\Espressif\tools",
+    "$env:USERPROFILE\.espressif\tools",
+    "$env:APPDATA\.espressif\tools"
+  )
+  foreach ($dir in $searchDirs) {
+    if (Test-Path $dir) {
+      $profileScripts = Get-ChildItem -Path $dir -Filter "*PowerShell_profile.ps1" -ErrorAction SilentlyContinue
+      if ($profileScripts) {
+        $candidate = ($profileScripts | Sort-Object Name -Descending | Select-Object -First 1).FullName
+        Write-Host "Found IDF activation script in '$dir': $candidate"
+        return $candidate
+      }
+    }
+  }
+
+  return $null
+}
+
+$activationScript = Get-IDFActivationScript
+if ($activationScript) {
+  . $activationScript
+} else {
+  if (-not (Get-Command "idf.py" -ErrorAction SilentlyContinue)) {
+    Write-Warning "Could not find an ESP-IDF activation script, and idf.py is not in PATH."
+  }
+}
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
 
