@@ -87,7 +87,7 @@ static void traffic_task(void *arg)
 
 esp_err_t prop_traffic_init(void)
 {
-    if (xTaskCreate(traffic_task, "prop_traffic", 3072, NULL, 3, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(traffic_task, "prop_traffic", 3072, NULL, 3, NULL, 0) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TR_TAG, "CSI traffic generator ready");

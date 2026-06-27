@@ -236,7 +236,7 @@ esp_err_t prop_imu_init(void)
     }
     s_data.online = true;
     ESP_LOGI(TAG, "MPU-6500 eMD DMP ready");
-    xTaskCreate(imu_task, "imu_dmp", 4096, NULL, 5, NULL);
+    xTaskCreatePinnedToCore(imu_task, "imu_dmp", 4096, NULL, 5, NULL, 0);
     return ESP_OK;
 }
 
