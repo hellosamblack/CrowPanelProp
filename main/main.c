@@ -146,6 +146,14 @@ void app_main(void)
                    esp_err_to_name(aux_err));
     }
 
+    /* MPU-6050 IMU on I2C_NUM_1 (GPIO27/28) with DMP. NON-fatal: absent if
+     * the module is not wired; VITALS panel shows "-- °" for angles. */
+    esp_err_t imu_err = prop_imu_init();
+    if (imu_err != ESP_OK) {
+        MAIN_ERROR("IMU unavailable (%s) — VITALS motion data offline",
+                   esp_err_to_name(imu_err));
+    }
+
     /* WiFi (AP+STA via the C6) then the live control API. Both are NON-fatal:
      * the C6 radio is optional to the prop's core function, so a co-processor
      * problem must not take down the display/LEDs/buttons. */

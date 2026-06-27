@@ -31,6 +31,7 @@
 #include "prop_traffic.h"
 #include "prop_calib.h"
 #include "prop_radar.h"
+#include "prop_imu.h"
 
 #define MAIN_TAG "MAIN"
 #define MAIN_INFO(fmt, ...)  ESP_LOGI(MAIN_TAG, fmt, ##__VA_ARGS__)
