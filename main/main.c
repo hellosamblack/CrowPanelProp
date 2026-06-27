@@ -132,10 +132,11 @@ void app_main(void)
                    esp_err_to_name(motion_err));
     }
 
-    /* MPU-6050 IMU on I2C (addr 0x68, shared bus). NON-fatal: sensor may not be wired. */
+    /* MPU-6500 IMU with DMP on the shared I2C_NUM_0 bus (GPIO45/46, addr 0x68).
+     * NON-fatal: absent if the module is not wired; VITALS/MOTION SCAN show "-- °". */
     esp_err_t imu_err = prop_imu_init();
     if (imu_err != ESP_OK) {
-        MAIN_ERROR("IMU unavailable (%s) — gimbal display disabled",
+        MAIN_ERROR("IMU unavailable (%s) — gimbal/VITALS motion data offline",
                    esp_err_to_name(imu_err));
     }
 
@@ -144,14 +145,6 @@ void app_main(void)
     if (aux_err != ESP_OK) {
         MAIN_ERROR("aux radar init partial (%s) — offline sensors will show AUX_OFFLINE",
                    esp_err_to_name(aux_err));
-    }
-
-    /* MPU-6050 IMU on I2C_NUM_1 (GPIO27/28) with DMP. NON-fatal: absent if
-     * the module is not wired; VITALS panel shows "-- °" for angles. */
-    imu_err = prop_imu_init();
-    if (imu_err != ESP_OK) {
-        MAIN_ERROR("IMU unavailable (%s) — VITALS motion data offline",
-                   esp_err_to_name(imu_err));
     }
 
     /* WiFi (AP+STA via the C6) then the live control API. Both are NON-fatal:

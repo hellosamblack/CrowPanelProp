@@ -29,10 +29,17 @@ typedef struct {
     char     name[20];     /* advertised local name, "" if anonymous */
     uint16_t company_id;   /* BT SIG Company ID, or PROP_BLE_NONE */
     uint16_t appearance;   /* BT SIG appearance (device class), 0 if absent */
+    uint8_t  uuid[16];     /* most-identifying advertised service UUID (LE bytes) */
+    uint8_t  uuid_len;     /* 0 = none, else 2 / 4 / 16 bytes */
     uint32_t last_seen;    /* esp_timer ms at last advert */
 } prop_ble_dev_t;
 
 #define PROP_BLE_TXPWR_NONE 127
+
+/* This scanner only realistically hears devices within ~10 m; distance estimates
+ * are clamped here, and an implausible advertised TX power is overridden. */
+#define PROP_BLE_RANGE_MAX_M 10.0f
+#define PROP_BLE_TXPWR_TYP   (-52)   /* assumed TX power (dBm) when none / implausible */
 
 /* Bring up the NimBLE host + start the passive scan task. Returns an error
  * (non-fatal) if BLE is unavailable. Call after prop_net_init (shares the C6). */
@@ -60,7 +67,13 @@ const char *prop_ble_appearance_label(uint16_t appearance);
 
 /* Rough distance estimate (metres) from RSSI via the log-distance path-loss model.
  * If tx_power is a real value (not PROP_BLE_TXPWR_NONE) it sharpens the estimate.
+ * Implausible advertised TX powers are overridden (see prop_ble_calib_txpower) and
+ * the result is clamped to PROP_BLE_RANGE_MAX_M — the scanner's realistic range.
  * It's a prop readout, not a tape measure — accurate to "near / across the room / far". */
 float prop_ble_distance_m(int8_t rssi, int8_t tx_power);
+
+/* The TX power actually used for ranging: the advertised value when it is present
+ * and plausible, otherwise PROP_BLE_TXPWR_TYP. Lets the UI show "advertised → used". */
+int8_t prop_ble_calib_txpower(int8_t tx_power);
 
 #endif /* _PROP_BLE_H_ */

@@ -85,16 +85,26 @@ const char *prop_ble_appearance_label(uint16_t appearance)
     }
 }
 
+int8_t prop_ble_calib_txpower(int8_t tx_power)
+{
+    /* Many devices either omit TX power or advertise a wildly optimistic value
+     * (which inflates the distance estimate to hundreds of metres). Trust it only
+     * inside a sane window; otherwise fall back to a typical handset level. */
+    if (tx_power == PROP_BLE_TXPWR_NONE) return PROP_BLE_TXPWR_TYP;
+    if (tx_power < -40 || tx_power > 12)  return PROP_BLE_TXPWR_TYP;
+    return tx_power;
+}
+
 float prop_ble_distance_m(int8_t rssi, int8_t tx_power)
 {
     /* Log-distance path loss: d = 10^((P1m - rssi) / (10 * n)).
-     *   P1m  reference RSSI at 1 m. Use the advertised TX power when present
-     *        (offset to an approximate 1 m level), else a typical -59 dBm.
+     *   P1m  reference RSSI at 1 m, derived from the (calibrated) TX power.
      *   n    path-loss exponent (~2.5 indoors). */
-    float p1m = (tx_power != PROP_BLE_TXPWR_NONE) ? (float)tx_power - 7.0f : -59.0f;
+    float p1m = (float)prop_ble_calib_txpower(tx_power) - 7.0f;
     const float n = 2.5f;
     float d = powf(10.0f, (p1m - (float)rssi) / (10.0f * n));
-    if (d < 0.1f) d = 0.1f;
+    if (d < 0.1f)                  d = 0.1f;
+    if (d > PROP_BLE_RANGE_MAX_M)  d = PROP_BLE_RANGE_MAX_M;   /* scanner's real range */
     return d;
 }
 
@@ -103,7 +113,8 @@ float prop_ble_distance_m(int8_t rssi, int8_t tx_power)
 /* Insert or refresh a contact. Called only from the NimBLE host task. */
 static void upsert_device(const uint8_t mac[6], int8_t rssi,
                           const char *name, int name_len, uint16_t company_id,
-                          int8_t tx_power, uint16_t appearance)
+                          int8_t tx_power, uint16_t appearance,
+                          const uint8_t *uuid, uint8_t uuid_len)
 {
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
@@ -147,6 +158,10 @@ static void upsert_device(const uint8_t mac[6], int8_t rssi,
     }
     if (appearance != 0) {
         s_devs[slot].appearance = appearance;
+    }
+    if (uuid && uuid_len) {
+        memcpy(s_devs[slot].uuid, uuid, uuid_len);
+        s_devs[slot].uuid_len = uuid_len;
     }
     if (name && name_len > 0) {
         int n = name_len < (int)sizeof(s_devs[slot].name) - 1
@@ -236,9 +251,21 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         }
         int8_t tx_power = fields.tx_pwr_lvl_is_present ? fields.tx_pwr_lvl : PROP_BLE_TXPWR_NONE;
         uint16_t appearance = fields.appearance_is_present ? fields.appearance : 0;
+
+        /* Capture the most-identifying advertised service UUID (LE bytes): prefer a
+         * full 128-bit UUID, then 32-bit, then 16-bit. */
+        const uint8_t *uuid = NULL; uint8_t uuid_len = 0;
+        if (fields.num_uuids128 > 0) {
+            uuid = fields.uuids128[0].value;               uuid_len = 16;
+        } else if (fields.num_uuids32 > 0) {
+            uuid = (const uint8_t *)&fields.uuids32[0].value; uuid_len = 4;
+        } else if (fields.num_uuids16 > 0) {
+            uuid = (const uint8_t *)&fields.uuids16[0].value; uuid_len = 2;
+        }
+
         upsert_device(event->disc.addr.val, event->disc.rssi,
                       (const char *)fields.name, fields.name_len, company,
-                      tx_power, appearance);
+                      tx_power, appearance, uuid, uuid_len);
     } else if (event->type == BLE_GAP_EVENT_DISC_COMPLETE) {
         /* Scan windows shouldn't end (we ask for forever), but restart if one does. */
         ESP_LOGW(BLE_TAG, "scan ended (reason %d) — restarting", event->disc_complete.reason);
