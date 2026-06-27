@@ -176,14 +176,13 @@ gpios:
     notes: MIC_CLK_GPIO
 
   - gpio: 25
-    status: claimed         # SEN0395 UART1 TX — prop_aux_radar.c
-    function: SEN0395 DFRobot 24GHz mmWave UART1 TX
+    status: available
+    function: ~
     connector_pin: J7/17
-    file: main/prop_aux_radar.c
+    file: ~
     caps: [gpio_matrix]
     notes: >
-      UART1 TX routed via GPIO matrix. J7/A17 adjacent to 5V supply on J7/B4
-      (SEN0395 needs ≥3.6V — J7 5V used). Removed from bsp_aio s_pins[].
+      Previously SEN0395 UART1 TX; SEN0395 moved to J10 (GPIO34/33). Now free.
 
   - gpio: 26
     status: claimed
@@ -194,13 +193,13 @@ gpios:
     notes: MIC_DIN_GPIO
 
   - gpio: 27
-    status: claimed         # SEN0395 UART1 RX — prop_aux_radar.c
-    function: SEN0395 DFRobot 24GHz mmWave UART1 RX
+    status: available
+    function: ~
     connector_pin: J7/19
-    file: main/prop_aux_radar.c
+    file: ~
     caps: [gpio_matrix]
     notes: >
-      UART1 RX routed via GPIO matrix. Removed from bsp_aio s_pins[].
+      Previously SEN0395 UART1 RX; SEN0395 moved to J10 (GPIO34/33). Now free.
 
   - gpio: 28
     status: claimed         # BTN_MODE reassigned here from GPIO33
@@ -236,25 +235,25 @@ gpios:
     notes: CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE
 
   - gpio: 33
-    status: claimed         # Seeed 24GHz UART3 RX — prop_aux_radar.c
-    function: Seeed 101991030 24GHz mmWave UART3 RX
+    status: claimed         # SEN0395 UART1 RX — prop_aux_radar.c
+    function: SEN0395 DFRobot 24GHz mmWave UART1 RX
     connector_pin: J10/2
     file: main/prop_aux_radar.c
     caps: [gpio_matrix, uart3_rx, adc_capable]
     notes: >
-      J10 UART3 RX (level-shifted, 5V-tolerant). BTN_MODE moved to GPIO28.
-      UART3 at 115200 baud driven by prop_aux_radar.c.
+      J10 UART1 RX (routed via GPIO matrix). SEN0395 moved here from J7/GPIO27.
+      BTN_MODE previously on GPIO33; moved to GPIO28.
 
   - gpio: 34
-    status: claimed         # Seeed 24GHz UART3 TX — prop_aux_radar.c
-    function: Seeed 101991030 24GHz mmWave UART3 TX
+    status: claimed         # SEN0395 UART1 TX — prop_aux_radar.c
+    function: SEN0395 DFRobot 24GHz mmWave UART1 TX
     connector_pin: J10/1
     file: main/prop_aux_radar.c
     caps: [gpio_matrix, uart3_tx, strapping_jtag_sel]
     notes: >
-      J10 UART3 TX (level-shifted, 5V-tolerant). Strapping pin: JTAG_SEL
-      sampled at boot; pull-up holds high (JTAG disabled) — safe for normal
-      operation. UART3 at 115200 baud driven by prop_aux_radar.c.
+      J10 UART1 TX (routed via GPIO matrix). SEN0395 moved here from J7/GPIO25.
+      Strapping pin: JTAG_SEL sampled at boot; pull-up holds high (JTAG
+      disabled) — safe for normal operation.
 
   - gpio: 40
     status: claimed
@@ -289,24 +288,24 @@ gpios:
     notes: I2C_GPIO_SCL (I2C_NUM_0, bsp_i2c driver)
 
   - gpio: 47
-    status: pending         # LED_SIGNAL placeholder on UART1-TX header pin
-    function: LED Signal (placeholder) / UART1 TX
+    status: claimed         # MR24HPC1 UART3 TX — prop_aux_radar.c
+    function: Seeed MR24HPC1 24GHz mmWave UART3 TX
     connector_pin: J2/2
-    file: peripheral/bsp_io/bsp_io.c:18
+    file: main/prop_aux_radar.c
     caps: [gpio_matrix, uart1_tx]
     notes: >
-      J2 UART1 TX. bsp_io.c comment "UART1-TX header pin; verify before wiring".
-      Reassign to uart_driver if using J2 for UART1.
+      J2 pin 2. UART3 TX routed via GPIO matrix (SEEED_TX_GPIO=47).
+      Previously placeholder for LED_SIGNAL — LED must be reassigned if needed.
 
   - gpio: 48
-    status: pending         # LED_POWER — bsp_io.c marks as "confirmed broken-out"
-    function: LED Power / UART1 RX
+    status: claimed         # MR24HPC1 UART3 RX — prop_aux_radar.c
+    function: Seeed MR24HPC1 24GHz mmWave UART3 RX
     connector_pin: J2/1
-    file: peripheral/bsp_io/bsp_io.c:17
+    file: main/prop_aux_radar.c
     caps: [gpio_matrix, uart1_rx]
     notes: >
-      J2 UART1 RX. bsp_io.c: "Only GPIO48 is confirmed broken-out + free
-      (UART1-RX header)." Using as LED output; reassign to uart_driver for UART1.
+      J2 pin 1. UART3 RX routed via GPIO matrix (SEEED_RX_GPIO=48).
+      Previously placeholder for LED_POWER — LED must be reassigned if needed.
 
   - gpio: 49
     status: shared          # bsp_aio "IO49 HDR" — ADC2 ch0
