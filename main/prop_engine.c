@@ -1,6 +1,7 @@
 /* prop_engine — scene state machine + animation task + observer fan-out. */
 #include "prop_engine.h"
 #include "prop_audio.h"
+#include "prop_imu.h"
 #include "bsp_io.h"
 #include <string.h>
 #include <strings.h>   /* strcasecmp */
@@ -281,6 +282,25 @@ static void animate_task(void *arg)
         s_state.led_mask = scene_led_mask(s_state.scene, s_state.tick);
         publish_locked();
         xSemaphoreGive(s_mutex);
+
+        /* IMU gestures → prop reactions. Done OUTSIDE the lock because
+         * prop_engine_set_scene() takes s_mutex (non-recursive). */
+        prop_imu_tap_t tap = prop_imu_get_tap();
+        if (tap.present) {
+            if (tap.count >= 2) {                 /* double-tap = contact ping */
+                prop_audio_play(PA_SIGNAL);
+                prop_engine_set_scene(SCENE_SIGNAL_ACQUIRED);
+            } else {
+                prop_audio_play(PA_TAB);          /* single tap = soft ack */
+            }
+        }
+        prop_imu_event_t ev = prop_imu_get_motion_event();
+        if (ev == PROP_IMU_EVT_FREEFALL) {
+            prop_audio_play(PA_ALERT);
+            prop_engine_set_scene(SCENE_ALERT);   /* "UNIT DROPPED" */
+        }
+        /* PROP_IMU_EVT_MOTION is surfaced in the UI only (no scene change). */
+
         xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(ANIM_PERIOD_MS));
     }
 }
