@@ -182,6 +182,8 @@ The left rail is 7 top-level entries: CONSOLE, ARCHIVE, **INSTRUMENTS**, **SENSO
 
 > **SCANNER (`PK_MOTION`) is the full-screen default boot landing** (`prop_ui_init` opens it, not `PK_HOME`). It has **no title header or BACK button** — it draws its own bordered full-panel container instead of `make_panel`, so navigate away via the rail. (Note: the INSTRUMENTS submenu also lists a separate "SCANNER" = the bare `PK_NONE` console readout — two different things named SCANNER.)
 
+> SCANNER geometry notes: the fan **display** half-angle (`FAN_HALF_DEG`, 50°) is intentionally narrower than the LD2450's real ±60° FOV so the width-limited radius grows and the fan fills the page — targets beyond ±50° clamp to the wedge edge (cosmetic). Tapping the **operator dot at the fan apex** opens the travel-direction calibration (`PK_DIRCAL`, goto `dircal`): a guided fwd/back/left/right walk solves the board→world yaw, persisted as NVS `dir_phi` and applied (a rotation) before the direction-ring quadrant pick so "forward" = the radar boresight = ring North.
+
 A panel's BACK returns to its group; `rail_sync()` maps each sub-panel back to its group cell for the highlight. Deep-link goto names (`spectrum`, `ble`, …) still open panels directly.
 
 ### Radio-data instruments (C6 sensors)
@@ -213,8 +215,9 @@ The C6 co-processor is mined for prop "sensor" data beyond plain WiFi — the th
 
 `POST /cmd` (JSON): `{"cmd":"scene","value":"SCANNING"}`, `{"cmd":"ui","screen":"<name>"}`
 (screens: `home`=console, `scanner archive cassette insights menu wifi display audio leds
-vitals scan spectrum rfband ble csi instruments sensors about`; `instruments`/`sensors`
-are the rail submenus, the rest deep-link straight to a panel),
+vitals scan spectrum rfband ble csi instruments sensors dircal about`; `instruments`/`sensors`
+are the rail submenus, `dircal` is the SCANNER travel-direction calibration (opened
+by tapping the apex operator dot), the rest deep-link straight to a panel),
 `{"cmd":"input","control":"selector|tab|action","arg":"cw|ccw|press"|N}`
 (simulated dial/tab/action nav; boots to `home`),
 `{"cmd":"sens","value":0-100}`, `{"cmd":"fx","on":true,"value":0-100}` (CRT overlay on/off + intensity),
