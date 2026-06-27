@@ -195,8 +195,12 @@ static lv_obj_t *s_csi_geiger_lbl; /* SPECTRE GEIGER button label */
 static lv_obj_t *s_motion_tgt_label;    /* "TARGETS: N" header */
 static lv_obj_t *s_motion_alert;        /* "MOTION DETECTED" flash */
 static lv_obj_t *s_motion_blips[3];     /* target blips (amber circles) */
-static lv_obj_t *s_motion_trows[3];     /* T1/T2/T3 data label rows */
-static lv_obj_t *s_motion_sweep;        /* oscillating fan sweep lv_line */
+static lv_obj_t *s_motion_tdist[3];     /* T1/T2/T3 distance labels (large) */
+static lv_obj_t *s_motion_tvel[3];      /* T1/T2/T3 velocity labels */
+static lv_obj_t *s_motion_tarrow[3];    /* T1/T2/T3 bearing arrow lines */
+#define PULSE_BAND  9      /* contiguous sub-arcs forming one thick gradient band */
+#define PULSE_WIDTH 4      /* px per sub-arc -> ~36 px band thickness */
+static lv_obj_t *s_motion_pulse[PULSE_BAND]; /* one Halo-style pulse: bright leading edge -> 0 trailing */
 static lv_obj_t *s_motion_gdial[3];     /* YAW/PITCH/ROLL gimbal needle lines */
 static lv_obj_t *s_motion_gval[3];      /* per-dial value labels */
 static lv_obj_t *s_motion_aux_seeed;    /* Seeed sensor status label */
@@ -209,16 +213,38 @@ static lv_obj_t *s_motion_bars[MOTION_BAR_COUNT];     /* CSI RF MIC SIG ACC anal
 static lv_obj_t *s_motion_bar_lbls[MOTION_BAR_COUNT];
 static lv_obj_t *s_motion_dir_q[4];     /* N/E/S/W direction-ring quadrant arcs */
 static lv_obj_t *s_motion_dir_dot;      /* operator dot at the ring centre (fan apex) */
-static int       s_sweep_angle;         /* sweep phase 0-359 (oscillates across the fan) */
+/* Animated radar scale: one pixels-per-metre value drives arcs, labels, and blips. */
+static float     s_motion_ppm;            /* current px per metre (animated in Task 4) */
+static lv_obj_t *s_motion_grid_arc[6];    /* major range rings, 1..6 m */
+static lv_obj_t *s_motion_grid_lbl[6];    /* "Nm" labels riding the right fan edge */
+/* Autorange ladder — full-scale distance (m) at the rim. LD2450 max ~6 m. */
+static const float MOTION_LADDER[5] = { 1.0f, 2.0f, 3.0f, 4.5f, 6.0f };
+#define MOTION_NLEVEL 5
+static int   s_motion_level;        /* committed ladder index */
+static int   s_motion_level_pend;   /* candidate index awaiting dwell */
+static int   s_motion_dwell;        /* ticks the candidate has persisted */
+static float s_motion_ppm_from;     /* slide start ppm */
+static float s_motion_ppm_to;       /* slide target ppm */
+static int   s_motion_anim_ms;      /* slide elapsed ms; -1 = idle */
+static lv_obj_t *s_motion_grid_minor[2];  /* 0.5 m / 1.5 m rings, shown when scale <= 2 m */
+/* Comet trails: per-target ring buffer of recent world samples (mm), re-projected
+ * each frame so the tail rescales with autorange. */
+#define TRAIL_LEN 8
+static lv_obj_t *s_motion_trail[3][TRAIL_LEN];   /* fading dot pool per target */
+static int s_trail_x[3][TRAIL_LEN], s_trail_y[3][TRAIL_LEN];  /* world history (mm) */
+static int s_trail_n[3];      /* valid samples per slot */
+static int s_trail_head[3];   /* ring-buffer head (newest) */
+static int s_trail_tick;      /* sample decimation counter */
 /* Module-scope point buffers — LVGL keeps a pointer; must outlive the widgets. */
-static lv_point_precise_t s_motion_sweep_pts[2];
+static float s_pulse_lead_m;            /* pulse leading-edge range (m); projected via ppm so it stays locked to the grid */
 static lv_point_precise_t s_motion_gpts[3][2];   /* needle points per gimbal dial */
+static lv_point_precise_t s_motion_apts[3][2];   /* bearing arrow points per target */
 
 /* Fan radar geometry (inside the 440x440 radar box). Apex at the base centre. */
 #define FAN_APEX_X   220
-#define FAN_APEX_Y   410
+#define FAN_APEX_Y   330      /* apex raised to clear the bottom status overlay; fan sweeps upward */
 #define FAN_R        240      /* outer radius (fits the box at ±60°) */
-#define FAN_HALF_DEG 60       /* half opening angle = LD2450 horizontal FOV */
+#define FAN_HALF_DEG  60      /* half opening angle = LD2450 horizontal FOV */
 #define FAN_LEFT_DEG  (270 - FAN_HALF_DEG)   /* LVGL: 270 = up */
 #define FAN_RIGHT_DEG (270 + FAN_HALF_DEG)
 
@@ -398,14 +424,27 @@ static void close_panel(void)
     s_pin_aout = NULL; s_pin_slider = NULL; s_pin_entry = NULL;
     s_connect_pending = false;
     s_motion_tgt_label = NULL; s_motion_alert = NULL;
-    for (int i = 0; i < 3; i++) { s_motion_blips[i] = NULL; s_motion_trows[i] = NULL; }
-    s_motion_sweep = NULL;
+    for (int i = 0; i < 3; i++) {
+        s_motion_blips[i]  = NULL;
+        s_motion_tdist[i]  = NULL;
+        s_motion_tvel[i]   = NULL;
+        s_motion_tarrow[i] = NULL;
+    }
+    for (int i = 0; i < PULSE_BAND; i++) s_motion_pulse[i] = NULL;
     for (int i = 0; i < 3; i++) { s_motion_gdial[i] = NULL; s_motion_gval[i] = NULL; }
     s_motion_aux_seeed = NULL; s_motion_aux_sen = NULL;
     for (int i = 0; i < MOTION_FLAG_COUNT; i++) s_motion_flags[i] = NULL;
     for (int i = 0; i < MOTION_BAR_COUNT; i++) { s_motion_bars[i] = NULL; s_motion_bar_lbls[i] = NULL; }
     for (int i = 0; i < 4; i++) s_motion_dir_q[i] = NULL;
     s_motion_dir_dot = NULL;
+    for (int i = 0; i < 6; i++) { s_motion_grid_arc[i] = NULL; s_motion_grid_lbl[i] = NULL; }
+    for (int i = 0; i < 2; i++) s_motion_grid_minor[i] = NULL;
+    for (int i = 0; i < 3; i++) {
+        s_trail_n[i] = 0; s_trail_head[i] = 0;
+        for (int k = 0; k < TRAIL_LEN; k++) s_motion_trail[i][k] = NULL;
+    }
+    s_trail_tick = 0;
+    s_motion_anim_ms = -1; s_motion_dwell = 0;
 }
 
 /* Light the rail cell for the function `kind` belongs to. Sub-panels map to their
@@ -3255,6 +3294,84 @@ static inline int clamp_pct(int v)
     return v;
 }
 
+/* Forward decl — defined later in this file, used by motion_layout_grid below. */
+static void label_set_text_cached(lv_obj_t *label, const char *txt);
+
+/* Smallest ladder level keeping the furthest target at <=80% radius; 6 m when idle. */
+static int motion_desired_level(float furthest_m, int have_target)
+{
+    if (!have_target) return MOTION_NLEVEL - 1;
+    for (int i = 0; i < MOTION_NLEVEL; i++)
+        if (furthest_m <= 0.80f * MOTION_LADDER[i]) return i;
+    return MOTION_NLEVEL - 1;
+}
+
+/* Map an LD2450 target (mm, sign-agnostic) to a fan screen point at the current
+ * scale. Shared by the blips and their comet trails. */
+static void motion_target_screen_pos(int x_mm, int y_mm, int *bx, int *by)
+{
+    const float maxoff = (float)FAN_HALF_DEG * (3.14159265f / 180.0f);
+    float fx = (float)x_mm, fy = (float)y_mm;
+    float dist = sqrtf(fx * fx + fy * fy);
+    float r = (dist / 1000.0f) * s_motion_ppm;
+    if (r > (float)FAN_R) r = (float)FAN_R;
+    float off = atan2f(fx, fabsf(fy) + 1.0f);
+    if (off >  maxoff) off =  maxoff;
+    if (off < -maxoff) off = -maxoff;
+    float scr = (270.0f * (3.14159265f / 180.0f)) + off;
+    *bx = (int)(FAN_APEX_X + cosf(scr) * r);
+    *by = (int)(FAN_APEX_Y + sinf(scr) * r);
+}
+
+/* Lay out range rings + labels from s_motion_ppm with an adaptive "nice" major
+ * step, so 3-5 labelled rings are always on screen — even zoomed in close. Rings
+ * slide as ppm animates; only the arc fades near the rim, the label stays legible. */
+static void motion_layout_grid(void)
+{
+    const float d2r = 3.14159265f / 180.0f;
+    const float re  = FAN_RIGHT_DEG * d2r;            /* right fan edge for labels */
+    float scale_m = (float)FAN_R / s_motion_ppm;      /* full-scale distance at the rim */
+
+    float step = 2.0f;                                /* metres between major rings */
+    if      (scale_m <= 1.25f) step = 0.25f;
+    else if (scale_m <= 2.5f)  step = 0.5f;
+    else if (scale_m <= 5.0f)  step = 1.0f;
+
+    for (int i = 0; i < 6; i++) {
+        lv_obj_t *arc = s_motion_grid_arc[i];
+        lv_obj_t *lbl = s_motion_grid_lbl[i];
+        if (!arc) break;
+        float d = step * (i + 1);                     /* this ring's distance (m) */
+        int r = (int)(d * s_motion_ppm + 0.5f);
+        if (r < 8 || r > FAN_R) {
+            lv_obj_add_flag(arc, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        /* No rim fade: the outermost in-scale ring sits exactly at FAN_R and must
+         * stay solid so it matches its legend label. Rings clip crisply at the rim. */
+        lv_obj_set_size(arc, r * 2, r * 2);
+        lv_obj_set_pos(arc, FAN_APEX_X - r, FAN_APEX_Y - r);
+        lv_obj_set_style_arc_opa(arc, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_clear_flag(arc, LV_OBJ_FLAG_HIDDEN);
+
+        /* Clean metre label: "0.25m" / "0.5m" / "1m" / "1.5m" / "2m". */
+        char tb[24];
+        int mm = (int)(d * 1000.0f + 0.5f);
+        if      (mm % 1000 == 0) snprintf(tb, sizeof(tb), "%dm", mm / 1000);
+        else if (mm % 100  == 0) snprintf(tb, sizeof(tb), "%d.%dm", mm / 1000, (mm % 1000) / 100);
+        else                     snprintf(tb, sizeof(tb), "%d.%02dm", mm / 1000, (mm % 1000) / 10);
+        label_set_text_cached(lbl, tb);
+        lv_obj_set_pos(lbl, (int)(FAN_APEX_X + cosf(re) * r) + 4,
+                            (int)(FAN_APEX_Y + sinf(re) * r) - 10);
+        lv_obj_clear_flag(lbl, LV_OBJ_FLAG_HIDDEN);   /* label stays full-opacity (legend) */
+    }
+
+    /* Minor rings are superseded by the adaptive major step — keep them hidden. */
+    for (int i = 0; i < 2; i++)
+        if (s_motion_grid_minor[i]) lv_obj_add_flag(s_motion_grid_minor[i], LV_OBJ_FLAG_HIDDEN);
+}
+
 static lv_obj_t *build_motion_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "MOTION SCAN", back_to_sensors_cb);
@@ -3271,20 +3388,50 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
     lv_obj_set_style_pad_all(rbox, 0, 0);
     lv_obj_clear_flag(rbox, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* Range arcs forming the pie-slice (fan), centred on the base apex. ~1 m each. */
-    for (int r = 87; r <= FAN_R; r += 87) {
+    /* Major range-ring pool (1..6 m). Positioned each tick from s_motion_ppm so the
+     * rings slide as the scale animates; created hidden. */
+    for (int i = 0; i < 6; i++) {
         lv_obj_t *arc = lv_arc_create(rbox);
         lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
         lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_size(arc, r * 2, r * 2);
-        lv_obj_set_pos(arc, FAN_APEX_X - r, FAN_APEX_Y - r);
         lv_arc_set_rotation(arc, 0);
         lv_arc_set_bg_angles(arc, FAN_LEFT_DEG, FAN_RIGHT_DEG);
         lv_arc_set_angles(arc, FAN_LEFT_DEG, FAN_RIGHT_DEG);
         lv_obj_set_style_arc_width(arc, 1, LV_PART_MAIN);
         lv_obj_set_style_arc_color(arc, COL_DIM, LV_PART_MAIN);
         lv_obj_set_style_arc_width(arc, 0, LV_PART_INDICATOR);
+        lv_obj_add_flag(arc, LV_OBJ_FLAG_HIDDEN);
+        s_motion_grid_arc[i] = arc;
+
+        lv_obj_t *lbl = lv_label_create(rbox);
+        lv_label_set_text(lbl, "");
+        lv_obj_set_style_text_font(lbl, FONT_BODY, 0);
+        lv_obj_set_style_text_color(lbl, COL_MUTE, 0);   /* camera-legible (style kit) */
+        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        s_motion_grid_lbl[i] = lbl;
     }
+    /* Minor half-metre rings (close-range detail); created hidden, even fainter. */
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *arc = lv_arc_create(rbox);
+        lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+        lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+        lv_arc_set_rotation(arc, 0);
+        lv_arc_set_bg_angles(arc, FAN_LEFT_DEG, FAN_RIGHT_DEG);
+        lv_arc_set_angles(arc, FAN_LEFT_DEG, FAN_RIGHT_DEG);
+        lv_obj_set_style_arc_width(arc, 1, LV_PART_MAIN);
+        lv_obj_set_style_arc_color(arc, COL_DIM, LV_PART_MAIN);
+        lv_obj_set_style_arc_opa(arc, LV_OPA_40, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(arc, 0, LV_PART_INDICATOR);
+        lv_obj_add_flag(arc, LV_OBJ_FLAG_HIDDEN);
+        s_motion_grid_minor[i] = arc;
+    }
+    s_motion_level = MOTION_NLEVEL - 1;            /* boot at full 6 m, zoom in as targets appear */
+    s_motion_level_pend = s_motion_level;
+    s_motion_dwell = 0;
+    s_motion_ppm = (float)FAN_R / MOTION_LADDER[s_motion_level];
+    s_motion_ppm_to = s_motion_ppm;
+    s_motion_ppm_from = s_motion_ppm;
+    s_motion_anim_ms = -1;
 
     /* Fan edge lines + boresight (static — never updated). */
     static lv_point_precise_t s_fan_left[2], s_fan_right[2], s_fan_bore[2];
@@ -3309,15 +3456,44 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
         }
     }
 
-    /* Sweep line pivoting at the apex (observer oscillates it across the fan). */
-    s_motion_sweep_pts[0].x = FAN_APEX_X; s_motion_sweep_pts[0].y = FAN_APEX_Y;
-    s_motion_sweep_pts[1].x = FAN_APEX_X; s_motion_sweep_pts[1].y = FAN_APEX_Y - FAN_R;
-    s_motion_sweep = lv_line_create(rbox);
-    lv_line_set_points(s_motion_sweep, s_motion_sweep_pts, 2);
-    lv_obj_set_style_line_color(s_motion_sweep, COL_AMBER, 0);
-    lv_obj_set_style_line_width(s_motion_sweep, 2, 0);
-    lv_obj_set_style_line_rounded(s_motion_sweep, false, 0);
-    lv_obj_align(s_motion_sweep, LV_ALIGN_TOP_LEFT, 0, 0);
+    /* (Boresight quarter-metre ticks removed — grid now drawn dynamically from
+     * s_motion_ppm in motion_layout_grid; minor rings added in a later task.) */
+
+    /* (Fixed "1m"/"2m" legend removed — labels now ride the rings in motion_layout_grid.) */
+
+    /* Single Halo-style pulse — PULSE_BAND contiguous sub-arcs form one thick band
+     * that expands from the apex across the fan (bright leading edge -> 0 trailing). */
+    for (int i = 0; i < PULSE_BAND; i++) {
+        s_motion_pulse[i] = lv_arc_create(rbox);
+        lv_obj_remove_style(s_motion_pulse[i], NULL, LV_PART_KNOB);
+        lv_obj_clear_flag(s_motion_pulse[i], LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_size(s_motion_pulse[i], 2, 2);
+        lv_obj_set_pos(s_motion_pulse[i], FAN_APEX_X - 1, FAN_APEX_Y - 1);
+        lv_arc_set_rotation(s_motion_pulse[i], 0);
+        lv_arc_set_bg_angles(s_motion_pulse[i], FAN_LEFT_DEG, FAN_RIGHT_DEG);
+        lv_arc_set_angles(s_motion_pulse[i], FAN_LEFT_DEG, FAN_RIGHT_DEG);
+        lv_obj_set_style_arc_width(s_motion_pulse[i], PULSE_WIDTH + 1, LV_PART_MAIN);
+        lv_obj_set_style_arc_color(s_motion_pulse[i], COL_AMBER, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(s_motion_pulse[i], 0, LV_PART_INDICATOR);
+        lv_obj_set_style_opa(s_motion_pulse[i], LV_OPA_TRANSP, 0);
+    }
+    s_pulse_lead_m = 0.0f;
+
+    /* Comet-tail dot pool (per target), created hidden — drawn behind the blips. */
+    for (int i = 0; i < 3; i++) {
+        s_trail_n[i] = 0; s_trail_head[i] = 0;
+        for (int k = 0; k < TRAIL_LEN; k++) {
+            lv_obj_t *d = lv_obj_create(rbox);
+            lv_obj_remove_style_all(d);
+            lv_obj_set_size(d, 4, 4);
+            lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_bg_color(d, COL_AMBER, 0);
+            lv_obj_set_style_bg_opa(d, LV_OPA_TRANSP, 0);
+            lv_obj_add_flag(d, LV_OBJ_FLAG_HIDDEN);
+            s_motion_trail[i][k] = d;
+        }
+    }
+    s_trail_tick = 0;
 
     /* 3 target blips (amber circles, initially hidden) */
     for (int i = 0; i < 3; i++) {
@@ -3414,14 +3590,59 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
     lv_obj_set_style_bg_color(div2, COL_DIM, 0);
     lv_obj_set_style_bg_opa(div2, LV_OPA_COVER, 0);
 
-    /* T1/T2/T3 target data rows */
-    static const char *const trow_init[3] = {"T1  --", "T2  --", "T3  --"};
+    /* T1/T2/T3 three-column target readout: distance (large) + velocity + bearing arrow */
+    static const char *const tn_hdr[3] = { "T1", "T2", "T3" };
     for (int i = 0; i < 3; i++) {
-        s_motion_trows[i] = lv_label_create(p);
-        lv_label_set_text(s_motion_trows[i], trow_init[i]);
-        lv_obj_set_style_text_color(s_motion_trows[i], COL_DIM, 0);
-        lv_obj_set_style_text_font(s_motion_trows[i], FONT_BODY, 0);
-        lv_obj_align(s_motion_trows[i], LV_ALIGN_TOP_LEFT, 462, 350 + i * 28);
+        lv_obj_t *box = lv_obj_create(p);
+        lv_obj_set_size(box, 150, 88);
+        lv_obj_align(box, LV_ALIGN_TOP_LEFT, 462 + i * 162, 348);
+        lv_obj_set_style_bg_color(box, COL_PANEL_ITEM, 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(box, COL_DIM, 0);
+        lv_obj_set_style_border_width(box, 1, 0);
+        lv_obj_set_style_radius(box, 0, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *hdr = lv_label_create(box);
+        lv_label_set_text(hdr, tn_hdr[i]);
+        lv_obj_set_style_text_color(hdr, COL_DIM, 0);
+        lv_obj_set_style_text_font(hdr, FONT_BODY, 0);
+        lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 4, 3);
+
+        s_motion_tdist[i] = lv_label_create(box);
+        lv_label_set_text(s_motion_tdist[i], "--.-m");
+        lv_obj_set_style_text_color(s_motion_tdist[i], COL_DIM, 0);
+        lv_obj_set_style_text_font(s_motion_tdist[i], FONT_HEAD, 0);
+        lv_obj_align(s_motion_tdist[i], LV_ALIGN_TOP_MID, 0, 18);
+
+        s_motion_tvel[i] = lv_label_create(box);
+        lv_label_set_text(s_motion_tvel[i], "");
+        lv_obj_set_style_text_color(s_motion_tvel[i], COL_DIM, 0);
+        lv_obj_set_style_text_font(s_motion_tvel[i], FONT_BODY, 0);
+        lv_obj_align(s_motion_tvel[i], LV_ALIGN_TOP_MID, 0, 48);
+
+        /* Compass ring around the bearing arrow */
+        lv_obj_t *ring = lv_obj_create(box);
+        lv_obj_remove_style_all(ring);
+        lv_obj_set_size(ring, 28, 28);
+        lv_obj_set_pos(ring, 61, 56);   /* centre at box-local (75, 70) */
+        lv_obj_set_style_border_color(ring, COL_DIM, 0);
+        lv_obj_set_style_border_width(ring, 1, 0);
+        lv_obj_set_style_border_opa(ring, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+        lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+
+        /* Bearing arrow: initially neutral (straight up = forward), hidden */
+        s_motion_apts[i][0].x = 75; s_motion_apts[i][0].y = 70;
+        s_motion_apts[i][1].x = 75; s_motion_apts[i][1].y = 58;
+        s_motion_tarrow[i] = lv_line_create(box);
+        lv_line_set_points(s_motion_tarrow[i], s_motion_apts[i], 2);
+        lv_obj_set_style_line_color(s_motion_tarrow[i], COL_AMBER, 0);
+        lv_obj_set_style_line_width(s_motion_tarrow[i], 3, 0);
+        lv_obj_align(s_motion_tarrow[i], LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_obj_add_flag(s_motion_tarrow[i], LV_OBJ_FLAG_HIDDEN);
     }
 
     /* Aux divider */
@@ -3455,7 +3676,7 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
         lv_label_set_text(s_motion_flags[i], flag_txt[i]);
         lv_obj_set_style_text_font(s_motion_flags[i], FONT_BODY, 0);
         lv_obj_set_style_text_color(s_motion_flags[i], COL_DIM, 0);
-        lv_obj_align(s_motion_flags[i], LV_ALIGN_TOP_RIGHT, -8, 8 + i * 24);
+        lv_obj_align(s_motion_flags[i], LV_ALIGN_BOTTOM_RIGHT, -8, -8 - (MOTION_FLAG_COUNT - 1 - i) * 20);
     }
 
     /* Analog sensor bars, bottom-left (label + amber progress bar). */
@@ -3511,7 +3732,6 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
         lv_obj_set_pos(s_motion_dir_dot, cx - 6, cy - 6);
     }
 
-    s_sweep_angle = 90;   /* start sweep pointing north (up = forward) */
     return p;
 }
 
@@ -4389,48 +4609,118 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
-    /* Drive the MOTION SCAN panel: sweep rotation, target blips, gimbal, aux labels. */
-    if (s_cur_kind == PK_MOTION && s_motion_sweep) {
-        /* Oscillate the sweep across the fan (FAN_LEFT_DEG..FAN_RIGHT_DEG). */
-        s_sweep_angle = (s_sweep_angle + 4) % 360;
-        float ph = (sinf((float)s_sweep_angle * (3.14159265f / 180.0f)) + 1.0f) * 0.5f; /* 0..1 */
-        float sa = (FAN_LEFT_DEG + ph * (FAN_RIGHT_DEG - FAN_LEFT_DEG)) * (3.14159265f / 180.0f);
-        s_motion_sweep_pts[0].x = FAN_APEX_X; s_motion_sweep_pts[0].y = FAN_APEX_Y;
-        s_motion_sweep_pts[1].x = (lv_value_precise_t)(FAN_APEX_X + cosf(sa) * FAN_R);
-        s_motion_sweep_pts[1].y = (lv_value_precise_t)(FAN_APEX_Y + sinf(sa) * FAN_R);
-        lv_line_set_points(s_motion_sweep, s_motion_sweep_pts, 2);
+    /* Drive the MOTION SCAN panel: radial pulse, target blips, gimbal, aux labels. */
+    if (s_cur_kind == PK_MOTION && s_motion_pulse[0]) {
+        /* Single Halo-style pulse: one thick band sweeps apex->rim and repeats.
+         * j=0 = bright leading (outer) edge; opacity ramps to 0 at the trailing edge. */
+        /* Advance the leading edge in REAL-WORLD range (m), then project through ppm,
+         * so the pulse stays locked to the rings/blips as the scale animates
+         * (~6 px/tick at the current scale). */
+        s_pulse_lead_m += 6.0f / s_motion_ppm;
+        float lead_px = s_pulse_lead_m * s_motion_ppm;
+        if (lead_px > (float)(FAN_R + PULSE_BAND * PULSE_WIDTH)) { s_pulse_lead_m = 0.0f; lead_px = 0.0f; }
+        for (int j = 0; j < PULSE_BAND; j++) {
+            if (!s_motion_pulse[j]) break;
+            int rj = (int)lead_px - j * PULSE_WIDTH;
+            if (rj <= 0 || rj > FAN_R) {
+                lv_obj_set_style_opa(s_motion_pulse[j], LV_OPA_TRANSP, 0);
+                continue;
+            }
+            lv_obj_set_size(s_motion_pulse[j], rj * 2, rj * 2);
+            lv_obj_set_pos(s_motion_pulse[j], FAN_APEX_X - rj, FAN_APEX_Y - rj);
+            int opa = 235 - (235 * j) / (PULSE_BAND - 1);   /* 235 (lead) -> 0 (trail) */
+            if (rj > FAN_R - 16) opa = opa * (FAN_R - rj) / 16;  /* fade into the rim */
+            lv_obj_set_style_opa(s_motion_pulse[j], (lv_opa_t)opa, 0);
+        }
 
         /* Update target blips from LD2450 cache, placed within the fan. */
         prop_motion_target_t tgts[3];
         int cnt = prop_motion_get_targets(tgts, 3);
-        const float maxoff = (float)FAN_HALF_DEG * (3.14159265f / 180.0f);
+
+        /* --- Autorange: pick a ladder level from the furthest target, debounce,
+         * then ease s_motion_ppm toward it. One deliberate zoom per threshold. --- */
+        float furthest_m = 0.0f;
+        for (int i = 0; i < cnt; i++) {
+            float fx = (float)tgts[i].x_mm, fy = (float)tgts[i].y_mm;
+            float dm = sqrtf(fx * fx + fy * fy) / 1000.0f;
+            if (dm > furthest_m) furthest_m = dm;
+        }
+        int desired = motion_desired_level(furthest_m, cnt > 0);
+        if (desired == s_motion_level) {
+            s_motion_dwell = 0;
+        } else {
+            if (desired != s_motion_level_pend) { s_motion_level_pend = desired; s_motion_dwell = 0; }
+            else                                 { s_motion_dwell++; }
+            /* 0.4 s dwell for target-driven changes; 3 s before the idle decay to 6 m. */
+            int need = (desired == MOTION_NLEVEL - 1 && cnt == 0) ? 60 : 8;
+            if (s_motion_dwell >= need) {
+                s_motion_level    = desired;
+                s_motion_ppm_from = s_motion_ppm;
+                s_motion_ppm_to   = (float)FAN_R / MOTION_LADDER[desired];
+                s_motion_anim_ms  = 0;
+                s_motion_dwell    = 0;
+            }
+        }
+        if (s_motion_anim_ms >= 0) {            /* ~50 ms per observer tick (20 Hz) */
+            s_motion_anim_ms += 50;
+            float t = s_motion_anim_ms / 500.0f;   /* 500 ms slide */
+            if (t >= 1.0f) { t = 1.0f; s_motion_anim_ms = -1; }
+            float e = t * t * (3.0f - 2.0f * t);   /* smoothstep ease-in-out */
+            s_motion_ppm = s_motion_ppm_from + (s_motion_ppm_to - s_motion_ppm_from) * e;
+        }
+
+        motion_layout_grid();
+
+        /* Sample decimation for trails: push ~every 3rd tick => ~1.2 s of history. */
+        s_trail_tick++;
+        int trail_push = (s_trail_tick % 3 == 0);
+
         for (int i = 0; i < 3; i++) {
             if (!s_motion_blips[i]) break;
             if (i < cnt) {
-                /* Place by true range (sign-agnostic) so contacts always appear in
-                 * the slice — the LD2450 reports signed X/Y and Y is often negative. */
-                float fx = (float)tgts[i].x_mm, fy = (float)tgts[i].y_mm;
-                float dist = sqrtf(fx * fx + fy * fy);
-                float r = dist * (float)FAN_R / 6000.0f; if (r > FAN_R) r = (float)FAN_R;
-                float off = atan2f(fx, fabsf(fy) + 1.0f);   /* bearing into the forward fan */
-                if (off >  maxoff) off =  maxoff;
-                if (off < -maxoff) off = -maxoff;
-                float scr = (270.0f * (3.14159265f / 180.0f)) + off;
-                int bx = (int)(FAN_APEX_X + cosf(scr) * r);
-                int by = (int)(FAN_APEX_Y + sinf(scr) * r);
+                int bx, by;
+                motion_target_screen_pos(tgts[i].x_mm, tgts[i].y_mm, &bx, &by);
                 lv_obj_set_pos(s_motion_blips[i], bx - 6, by - 6);
                 lv_obj_set_style_bg_color(s_motion_blips[i],
                     (tgts[i].speed_mm_s > 200 || tgts[i].speed_mm_s < -200)
                         ? COL_ALERT : COL_AMBER, 0);
                 lv_obj_clear_flag(s_motion_blips[i], LV_OBJ_FLAG_HIDDEN);
+
+                if (trail_push) {
+                    s_trail_head[i] = (s_trail_head[i] + 1) % TRAIL_LEN;
+                    s_trail_x[i][s_trail_head[i]] = tgts[i].x_mm;
+                    s_trail_y[i][s_trail_head[i]] = tgts[i].y_mm;
+                    if (s_trail_n[i] < TRAIL_LEN) s_trail_n[i]++;
+                }
             } else {
                 lv_obj_add_flag(s_motion_blips[i], LV_OBJ_FLAG_HIDDEN);
+                s_trail_n[i] = 0;
+            }
+
+            /* Comet trail: k=0 newest (brightest/biggest) -> oldest faint/small.
+             * Re-projected each tick so it rescales smoothly during autorange. */
+            for (int k = 0; k < TRAIL_LEN; k++) {
+                lv_obj_t *d = s_motion_trail[i][k];
+                if (!d) break;
+                if (k < s_trail_n[i]) {
+                    int idx = (s_trail_head[i] - k + TRAIL_LEN) % TRAIL_LEN;
+                    int tx, ty;
+                    motion_target_screen_pos(s_trail_x[i][idx], s_trail_y[i][idx], &tx, &ty);
+                    int sz  = 8 - (6 * k) / (TRAIL_LEN - 1);       /* 8 -> 2 px */
+                    int opa = 170 - (170 * k) / (TRAIL_LEN - 1);   /* 170 -> 0 */
+                    lv_obj_set_size(d, sz, sz);
+                    lv_obj_set_pos(d, tx - sz / 2, ty - sz / 2);
+                    lv_obj_set_style_bg_opa(d, (lv_opa_t)opa, 0);
+                    lv_obj_clear_flag(d, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(d, LV_OBJ_FLAG_HIDDEN);
+                }
             }
         }
 
         /* Update target count label + motion alert. */
         if (s_motion_tgt_label) {
-            char cb[20];
+            char cb[24];
             snprintf(cb, sizeof(cb), "TARGETS: %d", cnt);
             label_set_text_cached(s_motion_tgt_label, cb);
         }
@@ -4439,22 +4729,36 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             else         lv_obj_add_flag(s_motion_alert, LV_OBJ_FLAG_HIDDEN);
         }
 
-        /* Update T1/T2/T3 target rows. */
-        static const char *const trow_blank[3] = {"T1  --", "T2  --", "T3  --"};
+        /* Update T1/T2/T3 three-column target readout. */
         for (int i = 0; i < 3; i++) {
-            if (!s_motion_trows[i]) break;
+            if (!s_motion_tdist[i]) break;
             if (i < cnt) {
-                char rb[52];
-                snprintf(rb, sizeof(rb), "T%d  X:%.1f  Y:%.1f  V:%d",
-                         i + 1,
-                         (double)tgts[i].x_mm / 1000.0,
-                         (double)tgts[i].y_mm / 1000.0,
-                         (int)tgts[i].speed_mm_s);
-                label_set_text_cached(s_motion_trows[i], rb);
-                lv_obj_set_style_text_color(s_motion_trows[i], COL_AMBER, 0);
+                float fx = (float)tgts[i].x_mm, fy = (float)tgts[i].y_mm;
+                int dm = (int)(sqrtf(fx * fx + fy * fy) / 100.0f + 0.5f); /* tenths of m */
+                char dbuf[20];
+                snprintf(dbuf, sizeof(dbuf), "%d.%dm", dm / 10, dm % 10);
+                label_set_text_cached(s_motion_tdist[i], dbuf);
+                lv_obj_set_style_text_color(s_motion_tdist[i], COL_AMBER, 0);
+
+                int spd = (int)tgts[i].speed_mm_s;
+                char vbuf[14];
+                snprintf(vbuf, sizeof(vbuf), "%+d mm/s", spd);
+                label_set_text_cached(s_motion_tvel[i], vbuf);
+                lv_obj_set_style_text_color(s_motion_tvel[i],
+                    spd > 0 ? COL_AMBER : COL_MUTE, 0);
+
+                /* Bearing arrow — atan2(x, y): ang=0 straight ahead, +π/2 right */
+                float ang = atan2f(fx, fy + 0.001f);
+                s_motion_apts[i][0].x = 75; s_motion_apts[i][0].y = 70;
+                s_motion_apts[i][1].x = 75 + (lv_value_precise_t)(sinf(ang) * 12.0f);
+                s_motion_apts[i][1].y = 70 - (lv_value_precise_t)(cosf(ang) * 12.0f);
+                lv_line_set_points(s_motion_tarrow[i], s_motion_apts[i], 2);
+                lv_obj_clear_flag(s_motion_tarrow[i], LV_OBJ_FLAG_HIDDEN);
             } else {
-                label_set_text_cached(s_motion_trows[i], trow_blank[i]);
-                lv_obj_set_style_text_color(s_motion_trows[i], COL_DIM, 0);
+                label_set_text_cached(s_motion_tdist[i], "--.-m");
+                lv_obj_set_style_text_color(s_motion_tdist[i], COL_DIM, 0);
+                label_set_text_cached(s_motion_tvel[i], "");
+                lv_obj_add_flag(s_motion_tarrow[i], LV_OBJ_FLAG_HIDDEN);
             }
         }
 
