@@ -40,22 +40,33 @@ static inline uint32_t now_ms(void)
 
 /* ---- Frame parser -------------------------------------------------------- */
 
+/* The LD2450 encodes signed coordinates/speed as SIGN-MAGNITUDE, not two's
+ * complement: bit 15 is the sign (1 = positive, 0 = negative); bits 0..14 are
+ * the magnitude. Decoding the raw word as a plain int16 makes a real +913 mm
+ * (0x8391) read as -31855 (≈ -32 m) — the classic LD2450 parsing bug. */
+static inline int16_t ld2450_signmag(const uint8_t *lo)
+{
+    uint16_t raw = (uint16_t)lo[0] | ((uint16_t)lo[1] << 8);
+    int16_t mag = (int16_t)(raw & 0x7FFF);
+    return (raw & 0x8000) ? mag : (int16_t)(-mag);
+}
+
 /* Parse 8-byte target block into a prop_motion_target_t.
- * Returns true when the target slot is active (Y != 0). */
+ * Returns true when the target slot is active (any non-zero field). */
 static bool parse_target(const uint8_t *p, prop_motion_target_t *t)
 {
-    /* All fields are little-endian int16 / uint16. */
-    int16_t x    = (int16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
-    int16_t y    = (int16_t)((uint16_t)p[2] | ((uint16_t)p[3] << 8));
-    int16_t spd  = (int16_t)((uint16_t)p[4] | ((uint16_t)p[5] << 8));
-    uint16_t dr  =           (uint16_t)p[6] | ((uint16_t)p[7] << 8);
+    int16_t  x   = ld2450_signmag(p + 0);
+    int16_t  y   = ld2450_signmag(p + 2);
+    int16_t  spd = ld2450_signmag(p + 4);
+    uint16_t dr  = (uint16_t)p[6] | ((uint16_t)p[7] << 8);
 
     t->x_mm        = x;
     t->y_mm        = y;
     t->speed_mm_s  = spd;
     t->dist_res_mm = dr;
 
-    return (y != 0);   /* slot is active when Y != 0 */
+    /* Inactive slots are all-zero; a real target has a non-zero coordinate. */
+    return (x != 0 || y != 0);
 }
 
 /* ---- Background reader task --------------------------------------------- */

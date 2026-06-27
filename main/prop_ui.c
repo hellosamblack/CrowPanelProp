@@ -217,8 +217,8 @@ static lv_point_precise_t s_motion_gpts[3][2];   /* needle points per gimbal dia
 /* Fan radar geometry (inside the 440x440 radar box). Apex at the base centre. */
 #define FAN_APEX_X   220
 #define FAN_APEX_Y   410
-#define FAN_R        348      /* outer radius */
-#define FAN_HALF_DEG 35       /* half opening angle */
+#define FAN_R        240      /* outer radius (fits the box at ±60°) */
+#define FAN_HALF_DEG 60       /* half opening angle = LD2450 horizontal FOV */
 #define FAN_LEFT_DEG  (270 - FAN_HALF_DEG)   /* LVGL: 270 = up */
 #define FAN_RIGHT_DEG (270 + FAN_HALF_DEG)
 
