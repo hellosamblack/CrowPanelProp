@@ -7,6 +7,7 @@
 #include "main.h"
 #include "prop_motion.h"
 #include "prop_imu.h"
+#include "prop_track.h"
 #include "prop_aux_radar.h"
 #include "esp_ota_ops.h"
 
@@ -138,6 +139,15 @@ void app_main(void)
     if (imu_err != ESP_OK) {
         MAIN_ERROR("IMU unavailable (%s) — gimbal/VITALS motion data offline",
                    esp_err_to_name(imu_err));
+    }
+
+    /* Dead-reckoning / spatial memory (MINIMAP): fuses the DMP pedometer + radar
+     * into a world-frame pose, path, and target marks. NON-fatal: idles with an
+     * invalid pose if the IMU is absent. After prop_imu/prop_motion are up. */
+    esp_err_t track_err = prop_track_init();
+    if (track_err != ESP_OK) {
+        MAIN_ERROR("dead-reckoning unavailable (%s) — MINIMAP will show no path",
+                   esp_err_to_name(track_err));
     }
 
     /* Seeed 24 GHz (UART3, GPIO33/34) + SEN0395 (UART1, GPIO25/27). NON-fatal. */

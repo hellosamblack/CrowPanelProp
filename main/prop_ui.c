@@ -12,6 +12,7 @@
 #include "prop_coproc.h"
 #include "prop_motion.h"
 #include "prop_imu.h"
+#include "prop_track.h"
 #include "prop_aux_radar.h"
 #include "prop_content.h"
 #include "bsp_io.h"
@@ -123,6 +124,7 @@ typedef enum {
     PK_MENU, PK_WIFI, PK_DISPLAY, PK_AUDIO, PK_LEDS, PK_ABOUT, PK_VITALS,
     PK_SCAN, PK_SPECTRUM, PK_RFBAND, PK_BLE, PK_CSI, PK_CSICFG, PK_CSISET, PK_MOTION,
     PK_DIRCAL,        /* travel-direction calibration (opened from the SCANNER apex dot) */
+    PK_MINIMAP,       /* north-up dead-reckoning map (breadcrumb path + radar marks) */
     PK_INSTRUMENTS,   /* submenu: SCANNER / SIGNAL SCAN / SPECTRUM / VITALS */
     PK_SENSORS,       /* submenu: RF BAND / CONTACTS / SIGNAL ENV / CSI CONFIG */
     PK_ARCHIVE,    /* data-archive browser (tabs = sections) */
@@ -287,6 +289,36 @@ static float s_dcal_grav_lp[3];           /* gravity low-pass during the cal flo
 static bool  s_dcal_grav_primed;
 #define DCAL_PHASE_MS 3000                /* capture window per cardinal walk */
 
+/* ---- MINIMAP (PK_MINIMAP): north-up dead-reckoning map ------------------- *
+ * The canvas holds the STATIC layer (grid + breadcrumb path + radar marks),
+ * repainted only when the data/scale changes (event-driven, not per-frame); the
+ * operator dot + heading arrow are widgets glided over it every tick. Same
+ * canvas/widget split as the SCANNER, and the same direct-pixel-write rule:
+ * ui_observer runs off the LVGL task under the port lock, where the v9 canvas
+ * draw pipeline deadlocks, so the path is painted by raw ARGB8888 writes. */
+#define MAP_X     8
+#define MAP_Y     52
+#define MAP_W     932
+#define MAP_H     540
+#define MAP_PPM_MIN  6.0f     /* px per metre clamp (zoomed out) */
+#define MAP_PPM_MAX  90.0f    /* px per metre clamp (zoomed in) */
+#define MAP_CRUMB_CAP 512     /* must match prop_track's CRUMB_CAP */
+static lv_obj_t *s_map_canvas;            /* ARGB8888 canvas (static map layer) */
+static uint32_t *s_map_buf;               /* its PSRAM backing; NULL when torn down */
+static lv_obj_t *s_map_op_dot;            /* operator position dot (widget) */
+static lv_obj_t *s_map_op_arrow;          /* operator heading arrow (lv_line) */
+static lv_point_precise_t s_map_arrow_pts[2];   /* LVGL keeps this pointer */
+static lv_obj_t *s_map_info;              /* header status line (hdg / scale / path) */
+static lv_obj_t *s_map_msg;               /* centred OFFLINE / WALK-TO-BEGIN notice */
+static float s_map_ppm;                   /* committed projection scale (px/m) */
+static float s_map_ctr_x, s_map_ctr_y;    /* committed projection centre (world m) */
+static bool  s_map_have_fit;              /* false until the first auto-fit commit */
+static int   s_map_last_crumbs;           /* dirty tracking: crumb count last drawn */
+static uint32_t s_map_marks_sig;          /* dirty tracking: mark-set signature */
+/* Observer-side scratch (single-threaded observer; reused each tick — too big for stack). */
+static prop_track_crumb_t s_map_crumb_scratch[MAP_CRUMB_CAP];
+static prop_track_mark_t  s_map_mark_scratch[PROP_TRACK_MAX_MARKS];
+
 /* SCANNER (PK_MOTION) is a full-screen page (no header/back). The left radar box
  * fills the panel height; the right column of cells matches that height. */
 #define RADAR_X   8
@@ -383,6 +415,7 @@ static lv_obj_t *build_io_panel(lv_obj_t *parent);
 static lv_obj_t *build_io_pin_panel(lv_obj_t *parent);
 static lv_obj_t *build_motion_panel(lv_obj_t *parent);
 static lv_obj_t *build_dircal_panel(lv_obj_t *parent);
+static lv_obj_t *build_minimap_panel(lv_obj_t *parent);
 static void wifi_panel_opened(void);
 static void start_signal_scan(void);
 static void start_rfband_scan(void);
@@ -520,6 +553,11 @@ static void close_panel(void)
     }
     s_trail_tick = 0;
     s_motion_anim_ms = -1; s_motion_dwell = 0;
+    /* MINIMAP: widgets freed with the panel; its canvas PSRAM backing is ours. */
+    s_map_canvas = NULL; s_map_op_dot = NULL; s_map_op_arrow = NULL;
+    s_map_info = NULL; s_map_msg = NULL;
+    if (s_map_buf) { free(s_map_buf); s_map_buf = NULL; }
+    s_map_have_fit = false; s_map_last_crumbs = -1; s_map_marks_sig = 0;
 }
 
 /* Light the rail cell for the function `kind` belongs to. Sub-panels map to their
@@ -538,7 +576,7 @@ static void rail_sync(panel_kind_t kind)
         case PK_NONE: case PK_SCAN: case PK_SPECTRUM: case PK_VITALS:
             want = PK_INSTRUMENTS; break;
         case PK_RFBAND: case PK_BLE: case PK_CSI: case PK_CSICFG: case PK_CSISET: case PK_MOTION:
-        case PK_DIRCAL:
+        case PK_DIRCAL: case PK_MINIMAP:
             want = PK_SENSORS; break;
         default: break;
     }
@@ -603,6 +641,7 @@ static void open_panel(panel_kind_t kind)
         case PK_IO_PIN:   s_cur_panel = build_io_pin_panel(s_root); break;
         case PK_MOTION:   s_cur_panel = build_motion_panel(s_root); break;
         case PK_DIRCAL:   s_cur_panel = build_dircal_panel(s_root); break;
+        case PK_MINIMAP:  s_cur_panel = build_minimap_panel(s_root); break;
         default: break;    /* PK_NONE: no panel - the SCANNER readout shows through */
     }
     s_cur_kind = kind;
@@ -3406,6 +3445,7 @@ static lv_obj_t *build_sensors_panel(lv_obj_t *parent)
     kit_list_row(b, "SIGNAL ENV", menu_open_cb, (void *)(intptr_t)PK_CSI);
     kit_list_row(b, "CSI CONFIG", menu_open_cb, (void *)(intptr_t)PK_CSICFG);
     kit_list_row(b, "SCANNER", menu_open_cb, (void *)(intptr_t)PK_MOTION);
+    kit_list_row(b, "MINIMAP", menu_open_cb, (void *)(intptr_t)PK_MINIMAP);
     return m;
 }
 
@@ -4104,6 +4144,229 @@ static int rssi_to_quarters(int rssi)
     if (q < 1)        q = 1;
     if (q > SIG_QMAX) q = SIG_QMAX;
     return q;
+}
+
+/* ===================== MINIMAP (PK_MINIMAP) ============================== *
+ * North-up dead-reckoning map: a breadcrumb path from prop_track's PDR, plus
+ * last-known radar marks. The static layer (grid + path + marks) is hand-painted
+ * into an ARGB8888 canvas by direct pixel writes (the v9 canvas draw pipeline
+ * deadlocks under the port lock the observer holds); the operator dot + heading
+ * arrow are widgets glided over it each tick. See build_minimap_panel + the
+ * PK_MINIMAP block in ui_observer. */
+
+#define MAP_ARGB(a, rgb) (((uint32_t)(a) << 24) | (uint32_t)(rgb))
+
+/* World (metres) → canvas-local pixels, north-up, from the committed fit. */
+static inline void map_world_to_px(float wx, float wy, int *px, int *py)
+{
+    *px = (int)(MAP_W * 0.5f + (wx - s_map_ctr_x) * s_map_ppm + 0.5f);
+    *py = (int)(MAP_H * 0.5f - (wy - s_map_ctr_y) * s_map_ppm + 0.5f);  /* +y = North = up */
+}
+
+static inline void map_px(int x, int y, uint32_t argb)
+{
+    if ((unsigned)x >= (unsigned)MAP_W || (unsigned)y >= (unsigned)MAP_H) return;
+    s_map_buf[(size_t)y * MAP_W + x] = argb;
+}
+
+static void map_disc(int cx, int cy, int r, uint32_t argb)
+{
+    for (int dy = -r; dy <= r; dy++)
+        for (int dx = -r; dx <= r; dx++)
+            if (dx * dx + dy * dy <= r * r) map_px(cx + dx, cy + dy, argb);
+}
+
+static void map_ring(int cx, int cy, int r, uint32_t argb)
+{
+    int ri2 = (r - 1) * (r - 1), ro2 = r * r;
+    for (int dy = -r; dy <= r; dy++)
+        for (int dx = -r; dx <= r; dx++) {
+            int d2 = dx * dx + dy * dy;
+            if (d2 <= ro2 && d2 >= ri2) map_px(cx + dx, cy + dy, argb);
+        }
+}
+
+/* Bresenham segment (clipped per-pixel by map_px). */
+static void map_line(int x0, int y0, int x1, int y1, uint32_t argb)
+{
+    int dx = x1 - x0; if (dx < 0) dx = -dx;
+    int dy = y1 - y0; if (dy < 0) dy = -dy;
+    int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    int err = dx - dy;
+    for (;;) {
+        map_px(x0, y0, argb);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x0 += sx; }
+        if (e2 <  dx) { err += dx; y0 += sy; }
+    }
+}
+
+/* Nice grid step (m) giving ~8 divisions across the map at the current scale. */
+static float map_grid_step(float ppm)
+{
+    float target = (float)MAP_W / ppm / 8.0f;
+    static const float ladder[] = { 0.25f, 0.5f, 1, 2, 5, 10, 20, 50, 100 };
+    for (int i = 0; i < (int)(sizeof(ladder) / sizeof(ladder[0])); i++)
+        if (ladder[i] >= target) return ladder[i];
+    return 100.0f;
+}
+
+/* Repaint the static map layer (grid + path + marks). Event-driven — called only
+ * when the data or scale changed. Reads the observer scratch arrays. */
+static void map_redraw(int nc, int nm)
+{
+    if (!s_map_buf) return;
+    memset(s_map_buf, 0, (size_t)MAP_W * MAP_H * 4);   /* transparent → box bg shows */
+
+    /* World grid (scrolls with the map, reinforcing motion). */
+    float step = map_grid_step(s_map_ppm);
+    uint32_t gcol = MAP_ARGB(70, 0x6B5300);   /* COL_DIM, faint */
+    float halfw = (MAP_W * 0.5f) / s_map_ppm, halfh = (MAP_H * 0.5f) / s_map_ppm;
+    int kx0 = (int)floorf((s_map_ctr_x - halfw) / step);
+    int kx1 = (int)ceilf((s_map_ctr_x + halfw) / step);
+    for (int k = kx0; k <= kx1; k++) {
+        int px, py; map_world_to_px((float)k * step, s_map_ctr_y, &px, &py);
+        if (px >= 0 && px < MAP_W) for (int y = 0; y < MAP_H; y++) s_map_buf[(size_t)y * MAP_W + px] = gcol;
+    }
+    int ky0 = (int)floorf((s_map_ctr_y - halfh) / step);
+    int ky1 = (int)ceilf((s_map_ctr_y + halfh) / step);
+    for (int k = ky0; k <= ky1; k++) {
+        int px, py; map_world_to_px(s_map_ctr_x, (float)k * step, &px, &py);
+        if (py >= 0 && py < MAP_H) { uint32_t *row = s_map_buf + (size_t)py * MAP_W;
+            for (int x = 0; x < MAP_W; x++) row[x] = gcol; }
+    }
+
+    /* Breadcrumb path — oldest faint → newest bright (COL_MUTE). */
+    int ppx = 0, ppy = 0;
+    for (int i = 0; i < nc; i++) {
+        int px, py;
+        map_world_to_px(s_map_crumb_scratch[i].x, s_map_crumb_scratch[i].y, &px, &py);
+        int a = (nc > 1) ? (80 + 150 * i / (nc - 1)) : 230;
+        uint32_t c = MAP_ARGB(a, 0xB58A00);
+        if (i > 0) map_line(ppx, ppy, px, py, c);
+        map_disc(px, py, 2, c);
+        ppx = px; ppy = py;
+    }
+
+    /* Last-known radar marks — red, fading with age (COL_ALERT). */
+    for (int i = 0; i < nm; i++) {
+        int px, py;
+        map_world_to_px(s_map_mark_scratch[i].x, s_map_mark_scratch[i].y, &px, &py);
+        int a = 230 - (int)(s_map_mark_scratch[i].age_ms * 190 / 30000);  /* TTL 30 s */
+        if (a < 40) a = 40;
+        map_disc(px, py, 4, MAP_ARGB(a, 0xFF3030));
+        map_ring(px, py, 8, MAP_ARGB(a / 2, 0xFF3030));
+    }
+
+    lv_obj_invalidate(s_map_canvas);
+}
+
+static void map_reset_cb(lv_event_t *e)
+{
+    (void)e;
+    prop_track_reset();
+    s_map_have_fit = false;
+    s_map_last_crumbs = -1;
+    s_map_marks_sig = 0;
+    prop_audio_play(PA_BUTTON);
+}
+
+static lv_obj_t *build_minimap_panel(lv_obj_t *parent)
+{
+    /* Full-screen page (rail is the chrome) with a thin header for status + RESET. */
+    lv_obj_t *p = lv_obj_create(parent);
+    lv_obj_set_size(p, SCAN_W, 600);
+    lv_obj_align(p, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(p, COL_BG, 0);
+    lv_obj_set_style_border_color(p, COL_AMBER, 0);
+    lv_obj_set_style_border_width(p, 2, 0);
+    lv_obj_set_style_radius(p, 0, 0);
+    lv_obj_set_style_pad_all(p, 0, 0);
+    lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(p);
+    lv_label_set_text(title, "MINIMAP");
+    lv_obj_set_style_text_font(title, FONT_HEAD, 0);
+    lv_obj_set_style_text_color(title, COL_AMBER, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 12);
+
+    /* Honest drift note (gyro-only heading; see prop_track header). */
+    lv_obj_t *note = lv_label_create(p);
+    lv_label_set_text(note, "HEADING: RELATIVE (GYRO)");
+    lv_obj_set_style_text_font(note, FONT_BODY, 0);
+    lv_obj_set_style_text_color(note, COL_DIM, 0);
+    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 150, 20);
+
+    s_map_info = lv_label_create(p);
+    lv_label_set_text(s_map_info, "");
+    lv_obj_set_style_text_font(s_map_info, FONT_BODY, 0);
+    lv_obj_set_style_text_color(s_map_info, COL_MUTE, 0);
+    lv_obj_align(s_map_info, LV_ALIGN_TOP_LEFT, 430, 20);
+
+    make_btn(p, "RESET", 110, LV_ALIGN_TOP_RIGHT, -12, 6, map_reset_cb);
+
+    /* Map box. */
+    lv_obj_t *box = lv_obj_create(p);
+    lv_obj_set_size(box, MAP_W, MAP_H);
+    lv_obj_align(box, LV_ALIGN_TOP_LEFT, MAP_X, MAP_Y);
+    lv_obj_set_style_bg_color(box, COL_PANEL_ITEM, 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(box, COL_DIM, 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_radius(box, 0, 0);
+    lv_obj_set_style_pad_all(box, 0, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* North marker (north-up: always at the top). */
+    lv_obj_t *nlbl = lv_label_create(box);
+    lv_label_set_text(nlbl, "N");
+    lv_obj_set_style_text_font(nlbl, FONT_HEAD, 0);
+    lv_obj_set_style_text_color(nlbl, COL_MUTE, 0);
+    lv_obj_align(nlbl, LV_ALIGN_TOP_MID, 0, 6);
+
+    /* Static map-layer canvas. */
+    size_t sz = LV_CANVAS_BUF_SIZE(MAP_W, MAP_H, 32, LV_DRAW_BUF_STRIDE_ALIGN);
+    s_map_buf = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM);
+    if (s_map_buf) {
+        memset(s_map_buf, 0, sz);
+        s_map_canvas = lv_canvas_create(box);
+        lv_canvas_set_buffer(s_map_canvas, s_map_buf, MAP_W, MAP_H, LV_COLOR_FORMAT_ARGB8888);
+        lv_obj_set_pos(s_map_canvas, 0, 0);
+        lv_obj_clear_flag(s_map_canvas, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    /* Operator heading arrow (under the dot) + dot, glided every tick. */
+    s_map_op_arrow = lv_line_create(box);
+    lv_obj_set_style_line_color(s_map_op_arrow, COL_AMBER, 0);
+    lv_obj_set_style_line_width(s_map_op_arrow, 3, 0);
+    lv_obj_add_flag(s_map_op_arrow, LV_OBJ_FLAG_HIDDEN);
+
+    s_map_op_dot = lv_obj_create(box);
+    lv_obj_set_size(s_map_op_dot, 14, 14);
+    lv_obj_set_style_radius(s_map_op_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_map_op_dot, COL_AMBER, 0);
+    lv_obj_set_style_bg_opa(s_map_op_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_map_op_dot, COL_BG, 0);
+    lv_obj_set_style_border_width(s_map_op_dot, 2, 0);
+    lv_obj_clear_flag(s_map_op_dot, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_map_op_dot, LV_OBJ_FLAG_HIDDEN);
+
+    /* Centred status notice (OFFLINE / WALK-TO-BEGIN). */
+    s_map_msg = lv_label_create(box);
+    lv_label_set_text(s_map_msg, "");
+    lv_obj_set_style_text_font(s_map_msg, FONT_HEAD, 0);
+    lv_obj_set_style_text_color(s_map_msg, COL_MUTE, 0);
+    lv_obj_align(s_map_msg, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(s_map_msg, LV_OBJ_FLAG_HIDDEN);
+
+    /* Force a fit + redraw on the first observer tick. */
+    s_map_have_fit = false;
+    s_map_last_crumbs = -1;
+    s_map_marks_sig = 0;
+    s_map_ppm = 30.0f;
+    s_map_ctr_x = s_map_ctr_y = 0.0f;
+    return p;
 }
 
 /* Build the meter ("SIG" + a row of square cells, each filling left-to-right in
@@ -4979,6 +5242,103 @@ static void ui_observer(const prop_state_t *st, void *ctx)
     }
 
     /* Drive the MOTION SCAN panel: radial pulse, target blips, gimbal, aux labels. */
+    /* ---- MINIMAP: dead-reckoning map (event-driven canvas + glided operator) ---- */
+    if (s_cur_kind == PK_MINIMAP && s_map_canvas) {
+        prop_track_pose_t pose;
+        prop_track_get_pose(&pose);
+
+        if (!prop_track_available() || !pose.valid) {
+            if (s_map_msg) {
+                label_set_text_cached(s_map_msg,
+                    prop_track_available() ? "WALK TO BEGIN MAPPING" : "DEAD-RECKONING OFFLINE");
+                lv_obj_set_style_text_color(s_map_msg,
+                    prop_track_available() ? COL_MUTE : COL_ALERT, 0);
+                lv_obj_clear_flag(s_map_msg, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (s_map_op_dot)   lv_obj_add_flag(s_map_op_dot, LV_OBJ_FLAG_HIDDEN);
+            if (s_map_op_arrow) lv_obj_add_flag(s_map_op_arrow, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            if (s_map_msg) lv_obj_add_flag(s_map_msg, LV_OBJ_FLAG_HIDDEN);
+
+            int nc = prop_track_get_crumbs(s_map_crumb_scratch, MAP_CRUMB_CAP);
+            int nm = prop_track_get_marks(s_map_mark_scratch, PROP_TRACK_MAX_MARKS);
+
+            /* Auto-fit bounds over path + operator + marks (world metres). */
+            float minx = pose.x, maxx = pose.x, miny = pose.y, maxy = pose.y;
+            for (int i = 0; i < nc; i++) {
+                float x = s_map_crumb_scratch[i].x, y = s_map_crumb_scratch[i].y;
+                if (x < minx) minx = x;
+                if (x > maxx) maxx = x;
+                if (y < miny) miny = y;
+                if (y > maxy) maxy = y;
+            }
+            for (int i = 0; i < nm; i++) {
+                float x = s_map_mark_scratch[i].x, y = s_map_mark_scratch[i].y;
+                if (x < minx) minx = x;
+                if (x > maxx) maxx = x;
+                if (y < miny) miny = y;
+                if (y > maxy) maxy = y;
+            }
+            const float margin = 1.5f;                 /* metres of breathing room */
+            float spanx = (maxx - minx) + 2.0f * margin;
+            float spany = (maxy - miny) + 2.0f * margin;
+            if (spanx < 1.0f) spanx = 1.0f;
+            if (spany < 1.0f) spany = 1.0f;
+            float ppm = (float)MAP_W / spanx;
+            float ppmy = (float)MAP_H / spany;
+            if (ppmy < ppm) ppm = ppmy;
+            if (ppm < MAP_PPM_MIN) ppm = MAP_PPM_MIN;
+            if (ppm > MAP_PPM_MAX) ppm = MAP_PPM_MAX;
+            float cx = (minx + maxx) * 0.5f, cy = (miny + maxy) * 0.5f;
+
+            /* Hysteresis: only re-fit (→ redraw) on a meaningful change, so the
+             * heavy canvas repaint isn't run every 20 Hz frame. */
+            bool refit = !s_map_have_fit
+                || fabsf(ppm - s_map_ppm) > 0.06f * s_map_ppm
+                || fabsf(cx - s_map_ctr_x) * s_map_ppm > 24.0f
+                || fabsf(cy - s_map_ctr_y) * s_map_ppm > 24.0f;
+
+            uint32_t sig = (uint32_t)nm;
+            for (int i = 0; i < nm; i++) {
+                sig = sig * 2654435761u
+                    + (uint32_t)(int)(s_map_mark_scratch[i].x * 4.0f)
+                    + (uint32_t)(int)(s_map_mark_scratch[i].y * 4.0f) * 31u;
+            }
+            bool dirty = refit || (nc != s_map_last_crumbs) || (sig != s_map_marks_sig);
+
+            if (refit) { s_map_ppm = ppm; s_map_ctr_x = cx; s_map_ctr_y = cy; s_map_have_fit = true; }
+            if (dirty) { map_redraw(nc, nm); s_map_last_crumbs = nc; s_map_marks_sig = sig; }
+
+            /* Operator dot + heading arrow — glide every tick over the static layer. */
+            int opx, opy;
+            map_world_to_px(pose.x, pose.y, &opx, &opy);
+            if (s_map_op_dot) {
+                lv_obj_set_pos(s_map_op_dot, opx - 7, opy - 7);
+                lv_obj_clear_flag(s_map_op_dot, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (s_map_op_arrow) {
+                const float L = 20.0f;
+                s_map_arrow_pts[0].x = opx;
+                s_map_arrow_pts[0].y = opy;
+                s_map_arrow_pts[1].x = (lv_value_precise_t)(opx + L * sinf(pose.heading));
+                s_map_arrow_pts[1].y = (lv_value_precise_t)(opy - L * cosf(pose.heading));
+                lv_line_set_points(s_map_op_arrow, s_map_arrow_pts, 2);
+                lv_obj_clear_flag(s_map_op_arrow, LV_OBJ_FLAG_HIDDEN);
+            }
+
+            /* Header status, throttled ~2 Hz. */
+            if (s_map_info && (st->tick % 10 == 0)) {
+                float hdg = pose.heading * (180.0f / 3.14159265f);
+                hdg = fmodf(hdg, 360.0f); if (hdg < 0.0f) hdg += 360.0f;
+                int across = (int)((float)MAP_W / s_map_ppm + 0.5f);
+                char tb[64];
+                snprintf(tb, sizeof(tb), "HDG %03d   ACROSS %dm   PATH %d",
+                         (int)(hdg + 0.5f), across, nc);
+                label_set_text_cached(s_map_info, tb);
+            }
+        }
+    }
+
     if (s_cur_kind == PK_MOTION && s_motion_pulse && s_pulse_buf) {
         /* Wavy Halo pulse: a banded sweep expands apex->rim and repeats. Advance the
          * leading edge in REAL-WORLD range (m), projected through ppm so it stays locked
@@ -5411,6 +5771,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
                         while (s_dir_phi < -(float)M_PI) s_dir_phi += 2.0f * (float)M_PI;
                         prop_settings_set_u32("dir_phi",
                             (uint32_t)(int32_t)(s_dir_phi * 1000.0f));
+                        prop_track_set_dir_phi(s_dir_phi);   /* path heading tracks the recal */
                         prop_audio_play(PA_SIGNAL);
                     }
                 }
@@ -5466,6 +5827,7 @@ void prop_ui_goto(const char *screen)
     else if (strcmp(screen, "sensors") == 0)     open_panel(PK_SENSORS);
     else if (strcmp(screen, "motion") == 0)      open_panel(PK_MOTION);
     else if (strcmp(screen, "dircal") == 0)      open_panel(PK_DIRCAL);
+    else if (strcmp(screen, "minimap") == 0)     open_panel(PK_MINIMAP);
     else if (strcmp(screen, "archive") == 0) open_panel(PK_ARCHIVE);
     else if (strcmp(screen, "cassette") == 0) open_panel(PK_CASSETTE);
     else if (strcmp(screen, "insights") == 0) open_panel(PK_INSIGHTS);
