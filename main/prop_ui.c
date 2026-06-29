@@ -201,9 +201,24 @@ static lv_obj_t *s_motion_blips[3];     /* target blips (amber circles) */
 static lv_obj_t *s_motion_tdist[3];     /* T1/T2/T3 distance labels (large) */
 static lv_obj_t *s_motion_tvel[3];      /* T1/T2/T3 velocity labels */
 static lv_obj_t *s_motion_tarrow[3];    /* T1/T2/T3 bearing arrow lines */
-#define PULSE_BAND  9      /* contiguous sub-arcs forming one thick gradient band */
-#define PULSE_WIDTH 4      /* px per sub-arc -> ~36 px band thickness */
-static lv_obj_t *s_motion_pulse[PULSE_BAND]; /* one Halo-style pulse: bright leading edge -> 0 trailing */
+#define PULSE_BAND  9      /* (PULSE_BAND-1)*PULSE_WIDTH = radial band thickness in px */
+#define PULSE_WIDTH 4      /* -> 32 px thick band; also sets the apex->rim wrap distance */
+#define PULSE_PEAK_OPA 150 /* leading-edge opacity; kept well below the target blips (255)
+                            * so the sweep never reads brighter than an actual contact */
+#define PULSE_WAVE_STEPS 5     /* radial terrace steps -> the geometric banded look */
+#define PULSE_WAVE_AMP   4.0f  /* px scallop amplitude rippling the leading edge */
+#define PULSE_WAVE_FREQ  46.0f /* scallop frequency (multiplies the horizontal slope) */
+#define PULSE_AMBER_RGB  0xE0B000u /* COL_AMBER as 0xRRGGBB for direct ARGB8888 writes */
+/* The pulse is hand-painted into its own ARGB8888 canvas each tick (mirrors prop_fx) —
+ * per-pixel alpha gives the wavy/terraced texture lv_draw_arc can't express, and costs
+ * zero AA-mask PSRAM allocs. Only the tight band bbox is cleared/painted/invalidated. */
+static lv_obj_t *s_motion_pulse;     /* the pulse canvas (child of rbox) */
+static uint32_t *s_pulse_buf;        /* ARGB8888 buffer (PSRAM); NULL when torn down */
+static int       s_pulse_lead_px;    /* current leading-edge radius (px) */
+static int       s_pulse_phase;      /* travelling-wave phase, advances per tick */
+static lv_area_t s_pulse_prev_local; /* last frame's band bbox, canvas-local coords */
+static bool      s_pulse_prev_valid; /* false until the first paint */
+static float     s_pulse_sin[256];   /* scallop sin LUT (filled in build_motion_panel) */
 static lv_obj_t *s_motion_gdial[3];     /* YAW/PITCH/ROLL gimbal needle lines */
 static lv_obj_t *s_motion_gval[3];      /* per-dial value labels */
 static lv_obj_t *s_motion_ble_box[3];   /* 3 strongest BLE contact boxes */
@@ -485,7 +500,9 @@ static void close_panel(void)
         s_motion_tvel[i]   = NULL;
         s_motion_tarrow[i] = NULL;
     }
-    for (int i = 0; i < PULSE_BAND; i++) s_motion_pulse[i] = NULL;
+    s_motion_pulse     = NULL;   /* canvas object already freed with the panel (line ~441) */
+    if (s_pulse_buf) { free(s_pulse_buf); s_pulse_buf = NULL; }   /* its PSRAM backing is ours */
+    s_pulse_prev_valid = false;
     for (int i = 0; i < 3; i++) { s_motion_gdial[i] = NULL; s_motion_gval[i] = NULL; }
     for (int i = 0; i < 3; i++) {
         s_motion_ble_box[i]  = NULL; s_motion_ble_name[i] = NULL;
@@ -3513,6 +3530,61 @@ static void dir_dot_cb(lv_event_t *e)
     open_panel(PK_DIRCAL);
 }
 
+/* Zero a canvas-local rect of the A8 pulse buffer (clamped to the canvas). */
+static void pulse_clear_rect(const lv_area_t *a)
+{
+    if (!s_pulse_buf) { return; }
+    int x0 = a->x1 < 0 ? 0 : a->x1;
+    int y0 = a->y1 < 0 ? 0 : a->y1;
+    int x1 = a->x2 >= RADAR_W ? RADAR_W - 1 : a->x2;
+    int y1 = a->y2 >= RADAR_H ? RADAR_H - 1 : a->y2;
+    for (int y = y0; y <= y1; y++) {
+        memset(s_pulse_buf + (size_t)y * RADAR_W + x0, 0, (size_t)(x1 - x0 + 1) * 4);
+    }
+}
+
+/* Paint the wavy Halo band into the ARGB8888 buffer (canvas-local coords). Only pixels
+ * inside the fan sector and the [r_in, r_out] annulus are written; the bbox must have
+ * been cleared first. The look: a per-pixel radial ramp (bright leading edge -> 0 trail)
+ * quantised into PULSE_WAVE_STEPS terraces, with the outer edge scalloped by a sin LUT —
+ * this is the geometric "wave" the arc stack only hinted at. Brightness is capped at
+ * PULSE_PEAK_OPA so the sweep never out-brights a target blip. */
+static void pulse_paint_band(const lv_area_t *bbox, int r_out, int r_in, int phase)
+{
+    if (!s_pulse_buf || r_out <= r_in) { return; }
+    int x0 = bbox->x1 < 0 ? 0 : bbox->x1;
+    int y0 = bbox->y1 < 0 ? 0 : bbox->y1;
+    int x1 = bbox->x2 >= RADAR_W ? RADAR_W - 1 : bbox->x2;
+    int y1 = bbox->y2 >= RADAR_H ? RADAR_H - 1 : bbox->y2;
+    const float inv_span = 1.0f / (float)(r_out - r_in);
+    const float tan_half = 1.7320508f;          /* tan(60 deg) — fan half-angle */
+    for (int y = y0; y <= y1; y++) {
+        int dy = y - FAN_APEX_Y;
+        if (dy >= 0) { continue; }              /* band is strictly above the apex */
+        int neg_dy = -dy;
+        uint32_t *row = s_pulse_buf + (size_t)y * RADAR_W;
+        for (int x = x0; x <= x1; x++) {
+            int dx = x - FAN_APEX_X;
+            if (dx > tan_half * neg_dy || -dx > tan_half * neg_dy) { continue; }  /* fan gate */
+            float r = sqrtf((float)(dx * dx + dy * dy));
+            if (r < (float)r_in) { continue; }
+            /* scallop the outer edge: index the sin LUT by horizontal slope + phase */
+            float u = (float)dx / (float)neg_dy;                 /* -1.73..1.73 in-fan */
+            int li = ((int)(u * PULSE_WAVE_FREQ) + phase) & 255;
+            float r_out_eff = (float)r_out + PULSE_WAVE_AMP * s_pulse_sin[li];
+            if (r > r_out_eff) { continue; }
+            float t = (r - (float)r_in) * inv_span;              /* 0 trail .. 1 lead */
+            int step = (int)(t * PULSE_WAVE_STEPS);
+            if (step >= PULSE_WAVE_STEPS) { step = PULSE_WAVE_STEPS - 1; }
+            int a = PULSE_PEAK_OPA * step / (PULSE_WAVE_STEPS - 1);
+            if (r > (float)(FAN_R - 16)) { a = (int)(a * (FAN_R - r) / 16.0f); }  /* rim fade */
+            if (a <= 0) { continue; }
+            if (a > PULSE_PEAK_OPA) { a = PULSE_PEAK_OPA; }
+            row[x] = ((uint32_t)a << 24) | PULSE_AMBER_RGB;
+        }
+    }
+}
+
 static lv_obj_t *build_motion_panel(lv_obj_t *parent)
 {
     /* SCANNER: full-screen page — no title header, no BACK button (the nav rail is
@@ -3624,23 +3696,26 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
 
     /* (Fixed "1m"/"2m" legend removed — labels now ride the rings in motion_layout_grid.) */
 
-    /* Single Halo-style pulse — PULSE_BAND contiguous sub-arcs form one thick band
-     * that expands from the apex across the fan (bright leading edge -> 0 trailing). */
-    for (int i = 0; i < PULSE_BAND; i++) {
-        s_motion_pulse[i] = lv_arc_create(rbox);
-        lv_obj_remove_style(s_motion_pulse[i], NULL, LV_PART_KNOB);
-        lv_obj_clear_flag(s_motion_pulse[i], LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_size(s_motion_pulse[i], 2, 2);
-        lv_obj_set_pos(s_motion_pulse[i], FAN_APEX_X - 1, FAN_APEX_Y - 1);
-        lv_arc_set_rotation(s_motion_pulse[i], 0);
-        lv_arc_set_bg_angles(s_motion_pulse[i], FAN_LEFT_DEG, FAN_RIGHT_DEG);
-        lv_arc_set_angles(s_motion_pulse[i], FAN_LEFT_DEG, FAN_RIGHT_DEG);
-        lv_obj_set_style_arc_width(s_motion_pulse[i], PULSE_WIDTH + 1, LV_PART_MAIN);
-        lv_obj_set_style_arc_color(s_motion_pulse[i], COL_AMBER, LV_PART_MAIN);
-        lv_obj_set_style_arc_width(s_motion_pulse[i], 0, LV_PART_INDICATOR);
-        lv_obj_set_style_opa(s_motion_pulse[i], LV_OPA_TRANSP, 0);
+    /* Halo pulse — a hand-painted ARGB8888 canvas (see pulse_paint_band). The observer
+     * advances the lead radius, repaints only the tight band bbox, and invalidates only
+     * that bbox, so dirty area tracks band thickness (fixed) not the expanding-circle
+     * bbox. Per-pixel alpha gives the wavy/terraced look and costs zero AA-mask allocs. */
+    for (int i = 0; i < 256; i++) {
+        s_pulse_sin[i] = sinf((float)i * (2.0f * 3.14159265f / 256.0f));
     }
-    s_pulse_lead_m = 0.0f;
+    size_t pulse_sz = LV_CANVAS_BUF_SIZE(RADAR_W, RADAR_H, 32, LV_DRAW_BUF_STRIDE_ALIGN);
+    s_pulse_buf = heap_caps_malloc(pulse_sz, MALLOC_CAP_SPIRAM);
+    if (s_pulse_buf) {
+        memset(s_pulse_buf, 0, pulse_sz);
+        s_motion_pulse = lv_canvas_create(rbox);
+        lv_canvas_set_buffer(s_motion_pulse, s_pulse_buf, RADAR_W, RADAR_H, LV_COLOR_FORMAT_ARGB8888);
+        lv_obj_set_pos(s_motion_pulse, 0, 0);
+        lv_obj_clear_flag(s_motion_pulse, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    }
+    s_pulse_lead_m     = 0.0f;
+    s_pulse_lead_px    = 0;
+    s_pulse_phase      = 0;
+    s_pulse_prev_valid = false;
 
     /* Comet-tail dot pool (per target), created hidden — drawn behind the blips. */
     for (int i = 0; i < 3; i++) {
@@ -4904,28 +4979,48 @@ static void ui_observer(const prop_state_t *st, void *ctx)
     }
 
     /* Drive the MOTION SCAN panel: radial pulse, target blips, gimbal, aux labels. */
-    if (s_cur_kind == PK_MOTION && s_motion_pulse[0]) {
-        /* Single Halo-style pulse: one thick band sweeps apex->rim and repeats.
-         * j=0 = bright leading (outer) edge; opacity ramps to 0 at the trailing edge. */
-        /* Advance the leading edge in REAL-WORLD range (m), then project through ppm,
-         * so the pulse stays locked to the rings/blips as the scale animates
-         * (~6 px/tick at the current scale). */
+    if (s_cur_kind == PK_MOTION && s_motion_pulse && s_pulse_buf) {
+        /* Wavy Halo pulse: a banded sweep expands apex->rim and repeats. Advance the
+         * leading edge in REAL-WORLD range (m), projected through ppm so it stays locked
+         * to the rings/blips as the scale animates (~6 px/tick). Then repaint + invalidate
+         * only the tight band bbox (previous to clear + current to draw), keeping the
+         * dirty area proportional to band thickness, not the expanding circle. */
         s_pulse_lead_m += 6.0f / s_motion_ppm;
         float lead_px = s_pulse_lead_m * s_motion_ppm;
         if (lead_px > (float)(FAN_R + PULSE_BAND * PULSE_WIDTH)) { s_pulse_lead_m = 0.0f; lead_px = 0.0f; }
-        for (int j = 0; j < PULSE_BAND; j++) {
-            if (!s_motion_pulse[j]) break;
-            int rj = (int)lead_px - j * PULSE_WIDTH;
-            if (rj <= 0 || rj > FAN_R) {
-                lv_obj_set_style_opa(s_motion_pulse[j], LV_OPA_TRANSP, 0);
-                continue;
-            }
-            lv_obj_set_size(s_motion_pulse[j], rj * 2, rj * 2);
-            lv_obj_set_pos(s_motion_pulse[j], FAN_APEX_X - rj, FAN_APEX_Y - rj);
-            int opa = 235 - (235 * j) / (PULSE_BAND - 1);   /* 235 (lead) -> 0 (trail) */
-            if (rj > FAN_R - 16) opa = opa * (FAN_R - rj) / 16;  /* fade into the rim */
-            lv_obj_set_style_opa(s_motion_pulse[j], (lv_opa_t)opa, 0);
+        s_pulse_lead_px = (int)lead_px;
+
+        const int PAD = 6;                                   /* scallop + slope rounding */
+        int r_out = s_pulse_lead_px; if (r_out > FAN_R) { r_out = FAN_R; }
+        int r_in  = s_pulse_lead_px - (PULSE_BAND - 1) * PULSE_WIDTH; if (r_in < 0) { r_in = 0; }
+        int xext  = (int)(0.8660254f * r_out + 0.999f);      /* |cos210|=|cos330| */
+        /* canvas-local band bbox (canvas is at rbox 0,0 so local == rbox coords) */
+        lv_area_t cur = {
+            .x1 = FAN_APEX_X - xext - PAD,
+            .x2 = FAN_APEX_X + xext + PAD,
+            .y1 = FAN_APEX_Y - r_out - PAD,                  /* topmost at 270deg */
+            .y2 = FAN_APEX_Y - (r_in / 2) + PAD,             /* lowest at 210/330, inner r */
+        };
+
+        /* Repaint the buffer: clear previous + current band rects, then paint. */
+        if (s_pulse_prev_valid) { pulse_clear_rect(&s_pulse_prev_local); }
+        pulse_clear_rect(&cur);
+        if (r_out > 0) { pulse_paint_band(&cur, r_out, r_in, s_pulse_phase); }
+        s_pulse_phase = (s_pulse_phase + 2) & 255;           /* travelling scallop */
+
+        /* Invalidate the same rects in absolute coords (canvas-local + canvas origin). */
+        lv_area_t oc; lv_obj_get_coords(s_motion_pulse, &oc);
+        if (s_pulse_prev_valid) {
+            lv_area_t pabs = { s_pulse_prev_local.x1 + oc.x1, s_pulse_prev_local.y1 + oc.y1,
+                               s_pulse_prev_local.x2 + oc.x1, s_pulse_prev_local.y2 + oc.y1 };
+            lv_obj_invalidate_area(s_motion_pulse, &pabs);
         }
+        if (r_out > 0) {
+            lv_area_t cabs = { cur.x1 + oc.x1, cur.y1 + oc.y1, cur.x2 + oc.x1, cur.y2 + oc.y1 };
+            lv_obj_invalidate_area(s_motion_pulse, &cabs);
+        }
+        s_pulse_prev_local = cur;
+        s_pulse_prev_valid = (r_out > 0);
 
         /* Update target blips from LD2450 cache, placed within the fan. */
         prop_motion_target_t tgts[3];
