@@ -26,5 +26,5 @@ wifi_secret.env
 
 # Local reference materials — KiCad board files and datasheets are large binaries
 # that live locally for hardware analysis. Not firmware source; not for the repo.
-datasheets/
-reference/schematic/
+# datasheets/
+# reference/schematic/

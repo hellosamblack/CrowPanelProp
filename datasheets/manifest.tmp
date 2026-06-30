@@ -1,0 +1,136 @@
+{
+  "schematic": "datasheets/board_components.txt",
+  "last_sync": "2026-06-26T18:54:01.607611+00:00",
+  "parts": {
+    "ESP32-P4NRW32": {
+      "manufacturer": "",
+      "description": "",
+      "value": "",
+      "references": [],
+      "status": "not_found",
+      "error": "No LCSC results for 'ESP32-P4NRW32'",
+      "last_attempt": "2026-06-26T18:37:49.589936+00:00"
+    },
+    "CH340K": {
+      "manufacturer": "",
+      "description": "",
+      "value": "",
+      "references": [],
+      "status": "not_found",
+      "error": "No DigiKey results for 'CH340K'",
+      "last_attempt": "2026-06-26T18:53:49.171074+00:00"
+    },
+    "ESP32-C6-MINI-1-N4": {
+      "file": "ESP32-C6-MINI-1-N4_RF_TXRX_MOD_BT_WIFI_PCB_TH_SMD.pdf",
+      "manufacturer": "Espressif Systems",
+      "description": "RF TXRX MOD BT WIFI PCB TH SMD",
+      "value": "",
+      "datasheet_url": "https://www.espressif.com/sites/default/files/documentation/esp32-c6-mini-1_mini-1u_datasheet_en.pdf",
+      "downloaded_date": "2026-06-26T18:53:49.170461+00:00",
+      "source": "digikey",
+      "status": "ok",
+      "references": [],
+      "size_bytes": 973691,
+      "verification": "likely"
+    },
+    "ES7210": {
+      "manufacturer": "M5Stack Technology Co., Ltd.",
+      "description": "ECHO PYRAMID SMART SPEAKER BASE",
+      "value": "",
+      "datasheet_url": "https://docs.m5stack.com/en/atom/Echo_Pyramid",
+      "references": [],
+      "status": "failed",
+      "error": "All download methods failed",
+      "last_attempt": "2026-06-26T18:53:49.171330+00:00"
+    },
+    "MT3608": {
+      "manufacturer": "Olimex LTD",
+      "description": "BREADBOARD POWER SUPPLY MT3608",
+      "value": "",
+      "references": [],
+      "status": "no_datasheet",
+      "error": "DigiKey listing has no datasheet URL",
+      "last_attempt": "2026-06-26T18:53:54.771509+00:00"
+    },
+    "ME6211C18M5G": {
+      "manufacturer": "",
+      "description": "",
+      "value": "",
+      "references": [],
+      "status": "not_found",
+      "error": "No DigiKey results for 'ME6211C18M5G'",
+      "last_attempt": "2026-06-26T18:53:55.638408+00:00"
+    },
+    "ES8311": {
+      "file": "ES8311_ATOMIC_ECHO_BASE.pdf",
+      "manufacturer": "M5Stack Technology Co., Ltd.",
+      "description": "ATOMIC ECHO BASE",
+      "value": "",
+      "datasheet_url": "https://m5stack.oss-cn-shenzhen.aliyuncs.com/resource/docs/static/pdf/static/en/atom/Atomic%20Echo%20Base.pdf",
+      "downloaded_date": "2026-06-26T18:53:50.689699+00:00",
+      "source": "digikey",
+      "status": "ok",
+      "references": [],
+      "size_bytes": 6225748,
+      "verification": "verified"
+    },
+    "NS4168": {
+      "manufacturer": "M5Stack Technology Co., Ltd.",
+      "description": "ATOM SPEAKER KIT (NS4168)",
+      "value": "",
+      "references": [],
+      "status": "no_datasheet",
+      "error": "DigiKey listing has no datasheet URL",
+      "last_attempt": "2026-06-26T18:53:57.057706+00:00"
+    },
+    "NSI1304BDL": {
+      "manufacturer": "",
+      "description": "",
+      "value": "",
+      "references": [],
+      "status": "not_found",
+      "error": "No DigiKey results for 'NSI1304BDL'",
+      "last_attempt": "2026-06-26T18:53:57.414127+00:00"
+    },
+    "LMR51450": {
+      "file": "LMR51450_IC_REG_BUCK_ADJ_5A_12WSON.pdf",
+      "manufacturer": "Texas Instruments",
+      "description": "IC REG BUCK ADJ 5A 12WSON",
+      "value": "",
+      "datasheet_url": "https://www.ti.com/lit/ds/symlink/lmr51440.pdf",
+      "downloaded_date": "2026-06-26T18:53:56.577834+00:00",
+      "source": "digikey",
+      "status": "ok",
+      "references": [],
+      "size_bytes": 2268673,
+      "verification": "verified"
+    },
+    "RU30L30M": {
+      "manufacturer": "",
+      "description": "",
+      "value": "",
+      "references": [],
+      "status": "not_found",
+      "error": "No DigiKey results for 'RU30L30M'",
+      "last_attempt": "2026-06-26T18:53:58.811351+00:00"
+    },
+    "LMBR140ET1G": {
+      "manufacturer": "",
+      "description": "",
+      "value": "",
+      "references": [],
+      "status": "not_found",
+      "error": "No DigiKey results for 'LMBR140ET1G'",
+      "last_attempt": "2026-06-26T18:53:58.856984+00:00"
+    },
+    "LMSZ5233BT1G": {
+      "manufacturer": "",
+      "description": "",
+      "value": "",
+      "references": [],
+      "status": "not_found",
+      "error": "No DigiKey results for 'LMSZ5233BT1G'",
+      "last_attempt": "2026-06-26T18:53:59.197443+00:00"
+    }
+  }
+}

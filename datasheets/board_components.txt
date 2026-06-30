@@ -1,0 +1,25 @@
+# CrowPanel ESP32-P4 Display Board - Key Components for Datasheet Sync
+# Main MCU and Radio
+ESP32-P4NRW32
+ESP32-C6-MINI-1-N4
+
+# USB Interface
+CH340K
+
+# Audio Codecs
+ES7210
+ES8311
+
+# Power Management
+MT3608
+ME6211C18M5G
+LMR51450
+
+# Audio Amplifier
+NS4168
+
+# Supporting ICs
+NSI1304BDL
+RU30L30M
+LMBR140ET1G
+LMSZ5233BT1G

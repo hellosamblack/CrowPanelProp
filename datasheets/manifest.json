@@ -1,0 +1,15 @@
+{
+  "schematic": "datasheets/board_components.txt",
+  "last_sync": "2026-06-26T18:37:50.486197+00:00",
+  "parts": {
+    "ESP32-P4NRW32": {
+      "manufacturer": "",
+      "description": "",
+      "value": "",
+      "references": [],
+      "status": "not_found",
+      "error": "No LCSC results for 'ESP32-P4NRW32'",
+      "last_attempt": "2026-06-26T18:37:49.589936+00:00"
+    }
+  }
+}
