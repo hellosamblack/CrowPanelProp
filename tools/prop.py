@@ -17,6 +17,8 @@ Examples:
     python prop.py shot out.png --screen spectrum --wait   # drive + settle + capture
     python prop.py shot corner.png --crop 764,8,260,90 --zoom 3
     python prop.py trace --seconds 12            # capture serial, decode any panic/WDT
+    python prop.py logtail --logfile crash.log   # persistent capture: survives reconnects,
+                                                   #   catches an unattended crash whenever it happens
     python prop.py decode 0x40034286 0x40034206  # addr2line against the ELF
     python prop.py telemetry                     # one-shot GET /telemetry snapshot
     python prop.py watch                         # live telemetry stream (Ctrl-C to stop)
@@ -244,6 +246,104 @@ def trace(port, seconds):
         print("[trace] no panic/WDT/mempool markers seen (clean run?)")
 
 
+def _rotate_if_needed(logfile, max_bytes):
+    try:
+        if os.path.exists(logfile) and os.path.getsize(logfile) > max_bytes:
+            rotated = logfile + ".1"
+            if os.path.exists(rotated):
+                os.remove(rotated)
+            os.rename(logfile, rotated)
+    except OSError:
+        pass
+
+
+def _flush_decode(log_fn, addrs):
+    if not os.path.exists(ELF):
+        log_fn(f"[logtail] {len(addrs)} address(es) seen but ELF not found for decode: {ELF}")
+        return
+    exe = _addr2line_exe()
+    if not exe:
+        log_fn("[logtail] addr2line not found; can't decode")
+        return
+    batch = addrs[:12]
+    out = subprocess.run([exe, "-f", "-C", "-e", ELF, *batch], capture_output=True, text=True)
+    lines = [l for l in out.stdout.splitlines() if l.strip()]
+    log_fn("[logtail] decoding fault address(es):")
+    for i, a in enumerate(batch):
+        fn = lines[2 * i] if 2 * i < len(lines) else "??"
+        loc = lines[2 * i + 1] if 2 * i + 1 < len(lines) else "??"
+        log_fn(f"    {a}  {fn}  @ {loc}")
+
+
+def logtail(port, logfile, max_bytes=10 * 1024 * 1024, quiet_flush=1.5):
+    """Persistent serial capture that doesn't stop on its own: reconnects on
+    disconnect/error, timestamps + appends every line to `logfile` (simple
+    size-based rotation to `logfile.1`), and decodes any panic/WDT addresses
+    inline once a quiet gap follows a flagged block.
+
+    Point of this vs. `trace`: `trace` only sees a crash if you happen to be
+    running it at the exact moment. `logtail` is meant to be left running for
+    a whole dev/bench/filming session in the background, so an intermittent,
+    unattended crash still gets caught — decoded and on disk — without anyone
+    watching a terminal when it happens. Ctrl-C to stop.
+    """
+    try:
+        import serial
+    except ImportError:
+        raise SystemExit("pyserial not installed (pip install pyserial)")
+
+    def log(line):
+        entry = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {line}"
+        print(entry)
+        with open(logfile, "a", encoding="utf-8", errors="replace") as f:
+            f.write(entry + "\n")
+        _rotate_if_needed(logfile, max_bytes)
+
+    log(f"[logtail] starting persistent capture on {port} -> {logfile} (Ctrl-C to stop)")
+    pending_addrs = []
+    last_activity = 0.0
+
+    try:
+        while True:
+            try:
+                s = serial.Serial(port, 115200, timeout=0.3)
+                log(f"[logtail] connected to {port} (board reset on open)")
+            except Exception as e:
+                log(f"[logtail] can't open {port} ({e}); retrying in 3s")
+                time.sleep(3)
+                continue
+
+            try:
+                while True:
+                    try:
+                        raw = s.readline()
+                    except Exception as e:
+                        log(f"[logtail] serial read error ({e}); reconnecting")
+                        break
+                    if not raw:
+                        if pending_addrs and (time.time() - last_activity) > quiet_flush:
+                            _flush_decode(log, pending_addrs)
+                            pending_addrs = []
+                        continue
+                    line = raw.decode(errors="replace").rstrip()
+                    if not line:
+                        continue
+                    log("  !! " + line if _FLAG_RE.search(line) else line)
+                    found = _ADDR_RE.findall(line)
+                    if found:
+                        last_activity = time.time()
+                        for a in found:
+                            if a not in pending_addrs:
+                                pending_addrs.append(a)
+            finally:
+                s.close()
+            time.sleep(1)   # brief pause before reconnecting after a serial error
+    except KeyboardInterrupt:
+        if pending_addrs:
+            _flush_decode(log, pending_addrs)
+        log("[logtail] stopped")
+
+
 # ---- shot (drive + settle + capture) -------------------------------------
 def shot(host, out, screen=None, scene=None, do_wait=False, crop=None, zoom=1, settle=1.5):
     if do_wait and not wait_ready(host):
@@ -388,6 +488,11 @@ def main():
              tuple(int(v) for v in crop.split(",")) if crop else None, zoom)
     elif cmd == "trace":
         trace(_pop_opt(rest, "--port") or detect_port(), int(_pop_opt(rest, "--seconds") or 12))
+    elif cmd == "logtail":
+        port = _pop_opt(rest, "--port") or detect_port()
+        logfile = _pop_opt(rest, "--logfile") or "prop_trace.log"
+        max_mb = float(_pop_opt(rest, "--max-mb") or 10)
+        logtail(port, logfile, max_bytes=int(max_mb * 1024 * 1024))
     elif cmd == "decode":
         decode(rest)
     else:

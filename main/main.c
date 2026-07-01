@@ -48,6 +48,7 @@ static void hardware_init(void)
     esp_err_t err;
 
     /* 1. LDOs powering the MIPI-DSI panel (required before display). */
+    prop_bootlog_mark(BOOT_STAGE_HW_LDO);
     esp_ldo_channel_config_t ldo3_cfg = { .chan_id = 3, .voltage_mv = 2500 };
     err = esp_ldo_acquire_channel(&ldo3_cfg, &ldo3);
     if (err != ESP_OK) fail_loop("ldo3", err);
@@ -56,18 +57,22 @@ static void hardware_init(void)
     if (err != ESP_OK) fail_loop("ldo4", err);
 
     /* 2. I2C (touch bus). */
+    prop_bootlog_mark(BOOT_STAGE_HW_I2C);
     err = i2c_init();
     if (err != ESP_OK) fail_loop("i2c", err);
 
     /* 3. Touch panel. */
+    prop_bootlog_mark(BOOT_STAGE_HW_TOUCH);
     err = touch_init();
     if (err != ESP_OK) fail_loop("touch", err);
 
     /* 4. LCD + LVGL. */
+    prop_bootlog_mark(BOOT_STAGE_HW_DISPLAY);
     err = display_init();
     if (err != ESP_OK) fail_loop("display", err);
 
     /* 5. Backlight on. */
+    prop_bootlog_mark(BOOT_STAGE_HW_BACKLIGHT);
     err = set_lcd_blight(100);
     if (err != ESP_OK) fail_loop("backlight", err);
 
@@ -76,19 +81,26 @@ static void hardware_init(void)
 
 void app_main(void)
 {
+    /* First thing, before anything else can fault — reads back the previous
+     * session's breadcrumb (if any) and logs it. See prop_bootlog.h. */
+    prop_bootlog_init();
+
     MAIN_INFO("communicator prop starting");
 
     hardware_init();
 
     /* Physical LEDs + buttons; button events go to the engine. */
+    prop_bootlog_mark(BOOT_STAGE_IO);
     ESP_ERROR_CHECK(bsp_io_init(on_button, NULL));
 
     /* Persistent settings (NVS) — init before anything reads config. Survives
      * reboots and reflashes. */
+    prop_bootlog_mark(BOOT_STAGE_SETTINGS);
     ESP_ERROR_CHECK(prop_settings_init());
 
     /* Configurable I/O bench (digital/analog in+out on the header pins). Restores
      * saved pin modes from NVS; needs nvs up (prop_settings_init ran nvs_flash_init). */
+    prop_bootlog_mark(BOOT_STAGE_AIO);
     ESP_ERROR_CHECK(bsp_aio_init());
 
     /* Re-apply the saved backlight brightness (hardware_init lit it at 100%). */
@@ -97,12 +109,15 @@ void app_main(void)
     set_lcd_blight(brightness);
 
     /* Brain: must exist before observers (UI/API) attach. */
+    prop_bootlog_mark(BOOT_STAGE_ENGINE);
     ESP_ERROR_CHECK(prop_engine_init());
 
     /* Screen UI (observer) — after display + engine. */
+    prop_bootlog_mark(BOOT_STAGE_UI);
     ESP_ERROR_CHECK(prop_ui_init());
 
     /* CRT effects overlay on the top layer (hidden unless enabled in settings). */
+    prop_bootlog_mark(BOOT_STAGE_FX);
     esp_err_t fx_err = prop_fx_init();
     if (fx_err != ESP_OK) {
         MAIN_ERROR("fx overlay unavailable (%s) — running without CRT effects",
@@ -111,6 +126,7 @@ void app_main(void)
 
     /* PDM microphone capture for the SPECTRUM instrument. NON-fatal: the prop
      * runs fine without audio input (the spectrum screen shows offline). */
+    prop_bootlog_mark(BOOT_STAGE_MIC);
     esp_err_t mic_err = prop_mic_init();
     if (mic_err != ESP_OK) {
         MAIN_ERROR("mic unavailable (%s) — SPECTRUM will show offline",
@@ -119,6 +135,7 @@ void app_main(void)
 
     /* Synthesized feedback audio over the speaker amp. NON-fatal: if the amp/I2S
      * won't come up the prop runs silent (prop_audio_play becomes a no-op). */
+    prop_bootlog_mark(BOOT_STAGE_AUDIO);
     esp_err_t audio_err = prop_audio_init();
     if (audio_err != ESP_OK) {
         MAIN_ERROR("audio unavailable (%s) — running without feedback tones",
@@ -126,6 +143,7 @@ void app_main(void)
     }
 
     /* LD2450 24 GHz multi-target radar on UART2 (GPIO53/54). NON-fatal. */
+    prop_bootlog_mark(BOOT_STAGE_MOTION);
     esp_err_t motion_err = prop_motion_init();
     if (motion_err != ESP_OK) {
         MAIN_ERROR("motion radar unavailable (%s) — MOTION SCAN will show offline",
@@ -134,6 +152,7 @@ void app_main(void)
 
     /* MPU-6500 IMU with DMP on the shared I2C_NUM_0 bus (GPIO45/46, addr 0x68).
      * NON-fatal: absent if the module is not wired; VITALS/MOTION SCAN show "-- °". */
+    prop_bootlog_mark(BOOT_STAGE_IMU);
     esp_err_t imu_err = prop_imu_init();
     if (imu_err != ESP_OK) {
         MAIN_ERROR("IMU unavailable (%s) — gimbal/VITALS motion data offline",
@@ -143,6 +162,7 @@ void app_main(void)
     /* Dead-reckoning / spatial memory (MINIMAP): fuses the DMP pedometer + radar
      * into a world-frame pose, path, and target marks. NON-fatal: idles with an
      * invalid pose if the IMU is absent. After prop_imu/prop_motion are up. */
+    prop_bootlog_mark(BOOT_STAGE_TRACK);
     esp_err_t track_err = prop_track_init();
     if (track_err != ESP_OK) {
         MAIN_ERROR("dead-reckoning unavailable (%s) — MINIMAP will show no path",
@@ -150,6 +170,7 @@ void app_main(void)
     }
 
     /* Seeed 24 GHz (UART3, GPIO33/34) + SEN0395 (UART1, GPIO25/27). NON-fatal. */
+    prop_bootlog_mark(BOOT_STAGE_AUX_RADAR);
     esp_err_t aux_err = prop_aux_radar_init();
     if (aux_err != ESP_OK) {
         MAIN_ERROR("aux radar init partial (%s) — offline sensors will show AUX_OFFLINE",
@@ -159,11 +180,13 @@ void app_main(void)
     /* WiFi (AP+STA via the C6) then the live control API. Both are NON-fatal:
      * the C6 radio is optional to the prop's core function, so a co-processor
      * problem must not take down the display/LEDs/buttons. */
+    prop_bootlog_mark(BOOT_STAGE_NET);
     esp_err_t net_err = prop_net_init();
     if (net_err != ESP_OK) {
         MAIN_ERROR("WiFi unavailable (%s) — prop runs locally; no remote cues/OTA",
                    esp_err_to_name(net_err));
     } else {
+        prop_bootlog_mark(BOOT_STAGE_API);
         esp_err_t api_err = prop_api_init();
         if (api_err != ESP_OK) {
             MAIN_ERROR("control API failed to start: %s", esp_err_to_name(api_err));
@@ -171,6 +194,7 @@ void app_main(void)
 
         /* Custom-RPC link to the C6 (on-C6 CSI capture). NON-fatal: the SDIO
          * transport is up from prop_net_init, so just register the receiver. */
+        prop_bootlog_mark(BOOT_STAGE_COPROC);
         esp_err_t coproc_err = prop_coproc_init();
         if (coproc_err != ESP_OK) {
             MAIN_ERROR("co-processor RPC unavailable (%s) — no on-C6 CSI feed",
@@ -179,14 +203,17 @@ void app_main(void)
 
         /* CSI traffic generator: pings the gateway so the C6 has frames to
          * measure. NON-fatal; idle until a rate is configured + STA is up. */
+        prop_bootlog_mark(BOOT_STAGE_TRAFFIC);
         prop_traffic_init();
 
         /* Guided two-phase auto-calibration (CSI CONFIG panel). */
+        prop_bootlog_mark(BOOT_STAGE_CALIB);
         prop_calib_init();
 
         /* BLE scan (CONTACT SIGNATURES) — the C6 hosts the controller, sharing the
          * SDIO link WiFi just brought up. NON-fatal: if the controller/host won't
          * come up (or RAM is tight) the panel shows "BLE OFFLINE" and the rest runs. */
+        prop_bootlog_mark(BOOT_STAGE_BLE);
         esp_err_t ble_err = prop_ble_init();
         if (ble_err != ESP_OK) {
             MAIN_ERROR("BLE unavailable (%s) — CONTACTS will show offline",
@@ -195,11 +222,13 @@ void app_main(void)
 
         /* WiFi CSI (SIGNAL ENVIRONMENT) — best-effort real CSI from the C6, with a
          * synthetic RSSI-driven fallback baked in, so it never fails the prop. */
+        prop_bootlog_mark(BOOT_STAGE_CSI);
         prop_csi_init();
 
         /* WiFi FTM ranging (RANGE) — real 802.11mc ranging run on the C6 (see
          * prop_ftm.c). NON-fatal: if the task can't start, the RANGE panel just
          * shows an empty table. */
+        prop_bootlog_mark(BOOT_STAGE_FTM);
         esp_err_t ftm_err = prop_ftm_init();
         if (ftm_err != ESP_OK) {
             MAIN_ERROR("FTM ranging unavailable (%s) — RANGE will show empty",
@@ -211,6 +240,7 @@ void app_main(void)
      * roll back to the previous partition on the next reset. Harmless on factory
      * boots; essential after an OTA update (image starts as PENDING_VERIFY). */
     esp_ota_mark_app_valid_cancel_rollback();
+    prop_bootlog_mark(BOOT_STAGE_READY);
 
     MAIN_INFO("ready — AP '%s', console at http://<ip>/", PROP_AP_SSID);
 

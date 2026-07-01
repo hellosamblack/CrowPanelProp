@@ -16,6 +16,7 @@
 #include "prop_coproc.h"
 #include "prop_calib.h"
 #include "prop_settings.h"
+#include "prop_bootlog.h"
 #include "bsp_io.h"
 #include "bsp_aio.h"
 #include "bsp_illuminate.h"   /* panel_handle + H_size/V_size for the framebuffer grab */
@@ -59,6 +60,13 @@ static char *state_to_json(void)
     cJSON_AddNumberToObject(root, "channel_pos", st.chan_pos);
     cJSON_AddStringToObject(root, "ip", ip);
     cJSON_AddStringToObject(root, "version", esp_app_get_description()->version);
+
+    /* Boot-stage breadcrumb (prop_bootlog.c) — which init stage the *previous*
+     * session was running when it reset. Lets tools/prop.py root-cause a
+     * crash/reset after the fact even if nobody had a serial capture running
+     * at the time. No reset_reason field: see prop_bootlog.h for why. */
+    cJSON *boot = cJSON_AddObjectToObject(root, "boot");
+    cJSON_AddStringToObject(boot, "prev_stage", prop_bootlog_prev_stage_name());
 
     /* Radio-sensor telemetry (continuously cached, so cheap to read here). The RF
      * BAND channel histogram is panel-driven (on-demand scan) and not included. */
