@@ -83,6 +83,20 @@ bool prop_motion_cfg_set_zone(prop_motion_zone_mode_t mode, const prop_motion_zo
  * Blocks until data streaming resumes or ~5s elapses. */
 bool prop_motion_cfg_restart(void);
 
+/* Restore all module settings to factory defaults (baud 256000, BT on, multi-
+ * target tracking, zone filtering off) and restart to apply them. Reuses the
+ * same restart+resync path as prop_motion_cfg_set_baud since baud reverts too. */
+bool prop_motion_cfg_factory_reset(void);
+
+/* Change the module's UART baud rate. HIGH RISK: this restarts the module and
+ * reconfigures the LOCAL ESP32 UART to match, then waits for data streaming
+ * to resume; only 9600/19200/38400/57600/115200/230400/256000/460800 are
+ * valid. If the module doesn't resume streaming at the new rate within ~5s,
+ * this function automatically falls back to the PREVIOUS baud rate and
+ * returns false — if the module is silent at BOTH rates afterward, it needs
+ * physical attention (power-cycle or a bench USB-serial check). */
+bool prop_motion_cfg_set_baud(uint32_t new_baud_bps);
+
 /* Init UART2, install driver, start background task.
  * Non-fatal: sets available=false and returns an error code if UART init fails.
  * Call from app_main after FreeRTOS is running. */

@@ -388,6 +388,99 @@ static bool ld2450_wait_for_data_frame(int timeout_ms)
     return false;
 }
 
+/* Baud index table (protocol PDF Table 6). Returns 0 if bps isn't one of the
+ * module's 8 supported rates. */
+static uint16_t ld2450_baud_index(uint32_t bps)
+{
+    switch (bps) {
+        case 9600:   return 0x0001;
+        case 19200:  return 0x0002;
+        case 38400:  return 0x0003;
+        case 57600:  return 0x0004;
+        case 115200: return 0x0005;
+        case 230400: return 0x0006;
+        case 256000: return 0x0007;
+        case 460800: return 0x0008;
+        default:     return 0;
+    }
+}
+
+/* Sends "restart module" (inside its own Enable-Config bracket), then follows
+ * the module through its reboot at expect_baud: switches the LOCAL UART to
+ * that rate and waits for data frames to resume. Falls back to the PREVIOUS
+ * baud rate if nothing arrives in time -- we know exactly what we asked for,
+ * so a clean two-way fallback is possible. If the module is silent at BOTH
+ * rates, there is no further automatic recovery: it needs physical attention
+ * (power-cycle, or check with a bench USB-serial adapter). */
+static bool ld2450_restart_and_resync(uint32_t expect_baud)
+{
+    uint32_t prev_baud = s_current_baud;
+
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) {
+        ESP_LOGW(TAG, "LD2450 enable-config (for restart) failed — leaving baud unchanged");
+        return false;
+    }
+    if (!ld2450_cfg_cmd(0x00A3, NULL, 0, NULL, 0, NULL, 300)) {
+        ESP_LOGW(TAG, "LD2450 restart command not ACK'd — leaving baud unchanged");
+        return false;
+    }
+
+    uart_set_baudrate(MOTION_UART, expect_baud);
+    s_current_baud = expect_baud;
+    uart_flush_input(MOTION_UART);
+
+    if (ld2450_wait_for_data_frame(LD2450_RESYNC_TIMEOUT_MS)) {
+        ESP_LOGI(TAG, "LD2450 resumed streaming at %lu baud", (unsigned long)expect_baud);
+        return true;
+    }
+
+    ESP_LOGW(TAG, "LD2450 silent at %lu baud after restart — falling back to %lu",
+             (unsigned long)expect_baud, (unsigned long)prev_baud);
+    uart_set_baudrate(MOTION_UART, prev_baud);
+    s_current_baud = prev_baud;
+    uart_flush_input(MOTION_UART);
+
+    if (ld2450_wait_for_data_frame(LD2450_RESYNC_TIMEOUT_MS)) {
+        ESP_LOGE(TAG, "LD2450 baud change did not take effect; module still at %lu — "
+                      "config was likely rejected or the restart failed silently",
+                 (unsigned long)prev_baud);
+    } else {
+        ESP_LOGE(TAG, "LD2450 silent at both %lu and %lu baud — module needs physical "
+                      "attention (power-cycle, or check with a bench USB-serial adapter)",
+                 (unsigned long)expect_baud, (unsigned long)prev_baud);
+    }
+    return false;
+}
+
+bool prop_motion_cfg_set_baud(uint32_t new_baud_bps)
+{
+    uint16_t idx = ld2450_baud_index(new_baud_bps);
+    if (idx == 0) {
+        ESP_LOGW(TAG, "LD2450: %lu is not one of the 8 supported baud rates", (unsigned long)new_baud_bps);
+        return false;
+    }
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
+    uint8_t val[2] = { (uint8_t)(idx & 0xFF), (uint8_t)(idx >> 8) };
+    bool set_ok = ld2450_cfg_cmd(0x00A1, val, 2, NULL, 0, NULL, 300);
+    ld2450_cfg_cmd(0x00FE, NULL, 0, NULL, 0, NULL, 300);
+    if (!set_ok) {
+        ESP_LOGW(TAG, "LD2450 set-baud command not ACK'd — module unchanged");
+        return false;
+    }
+    return ld2450_restart_and_resync(new_baud_bps);
+}
+
+bool prop_motion_cfg_factory_reset(void)
+{
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
+    bool ok = ld2450_cfg_cmd(0x00A2, NULL, 0, NULL, 0, NULL, 300);
+    ld2450_cfg_cmd(0x00FE, NULL, 0, NULL, 0, NULL, 300);
+    if (!ok) return false;
+    ESP_LOGI(TAG, "LD2450 factory-reset accepted; restarting to apply "
+                  "(baud reverts to 256000, BT to on, tracking to multi, zone filter off)");
+    return ld2450_restart_and_resync(256000);
+}
+
 bool prop_motion_cfg_restart(void)
 {
     if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
