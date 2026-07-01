@@ -68,6 +68,52 @@ CONFIG_ESP_HOSTED_SDIO_PIN_CLK=18
 CONFIG_ESP_HOSTED_SDIO_PIN_D0=14
 CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
 
+# Disable WiFi IRAM optimizations under esp_hosted (2026-07-01). On a P4+C6 esp_hosted
+# board, the actual WiFi driver runs on the C6, not locally — with
+# CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED, the host-side CONFIG_ESP_WIFI_IRAM_OPT/etc.
+# options are just mirrored aliases of the real knobs, CONFIG_WIFI_RMT_*_IRAM_OPT (see
+# managed_components/espressif__esp_wifi_remote's Kconfig.wifi.in) — setting the ESP_WIFI_*
+# names directly has no effect and gets silently recomputed back to y on reconfigure.
+# Another project building the same P4+C6-over-SDIO combo (xiaozhi-esp32's
+# elecrow-p4-board port) disables these, saying they "cause crashes in ESP-Hosted mode."
+# We've had our own history of intermittent hosted-mode boot panics (see Crash forensics
+# below) — testing this as a targeted, isolated change before touching anything else.
+CONFIG_WIFI_RMT_IRAM_OPT=n
+CONFIG_WIFI_RMT_EXTRA_IRAM_OPT=n
+CONFIG_WIFI_RMT_RX_IRAM_OPT=n
+CONFIG_WIFI_RMT_SLP_IRAM_OPT=n
+
+# Internal-RAM headroom levers (2026-07-01), same theme as the mempool-to-PSRAM and
+# sys_evt stack fixes above — all four verified together with `prop.py trace --trials 8`
+# (8/8 clean reboots) before landing.
+#  - TRY_ALLOCATE_WIFI_LWIP: let WiFi/LWIP buffers fall back to PSRAM instead of
+#    requiring internal RAM. Already named in this file's own history as "the lever"
+#    if RAM gets tight; xiaozhi-esp32's elecrow-p4-board port runs it unconditionally
+#    on the same P4+C6 hosted architecture.
+#  - MALLOC_RESERVE_INTERNAL raised 32768 -> 49152: raises the floor of internal RAM
+#    protected from PSRAM-preferring allocations. Targets the exact failure mode from
+#    the Crash forensics section below (main_task's stack alloc failing because the
+#    largest contiguous internal block was too small, even though total free wasn't).
+#  - MBEDTLS_EXTERNAL_MEM_ALLOC: moves mbedTLS's dynamic allocations to PSRAM. This
+#    firmware does little TLS (plain HTTP server/API), so blast radius is low either way.
+#  - MALLOC_ALWAYSINTERNAL lowered 16384 -> 4096: below this size, plain malloc() (no
+#    explicit capability request) defaults to internal RAM; above it, PSRAM is
+#    preferred. Lowering it pushes more mid-size allocations off internal RAM system-
+#    wide. Safe here specifically because the P4's PSRAM DMA is cache-coherent (unlike
+#    classic ESP32) — code that assumes plain malloc() is DMA-capable internal RAM
+#    still works from PSRAM. Tested in isolation (own `trace --trials 8` run) since it's
+#    the most invasive of this group — it touches every allocation in the system, not
+#    one subsystem.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=49152
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# Task watchdog: 5s (IDF default) was tight around the same slow SDIO/WiFi/BLE bring-up
+# that caused past intermittent boot issues (see Crash forensics below). No downside
+# besides catching a genuine hang 5s later instead of sooner.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
 # Move esp_hosted's SDIO DMA mempool from internal RAM to PSRAM (2026-07-01). This
 # is the same mempool the Crash forensics writeup (see the coredump comment below)
 # blamed for leaving only 7168 B contiguous internal RAM at the exact point
