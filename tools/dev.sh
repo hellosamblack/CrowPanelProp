@@ -116,7 +116,7 @@ export PYTHONUTF8="1"
 # Handle arguments
 if [ $# -ge 1 ]; then
     case "$1" in
-        build|flash|bf|bfw|monitor|reconfigure|ota)
+        build|flash|bf|bfw|monitor|reconfigure|ota|list)
             ACTION="$1"
             shift
             ;;
@@ -190,9 +190,13 @@ case "$ACTION" in
         echo ""
         echo "OTA: device is rebooting into new firmware"
         ;;
+    list)
+        echo "Available serial ports:"
+        "$PYTHON_EXE" -m serial.tools.list_ports -v
+        ;;
     *)
         echo "Unknown action: $ACTION"
-        echo "Valid actions: build, flash, bf, bfw, monitor, reconfigure, ota"
+        echo "Valid actions: build, flash, bf, bfw, monitor, reconfigure, ota, list"
         exit 1
         ;;
 esac

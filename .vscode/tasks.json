@@ -56,6 +56,30 @@
                 "panel": "shared",
                 "clear": true
             }
+        },
+        {
+            "label": "List Attached Devices",
+            "detail": "List all attached ESP32 USB devices",
+            "type": "shell",
+            "linux": {
+                "command": "${workspaceFolder}/tools/dev.sh",
+                "args": ["list"]
+            },
+            "osx": {
+                "command": "${workspaceFolder}/tools/dev.sh",
+                "args": ["list"]
+            },
+            "windows": {
+                "command": "pwsh",
+                "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\tools\\dev.ps1", "list"]
+            },
+            "problemMatcher": [],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            }
         }
     ]
 }

@@ -16,7 +16,7 @@
     python tools/prop.py shot out.png --screen spectrum --wait
 #>
 param(
-  [ValidateSet("build", "flash", "bf", "bfw", "monitor", "reconfigure", "ota")]
+  [ValidateSet("build", "flash", "bf", "bfw", "monitor", "reconfigure", "ota","list" )]
   [string]$Action = "build",
   [string]$Port = $null,
   [string]$DeviceHost = "comm-unit-7.local",
@@ -129,5 +129,14 @@ switch ($Action) {
     $resp = Invoke-WebRequest -Method Post -InFile $bin -Uri $url -TimeoutSec 120 -UseBasicParsing
     Write-Host "OTA: $($resp.Content)"
     Write-Host "OTA: device is rebooting into new firmware"
+  }
+  "list" {
+    Write-Host "Available serial ports:"
+    Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match '\(COM\d+\)' } | ForEach-Object {
+      if ($_.Name -match '\((COM\d+)\)') {
+        Write-Host "  $($Matches[1]) - $($_.Caption)"
+      }
+    }
+    python -m serial.tools.list_ports -v
   }
 }
