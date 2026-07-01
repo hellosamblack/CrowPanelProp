@@ -44,6 +44,18 @@ CONFIG_FREERTOS_HZ=1000
 # "esp_task_stack_is_sane_cache_disabled" assert during the first flash op. Give it room.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
+# esp_event's default "sys_evt" task stack (IDF default 2304 B) overflows the
+# hardware stack guard intermittently right after WiFi STA gets its IP — the
+# STA_GOT_IP -> mDNS registration -> netif handler callback chain it runs from
+# that event apparently sits right at the edge. Caught 2026-07-01 via
+# CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH's stack-canary panic ("Stack protection
+# fault", task "sys_evt", SP 12 bytes below the stack's lower bound) after ~3
+# reboots — this is very likely the same "intermittent boot-time panic" the
+# Crash forensics section below was written to catch, just never previously
+# pinned to a specific task. Bumped to 3584 B (same size as main_task) now that
+# CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM frees the internal RAM to afford it.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=3584
+
 # ESP32-C6 WiFi co-processor link (esp_hosted over SDIO). These pins are specific
 # to the CrowPanel Advance V1.0 board (from the Lesson17 reference config): 1-bit
 # SDIO on slot 1, slave reset on GPIO32. esp_hosted's defaults (reset GPIO54) do
@@ -55,6 +67,21 @@ CONFIG_ESP_HOSTED_SDIO_PIN_CMD=19
 CONFIG_ESP_HOSTED_SDIO_PIN_CLK=18
 CONFIG_ESP_HOSTED_SDIO_PIN_D0=14
 CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
+
+# Move esp_hosted's SDIO DMA mempool from internal RAM to PSRAM (2026-07-01). This
+# is the same mempool the Crash forensics writeup (see the coredump comment below)
+# blamed for leaving only 7168 B contiguous internal RAM at the exact point
+# main_task's 8192 B stack needs to be allocated. The P4's PSRAM DMA is
+# cache-coherent (unlike classic ESP32), so it's safe here despite esp_hosted's
+# general "DMA buffers need internal RAM" guidance. Verified on hardware: clean
+# boot (no "HS_MP: mempool create failed"), normal WiFi STA connect + BLE scan +
+# 100 pkt/s traffic-gen load, and a same-uptime A/B against the prior default
+# measured on the VITALS panel showed ~89 KB MORE internal free (216K vs 305K int
+# at ~1 min uptime), matched almost exactly by ~89 KB less PSRAM free — a clean
+# transfer, not noise. Worth retrying CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH below
+# now that there's ~89 KB more internal headroom against the ~1.1 KB shortfall
+# that broke it.
+CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y
 
 # Build with -O2 (performance), not the IDF default -Og (debug). The UI is
 # largely software-rendered by LVGL; the CRT overlay's full-screen ARGB8888 alpha
@@ -73,28 +100,34 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 # panic; read it back after the fact with
 #   idf.py -C "f:\git\personal\CrowPanelProp" -p COM8 coredump-info
 #
-# TEMPORARILY DISABLED (2026-06-30): enabling this forces FREERTOS_ISR_STACKSIZE
+# Was TEMPORARILY DISABLED 2026-06-30: enabling this forces FREERTOS_ISR_STACKSIZE
 # from 1536 to 2096 bytes/core (a documented ESP-IDF Kconfig floor:
 # components/freertos/Kconfig, `range 2096 ... if ESP_COREDUMP_ENABLE`). That
 # +1120 bytes lands in the narrow pre-scheduler window where main_task's own
 # 8192-byte stack is allocated (before heap_caps_enable_nonos_stack_heaps() has
-# reclaimed the startup stack — see freertos/app_startup.c) and reliably starves
-# it: measured `internal free=10832 largest=7168` bytes at that point with
-# coredump on (confirmed via a temporary ESP_SYSTEM_INIT_FN heap probe) — total
-# free exceeds what's needed, but the largest CONTIGUOUS block doesn't, so
-# esp_startup_start_app's xTaskCreatePinnedToCore(main_task, ...) fails outright
-# (assert failed: esp_startup_start_app app_startup.c:83). Confirmed via a clean
-# git-stash bisection that this is unrelated to the FTM ranging feature or the
-# telemetry/websocket work — it reproduces with just coredump enabled, on a
-# freshly-erased chip. Re-enabling needs ~1-1.5KB more contiguous internal RAM
-# at that exact boot point; the only identified lever is patching esp-hosted's
-# hardcoded 5120-byte DFLT_TASK_STACK_SIZE (host/port/esp/freertos/include/
-# port_esp_hosted_host_os.h) down, which requires vendoring the component into
-# components/ (mirrors the c6_slave/ pattern) since managed_components/ edits
-# don't survive. Not done here — flagged for follow-up.
-# CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
-# CONFIG_ESP_COREDUMP_CHECK_BOOT=n
-# CONFIG_ESP_COREDUMP_FLASH_NO_OVERWRITE=y
+# reclaimed the startup stack — see freertos/app_startup.c) and previously
+# starved it: measured `internal free=10832 largest=7168` bytes at that point
+# with coredump on — total free exceeded what's needed, but the largest
+# CONTIGUOUS block didn't, so esp_startup_start_app's
+# xTaskCreatePinnedToCore(main_task, ...) failed outright (assert failed:
+# esp_startup_start_app app_startup.c:83). Re-enabled 2026-07-01 now that
+# CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM above frees ~89 KB of internal RAM
+# (confirmed on hardware) against the ~1-1.5 KB shortfall that broke it —
+# verified: fresh-flash boot is clean (no assert, no HS_MP mempool failure),
+# and it survives a WiFi+BLE load test over 8 back-to-back reboots. If this ever
+# regresses (e.g. mempool setting reverted), the fallback lever is still patching
+# esp-hosted's hardcoded 5120-byte DFLT_TASK_STACK_SIZE (host/port/esp/freertos/
+# include/port_esp_hosted_host_os.h) down, which needs vendoring the component
+# into components/ since managed_components/ edits don't survive.
+#
+# Re-enabling this ALSO exposed (via its stack-canary check) a second, separate,
+# genuinely-intermittent bug: see the CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE
+# comment above (main task stack section) for the sys_evt stack overflow that
+# was almost certainly the real cause of past "intermittent boot-time panic"
+# reports — both are needed together for a reliably clean boot.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_CHECK_BOOT=n
+CONFIG_ESP_COREDUMP_FLASH_NO_OVERWRITE=y
 
 # RGB565 to match the EK79007 panel (LVGL 9 pairs this with the swap_bytes flag set
 # in bsp_illuminate.c). Keep it explicit so a menuconfig reset can't drift it.

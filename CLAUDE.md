@@ -72,21 +72,30 @@ full list of 6.0/board quirks (cJSON, driver split, esp_lcd API, C6 SDIO pins). 
 
 ## Crash forensics (flash core dump)
 
-**Currently disabled by default** (`sdkconfig.defaults`, commented out) — enabling it reliably breaks
-boot on this board: it forces `FREERTOS_ISR_STACKSIZE` from 1536→2096 bytes/core (a documented
-ESP-IDF Kconfig floor, `components/freertos/Kconfig`), and that extra ~1.1 KB lands in the narrow
-pre-scheduler window where `main_task`'s own 8192 B stack gets allocated — starving it (measured:
-`internal free=10832, largest contiguous block=7168` bytes at that point — enough total, not enough
-contiguous). Full root-cause + fix path (vendor esp-hosted into `components/` and shave its hardcoded
-5120 B `sdio_data_to_rx_buf_task` stack) is written up in the `sdkconfig.defaults` comment above the
-`CONFIG_ESP_COREDUMP_*` lines — read that before re-enabling, and load-test under real WiFi/BLE/CSI
-traffic afterward (that task is on the SDIO receive path).
+**Enabled as of 2026-07-01.** It was disabled for a while: enabling it forces `FREERTOS_ISR_STACKSIZE`
+from 1536→2096 bytes/core (a documented ESP-IDF Kconfig floor, `components/freertos/Kconfig`), and
+that extra ~1.1 KB used to land in the narrow pre-scheduler window where `main_task`'s own 8192 B
+stack gets allocated, starving it (measured: `internal free=10832, largest contiguous block=7168`
+bytes at that point — enough total, not enough contiguous). The fix was
+`CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM` (`sdkconfig.defaults`) — moves esp_hosted's SDIO DMA mempool
+to PSRAM (safe on the P4: its PSRAM DMA is cache-coherent, unlike classic ESP32) — confirmed on
+hardware to free ~89 KB of internal RAM, comfortably clearing that ~1.1 KB shortfall.
 
-When re-enabled: live serial capture (`prop.py trace`) can't reliably catch an intermittent boot-time
-panic — opening the port doesn't cleanly resync with the exact reboot moment, and often nobody's
-watching when it happens. `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH` (`sdkconfig.defaults`) persists the
-full register dump + backtrace to a dedicated `coredump` partition (`partitions.csv`, 64 KB) on any
-panic, independent of serial. Decode after the fact:
+Re-enabling coredump then exposed a second, separate, genuinely-intermittent bug: the esp_event
+`sys_evt` task's default 2304 B stack overflows the hardware stack guard on some boots, in the
+STA_GOT_IP → mDNS registration → netif handler callback chain (`Stack protection fault`, SP landing
+12 bytes below the stack's lower bound). This is very likely the original "intermittent boot-time
+panic" this section was written to catch, just never pinned to a task before — coredump's stack-canary
+check is what finally caught it. Fixed by bumping `CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE` to 3584 B
+(`sdkconfig.defaults`); verified with 8/8 clean reboots afterward (was intermittent before the fix —
+2 of 3 initial trials panicked at that exact point). If a new intermittent panic ever reappears here,
+check `sys_evt` first before assuming it's the same root cause.
+
+Live serial capture (`prop.py trace`) still can't reliably catch a one-off intermittent panic —
+opening the port doesn't cleanly resync with the exact reboot moment, and often nobody's watching
+when it happens. `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH` (`sdkconfig.defaults`) persists the full
+register dump + backtrace to a dedicated `coredump` partition (`partitions.csv`, 64 KB) on any panic,
+independent of serial. Decode after the fact:
 ```powershell
 idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 coredump-info
 ```
