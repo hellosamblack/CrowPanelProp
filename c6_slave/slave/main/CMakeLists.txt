@@ -82,6 +82,8 @@ if(CONFIG_ESP_HOSTED_ENABLE_PEER_DATA_TRANSFER)
 	list(APPEND COMPONENT_SRCS example_peer_data_transfer.c)
 	# CrowPanel prop: on-C6 CSI capture (ships stats via custom RPC).
 	list(APPEND COMPONENT_SRCS prop_csi_slave.c)
+	# CrowPanel prop: on-C6 WiFi FTM ranging (ships results via custom RPC).
+	list(APPEND COMPONENT_SRCS prop_ftm_slave.c)
 endif()
 
 if(CONFIG_ESP_HOSTED_COPROCESSOR_EXAMPLE_LIGHT_SLEEP)

@@ -369,6 +369,20 @@ static int scan_and_fetch(wifi_ap_record_t **recs)
     return (int)num;
 }
 
+/* Fill one prop_ap_t from a raw scan record. Shared by prop_net_scan (SSID
+ * de-dup, for the connect UI) and prop_net_scan_raw (per-BSSID, for FTM). */
+static void fill_ap(prop_ap_t *dst, const wifi_ap_record_t *r)
+{
+    strlcpy(dst->ssid, (const char *)r->ssid, sizeof(dst->ssid));
+    memcpy(dst->bssid, r->bssid, 6);
+    dst->rssi = r->rssi;
+    dst->channel = r->primary;
+    dst->phy = ap_phy(r);
+    strlcpy(dst->sec, authmode_str(r->authmode), sizeof(dst->sec));
+    dst->secured = (r->authmode != WIFI_AUTH_OPEN && r->authmode != WIFI_AUTH_OWE);
+    dst->ftm = r->ftm_responder;
+}
+
 int prop_net_scan(prop_ap_t *out, int max)
 {
     if (!out || max <= 0) {
@@ -394,19 +408,34 @@ int prop_net_scan(prop_ap_t *out, int max)
         if (dup) {
             continue;
         }
-        strlcpy(out[count].ssid, ssid, sizeof(out[count].ssid));
-        memcpy(out[count].bssid, recs[i].bssid, 6);
-        out[count].rssi = recs[i].rssi;
-        out[count].channel = recs[i].primary;
-        out[count].phy = ap_phy(&recs[i]);
-        strlcpy(out[count].sec, authmode_str(recs[i].authmode), sizeof(out[count].sec));
-        out[count].secured = (recs[i].authmode != WIFI_AUTH_OPEN &&
-                              recs[i].authmode != WIFI_AUTH_OWE);
-        out[count].ftm = recs[i].ftm_responder;
+        fill_ap(&out[count], &recs[i]);
         count++;
     }
     free(recs);
     ESP_LOGI(NET_TAG, "scan found %d AP(s) (%u raw)", count, num);
+    return count;
+}
+
+int prop_net_scan_raw(prop_ap_t *out, int max)
+{
+    if (!out || max <= 0) {
+        return -1;
+    }
+    wifi_ap_record_t *recs = NULL;
+    int num = scan_and_fetch(&recs);
+    if (num <= 0) {
+        return num;   /* -1 error, or 0 networks (nothing to free) */
+    }
+
+    /* One entry per BSSID (hidden networks included — they still have a
+     * BSSID and can still be FTM-capable), no SSID de-dup. */
+    int count = 0;
+    for (int i = 0; i < num && count < max; i++) {
+        fill_ap(&out[count], &recs[i]);
+        count++;
+    }
+    free(recs);
+    ESP_LOGI(NET_TAG, "raw scan found %d AP(s) (%u raw)", count, num);
     return count;
 }
 

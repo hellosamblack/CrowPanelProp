@@ -18,6 +18,9 @@ Examples:
     python prop.py shot corner.png --crop 764,8,260,90 --zoom 3
     python prop.py trace --seconds 12            # capture serial, decode any panic/WDT
     python prop.py decode 0x40034286 0x40034206  # addr2line against the ELF
+    python prop.py telemetry                     # one-shot GET /telemetry snapshot
+    python prop.py watch                         # live telemetry stream (Ctrl-C to stop)
+    python prop.py watch --only imu.yaw_deg,radar --count 20
 
 Screens: home menu wifi display audio leds vitals scan spectrum about
 Scenes:  IDLE SCANNING SIGNAL_ACQUIRED COMMS ALERT
@@ -28,6 +31,9 @@ import json
 import time
 import glob
 import re
+import struct
+import socket
+import base64
 import subprocess
 import urllib.request
 
@@ -53,6 +59,11 @@ def _get_state(host):
         return json.loads(r.read().decode())
 
 
+def _get_telemetry(host):
+    with urllib.request.urlopen(f"http://{host}/telemetry", timeout=5) as r:
+        return json.loads(r.read().decode())
+
+
 def wait_ready(host, timeout=90):
     """Poll /state until the API answers (after a flash/reset). Returns True/False."""
     deadline = time.time() + timeout
@@ -63,6 +74,110 @@ def wait_ready(host, timeout=90):
         except Exception:
             time.sleep(2)
     return False
+
+
+# ---- live telemetry (minimal stdlib WebSocket client) --------------------
+# The board pushes a fresh telemetry JSON object (type:"telemetry") to every
+# /ws client ~5x/sec (see prop_api.c telemetry_task) -- IMU orientation, LD2450
+# radar targets, PDR pose, mic level, aux presence sensors, BLE/CSI summaries.
+# This lets `watch` show live variable values instead of eyeballing screenshots.
+# No third-party ws library needed for a receive-only client: handshake once,
+# then read server->client frames (unmasked, per RFC 6455) off the raw socket.
+def _ws_connect(host, path="/ws", timeout=10):
+    hostname, _, port = host.partition(":")
+    sock = socket.create_connection((hostname, int(port) if port else 80), timeout=timeout)
+    key = base64.b64encode(os.urandom(16)).decode()
+    req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+           f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    sock.sendall(req.encode())
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = sock.recv(1024)
+        if not chunk:
+            raise ConnectionError("ws handshake: connection closed")
+        buf += chunk
+    header, _, rest = buf.partition(b"\r\n\r\n")
+    if b" 101 " not in header.split(b"\r\n", 1)[0]:
+        raise ConnectionError(f"ws handshake failed: {header!r}")
+    return sock, rest
+
+
+def _ws_frames(sock, leftover):
+    """Yield (opcode, payload) for each frame the server sends, forever."""
+    buf = bytearray(leftover)
+
+    def fill(n):
+        while len(buf) < n:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("ws stream closed")
+            buf.extend(chunk)
+
+    while True:
+        fill(2)
+        opcode = buf[0] & 0x0F
+        masked = buf[1] & 0x80
+        plen = buf[1] & 0x7F
+        hlen = 2
+        if plen == 126:
+            fill(4)
+            plen = struct.unpack(">H", buf[2:4])[0]
+            hlen = 4
+        elif plen == 127:
+            fill(10)
+            plen = struct.unpack(">Q", buf[2:10])[0]
+            hlen = 10
+        mask = None
+        if masked:
+            fill(hlen + 4)
+            mask = buf[hlen:hlen + 4]
+            hlen += 4
+        fill(hlen + plen)
+        payload = bytearray(buf[hlen:hlen + plen])
+        if mask:
+            for i in range(len(payload)):
+                payload[i] ^= mask[i % 4]
+        del buf[:hlen + plen]
+        yield opcode, bytes(payload)
+
+
+def watch_stream(host, path="/ws"):
+    """Generator of parsed JSON messages pushed over /ws (state + telemetry)."""
+    sock, leftover = _ws_connect(host, path)
+    try:
+        for opcode, payload in _ws_frames(sock, leftover):
+            if opcode == 0x8:      # close
+                break
+            if opcode == 0x1:      # text
+                yield json.loads(payload.decode())
+            # ping (0x9) / pong (0xA): the board never sends pings today; ignore.
+    finally:
+        sock.close()
+
+
+def _dig(obj, dotted_path):
+    cur = obj
+    for part in dotted_path.split("."):
+        cur = cur.get(part) if isinstance(cur, dict) else None
+    return cur
+
+
+def watch(host, only=None, raw=False, count=0, msg_type="telemetry"):
+    n = 0
+    try:
+        for msg in watch_stream(host):
+            if msg_type and msg.get("type") != msg_type:
+                continue
+            shown = {k: _dig(msg, k) for k in only} if only else msg
+            if raw:
+                print(json.dumps(shown))
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] {json.dumps(shown)}")
+            n += 1
+            if count and n >= count:
+                break
+    except KeyboardInterrupt:
+        pass
 
 
 # ---- crash decoding ------------------------------------------------------
@@ -241,6 +356,14 @@ def main():
         sys.exit(0 if wait_ready(host) else 1)
     elif cmd == "state":
         print(json.dumps(_get_state(host), indent=2))
+    elif cmd == "telemetry":
+        print(json.dumps(_get_telemetry(host), indent=2))
+    elif cmd == "watch":
+        only = _pop_opt(rest, "--only")
+        count = int(_pop_opt(rest, "--count") or 0)
+        msg_type = _pop_opt(rest, "--type") or "telemetry"
+        raw = "--raw" in rest
+        watch(host, only.split(",") if only else None, raw, count, msg_type)
     elif cmd == "scene":
         print(_post_cmd(host, {"cmd": "scene", "value": rest[0]}))
     elif cmd == "screen":

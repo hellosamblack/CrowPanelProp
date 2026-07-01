@@ -31,4 +31,9 @@ void prop_ui_input(const char *control, int arg);
  * Thread-safe; takes the LVGL lock. */
 void prop_ui_set_fps(bool on);
 
+/* Name of the panel currently on screen, in the same vocabulary as
+ * prop_ui_goto()'s `screen` names (e.g. "scanner", "vitals", "spectrum").
+ * For telemetry/diagnostics. Cheap enum read; no lock needed. */
+const char *prop_ui_current_screen(void);
+
 #endif /* _PROP_UI_H_ */

@@ -62,6 +62,24 @@ the image — hence gitignored. Edit the file and rebuild to change it.
 Don't touch `CONFIG_ESP32P4_*REV*` or the board won't boot. See the `idf6-migration` memory for the
 full list of 6.0/board quirks (cJSON, driver split, esp_lcd API, C6 SDIO pins). No automated tests here.
 
+## Crash forensics (flash core dump)
+
+Live serial capture (`prop.py trace`) can't reliably catch an intermittent boot-time panic — opening
+the port doesn't cleanly resync with the exact reboot moment, and often nobody's watching when it
+happens. `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH` (`sdkconfig.defaults`) persists the full register dump
++ backtrace to a dedicated `coredump` partition (`partitions.csv`, 64 KB) on any panic, independent of
+serial. Decode after the fact:
+```powershell
+idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 coredump-info
+```
+`CONFIG_ESP_COREDUMP_FLASH_NO_OVERWRITE=y` keeps only the **first** crash after a reflash/erase — this
+doubles as the flash-wear guard for a boot loop: once one dump is captured, further panics just reboot
+without touching flash again. To capture a *new* dump later, erase the partition first (a normal
+`idf.py flash` does **not** touch data partitions, so an old dump survives reflashes):
+```powershell
+parttool.py -p COM7 erase_partition --partition-table-file build/partition_table/partition-table.bin --partition-name coredump
+```
+
 ## Seeing the UI WITHOUT asking a human (use this constantly for graphics)
 
 The firmware serves a live screen capture. The board advertises **mDNS**, so reach it at
@@ -80,6 +98,21 @@ framebuffer, so it captures the **whole panel including the `prop_fx` CRT overla
 `lv_snapshot` deadlocks under the port lock, so `prop_api.c` reads the FB directly with a
 cache-invalidate). `tools/screenshot.py` is the stdlib (no-Pillow) RGB565→PNG converter `prop.py shot` builds on.
 **Prefer this over asking the user to eyeball the screen.** Full loop: skill `communicator-ui`.
+
+**Watching live variables instead of screenshots:** for sensor/instrument values (IMU orientation,
+LD2450 radar targets, PDR pose, mic level, aux presence sensors, BLE/CSI summaries, current screen),
+polling screenshots is the wrong tool — use `GET /telemetry` (one-shot rich snapshot) or the `/ws`
+stream, which pushes a `type:"telemetry"` message ~5x/sec to every connected client (alongside the
+existing `type:"state"` push on scene/status/channel/link changes). `tools/prop.py` wraps both:
+```bash
+python tools/prop.py telemetry                              # one-shot snapshot
+python tools/prop.py watch                                   # live stream, Ctrl-C to stop
+python tools/prop.py watch --only imu.yaw_deg,radar --count 20 --raw   # filtered, bounded
+```
+`watch` is a minimal stdlib WebSocket client (`_ws_connect`/`_ws_frames` in `prop.py`) — no extra deps.
+The push itself is `telemetry_task` in `prop_api.c`, a standalone FreeRTOS task (not an engine
+observer, since it reads several unrelated cached modules) that skips building JSON entirely when no
+WS client is attached.
 
 ## UI architecture (where to make graphics changes)
 
@@ -161,7 +194,7 @@ Palette + helpers are at the top of `prop_ui.c` (and mirrored in `ui/globals.xml
 | `main/prop_content.c` | **Author-editable archive content** (sections → entries; real-Earth desert placeholders). Edit here to change the ARCHIVE — no UI change |
 | `main/prop_engine.c` | Scene state machine + 10 Hz animation; single source of truth |
 | `main/prop_net.c` | WiFi via C6: STA + **deferred** AP (hotspot held back ~60 s while STA joins, to free C6 radio time; comes up only if STA hasn't connected or there are no saved creds), scan, channel-occupancy scan (RF BAND), STA state, NVS creds |
-| `main/prop_api.c` | HTTP: `/`, `/state`, `/cmd`, `/ws`, `/ota`, `/screenshot` |
+| `main/prop_api.c` | HTTP: `/`, `/state`, `/telemetry`, `/cmd`, `/ws`, `/ota`, `/screenshot` |
 | `main/prop_settings.c` | NVS key/value (survives reflash) |
 | `main/prop_fx.c` | CRT post overlay on `lv_layer_top()` (scanlines/vignette/phosphor + refresh band); paints ARGB pixels **directly** into the canvas buffer (v9 canvas layer-draw deadlocks under the lock); lazy-allocated |
 | `main/lv_port_mem.c` | Custom LVGL allocator → routes `lv_malloc` to PSRAM (see Memory reality) |
@@ -179,7 +212,7 @@ Palette + helpers are at the top of `prop_ui.c` (and mirrored in `ui/globals.xml
 
 The left rail is 7 top-level entries: CONSOLE, ARCHIVE, **INSTRUMENTS**, **SENSORS**, CASSETTE, INSIGHTS, SETUP. The instruments are not on the rail directly — they live in two submenu list-panels (mirroring how SETUP groups config), which keeps the rail uncluttered:
 - **INSTRUMENTS** (`PK_INSTRUMENTS`) → SCANNER (the bare console readout, `PK_NONE`), SIGNAL SCAN, SPECTRUM, VITALS.
-- **SENSORS** (`PK_SENSORS`) → RF BAND, CONTACTS, SIGNAL ENV, **SCANNER** (`PK_MOTION` — the LD2450 radar / IMU page, formerly "MOTION SCAN"), **MINIMAP** (`PK_MINIMAP` — north-up dead-reckoning map: IMU breadcrumb path + last-known radar marks, auto-fit + RESET; backed by `prop_track`; gyro-only heading drifts and "north" is boot-relative. Beacon/AP trilateration + multi-floor are planned follow-on phases).
+- **SENSORS** (`PK_SENSORS`) → RF BAND, CONTACTS, SIGNAL ENV, **SCANNER** (`PK_MOTION` — the LD2450 radar / IMU page, formerly "MOTION SCAN"), **MINIMAP** (`PK_MINIMAP` — north-up dead-reckoning map: IMU breadcrumb path + last-known radar marks, auto-fit + RESET; backed by `prop_track`; gyro-only heading drifts and "north" is boot-relative. Beacon/AP trilateration + multi-floor are planned follow-on phases), **RANGE** (`PK_RANGE` — WiFi 802.11mc FTM distance-to-AP, per-BSSID; backed by `prop_ftm` + on-C6 `prop_ftm_slave` over esp-hosted custom RPC, since esp-hosted's stock RPC never wires FTM through — see the FTM ranging project plan. Auto-probes FTM-capable APs found by `prop_net_scan_raw` with progressive per-BSSID backoff on non-responders; most environments have zero or few FTM-capable APs).
 
 > **SCANNER (`PK_MOTION`) is the full-screen default boot landing** (`prop_ui_init` opens it, not `PK_HOME`). It has **no title header or BACK button** — it draws its own bordered full-panel container instead of `make_panel`, so navigate away via the rail. (Note: the INSTRUMENTS submenu also lists a separate "SCANNER" = the bare `PK_NONE` console readout — two different things named SCANNER.)
 
@@ -216,7 +249,7 @@ The C6 co-processor is mined for prop "sensor" data beyond plain WiFi — the th
 
 `POST /cmd` (JSON): `{"cmd":"scene","value":"SCANNING"}`, `{"cmd":"ui","screen":"<name>"}`
 (screens: `home`=console, `scanner archive cassette insights menu wifi display audio leds
-vitals scan spectrum rfband ble csi instruments sensors dircal minimap about`; `instruments`/`sensors`
+vitals scan spectrum rfband ble csi instruments sensors dircal minimap range about`; `instruments`/`sensors`
 are the rail submenus, `dircal` is the SCANNER travel-direction calibration (opened
 by tapping the apex operator dot), the rest deep-link straight to a panel),
 `{"cmd":"input","control":"selector|tab|action","arg":"cw|ccw|press"|N}`
@@ -226,9 +259,16 @@ by tapping the apex operator dot), the rest deep-link straight to a panel),
 `{"cmd":"led","name":"alert","on":true}`, `{"cmd":"status","value":"..."}`,
 `{"cmd":"channel","value":"..."}`, `{"cmd":"wifi","ssid":"..","pass":"..","remember":true}`.
 `GET /state` JSON (scene/status/channel/link/sensitivity/channel_pos/ip/version/leds,
-plus `ble:{count,strongest,known}` when BLE is up and `csi_live` bool);
-`GET /screenshot` RGB565 read from the DPI framebuffer (whole panel incl. the fx overlay); `WS /ws` same.
+plus `ble:{count,strongest,known}` when BLE is up, `csi_live` bool, and
+`ftm:{tracked,capable,ranged}` when FTM ranging is up);
+`GET /telemetry` JSON — richer sibling of `/state` for live sensor/instrument values
+(`screen`, `imu:{yaw_deg,pitch_deg,roll_deg,accel,gyro,temp_c,steps}`, `radar:[{x_mm,y_mm,speed_mm_s}]`,
+`track:{x,y,heading_deg}`, `mic:{db,bands}`, `aux_radar:{seeed,sen0395}`, `ble`, `csi`) — see
+"Watching live variables instead of screenshots" above;
+`GET /screenshot` RGB565 read from the DPI framebuffer (whole panel incl. the fx overlay); `WS /ws`
+pushes both `/state` (`type:"state"`, on change) and `/telemetry` (`type:"telemetry"`, ~5 Hz) payloads.
 
 **Dev CLI:** `python tools/prop.py shot out.png --screen spectrum --wait` (wait→drive→
-capture), plus `state/scene/screen/sens/fx/trace/decode`. `trace`/`decode` resolve a crash
-or boot-hang PC against `build/communicator.elf`. See the `communicator-ui` skill.
+capture), plus `state/telemetry/watch/scene/screen/sens/fx/trace/decode`. `trace`/`decode` resolve a
+crash or boot-hang PC against `build/communicator.elf`; `coredump-info` (see Crash forensics above)
+decodes a persisted panic without needing serial capture at all. See the `communicator-ui` skill.

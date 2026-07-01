@@ -25,6 +25,10 @@ extern "C" {
 #define PROP_MSG_ID_CSI_STATS  0x43534931u  /* 'CSI1' slave -> host: capture stats */
 #define PROP_MSG_ID_CSI_CTRL   0x43534943u  /* 'CSIC' host -> slave: control (unused in spike) */
 
+/* Keep in sync with c6_slave/slave/main/prop_ftm_slave.h */
+#define PROP_MSG_ID_FTM_REQ    0x46544d52u  /* 'FTMR' host -> slave: initiate one FTM session */
+#define PROP_MSG_ID_FTM_RESULT 0x46544d53u  /* 'FTMS' slave -> host: session result */
+
 /* ---- host -> slave config (PROP_MSG_ID_CSI_CTRL). Generic key/value: any
  * setting in prop_csi_cfg_list.h can be set at runtime. Keep this struct and
  * the cfg list byte-identical with c6_slave/slave/main/. --------------------- */
@@ -65,6 +69,38 @@ typedef struct __attribute__((packed)) {
     uint8_t  subcarriers[12]; /* NBVI-selected subcarrier band (fingerprint) */
 } prop_csi_stats_t;
 
+/* ---- FTM (802.11mc ranging) messages -------------------------------------
+ * The C6 runs the real esp_wifi FTM initiator locally (esp-hosted's stock RPC
+ * never wires FTM through) and ships only the aggregate per-session result
+ * north. Only one FTM session runs at a time on the C6 radio, so req_id just
+ * guards against a stale/late result arriving after the host has given up.
+ * Keep byte-identical with c6_slave/slave/main/prop_ftm_slave.h. --------- */
+typedef enum {
+    PROP_FTM_OK = 0,
+    PROP_FTM_FAIL,
+    PROP_FTM_TIMEOUT,
+    PROP_FTM_BUSY,
+} prop_ftm_status_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t  bssid[6];
+    uint8_t  channel;
+    uint8_t  frm_count;      /* FTM frames/burst; 0 = driver default */
+    uint16_t burst_period;   /* 100ms units; 0 = single-shot */
+    uint16_t req_id;         /* host-assigned, echoed back for correlation */
+} prop_ftm_req_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t  bssid[6];
+    uint16_t req_id;
+    uint8_t  status;         /* prop_ftm_status_t */
+    uint8_t  fail_reason;    /* raw wifi_ftm_status_t on failure, else 0 */
+    int32_t  dist_est_cm;    /* wifi_event_ftm_report_t.dist_est: one-way distance, cm */
+    int32_t  rtt_est_ns;     /* wifi_event_ftm_report_t.rtt_est: round-trip time, nanoseconds */
+    int8_t   rssi;
+    uint8_t  _pad[3];
+} prop_ftm_result_t;
+
 /* Register the custom-RPC receive callbacks. Call AFTER prop_net_init() — the
  * SDIO transport must be up. NON-fatal: returns an error rather than aborting. */
 esp_err_t prop_coproc_init(void);
@@ -99,6 +135,15 @@ int  prop_coproc_csi_count(void);
 bool prop_coproc_csi_describe(int i, const char **key, int32_t *val,
                               char *type, int32_t *lo, int32_t *hi,
                               const char **desc, const char **opts);
+
+/* Send one FTM ranging request to the C6 (fire-and-forget over custom RPC;
+ * pair with prop_coproc_ftm_wait_result() to get the outcome). */
+esp_err_t prop_coproc_ftm_request(const prop_ftm_req_t *req);
+
+/* Poll (short sleep loop, not a blocking primitive) up to timeout_ms for an
+ * FTM result whose req_id matches. Returns true + fills *out on match, false
+ * on timeout. Call from a background task, never the LVGL thread. */
+bool prop_coproc_ftm_wait_result(uint16_t req_id, uint32_t timeout_ms, prop_ftm_result_t *out);
 
 #ifdef __cplusplus
 }

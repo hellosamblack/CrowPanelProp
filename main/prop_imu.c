@@ -19,6 +19,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include "freertos/FreeRTOS.h"
@@ -36,6 +37,12 @@ static SemaphoreHandle_t s_mutex;
 /* Latest gesture/event, latched until read. */
 static prop_imu_tap_t    s_tap;
 static prop_imu_event_t  s_event;
+
+/* Gyro bias currently applied to the DMP (converted "offset" units, see
+ * mpu6500_dmp_gyro_accel_raw_offset_convert). Tracked here because the DMP
+ * has no getter — imu_task's continuous rest re-zero adds to this and
+ * re-pushes the running total via mpu6500_dmp_set_gyro_bias. */
+static int32_t s_gyro_bias_off[3];
 
 /* ── LibDriver link helpers ──────────────────────────────────────────────── */
 static void imu_delay_ms(uint32_t ms)
@@ -151,10 +158,61 @@ static int dmp_bringup(void)
                                                   gyro_off, accel_off) == 0) {
         mpu6500_dmp_set_accel_bias(&s_handle, accel_off);
         mpu6500_dmp_set_gyro_bias(&s_handle, gyro_off);
+        s_gyro_bias_off[0] = gyro_off[0]; s_gyro_bias_off[1] = gyro_off[1]; s_gyro_bias_off[2] = gyro_off[2];
     }
 
     if (mpu6500_dmp_set_enable(&s_handle, MPU6500_BOOL_TRUE) != 0) goto fail;
     mpu6500_force_fifo_reset(&s_handle);
+
+    /* Fallback when the vendor self-test fails (observed: accel self-test
+     * consistently fails on this unit, so no gyro bias ever gets applied).
+     * Without a bias, the DMP integrates yaw from the raw factory offset and
+     * it free-spins continuously even sitting still. Measure our own
+     * zero-rate gyro bias here (board assumed stationary at boot — same
+     * assumption the self-test makes) and feed it through the same DMP bias
+     * path used for the self-test-derived offset. This is only a seed — a
+     * ~250ms average is too short/noisy to fully null the bias, so imu_task
+     * keeps refining it via continuous rest-triggered re-zero below. */
+    if (!have_bias) {
+        int16_t  cal_accel_raw[2][3], cal_gyro_raw[2][3];
+        float    cal_accel_g[2][3], cal_gyro_dps[2][3];
+        int32_t  cal_quat[2][4];
+        float    cal_pitch, cal_roll, cal_yaw;
+        uint16_t cal_len;
+        int64_t  gsum[3] = { 0, 0, 0 };
+        int      gcount  = 0;
+
+        for (int i = 0; i < 40 && gcount < 20; i++) {
+            imu_delay_ms(20);
+            cal_len = 2;
+            if (mpu6500_dmp_read(&s_handle, cal_accel_raw, cal_accel_g, cal_gyro_raw, cal_gyro_dps,
+                                 cal_quat, &cal_pitch, &cal_roll, &cal_yaw, &cal_len) != 0 || cal_len == 0) {
+                continue;
+            }
+            gsum[0] += cal_gyro_raw[0][0];
+            gsum[1] += cal_gyro_raw[0][1];
+            gsum[2] += cal_gyro_raw[0][2];
+            gcount++;
+        }
+        if (gcount >= 10) {
+            int32_t gyro_off_raw2[3]  = { (int32_t)(gsum[0] / gcount), (int32_t)(gsum[1] / gcount),
+                                          (int32_t)(gsum[2] / gcount) };
+            int32_t accel_off_raw2[3] = { 0, 0, 0 };   /* leave accel bias untouched */
+            int32_t gyro_off2[3], accel_off2[3];
+            if (mpu6500_dmp_gyro_accel_raw_offset_convert(&s_handle, gyro_off_raw2, accel_off_raw2,
+                                                          gyro_off2, accel_off2) == 0) {
+                mpu6500_dmp_set_gyro_bias(&s_handle, gyro_off2);
+                s_gyro_bias_off[0] = gyro_off2[0]; s_gyro_bias_off[1] = gyro_off2[1]; s_gyro_bias_off[2] = gyro_off2[2];
+                ESP_LOGI(TAG, "applied measured gyro bias (raw %ld,%ld,%ld, n=%d)",
+                         (long)gyro_off_raw2[0], (long)gyro_off_raw2[1], (long)gyro_off_raw2[2], gcount);
+            } else {
+                ESP_LOGW(TAG, "gyro bias conversion failed - yaw may drift");
+            }
+        } else {
+            ESP_LOGW(TAG, "gyro bias measurement got too few samples (%d) - yaw may drift", gcount);
+        }
+        mpu6500_force_fifo_reset(&s_handle);
+    }
     return 0;
 
 fail:
@@ -173,6 +231,20 @@ static void imu_task(void *arg)
     uint16_t len;
     int      ff_run_ms = 0;
     int      mv_run_ms = 0;
+
+    /* Continuous rest-triggered gyro re-zero: the DMP's own GYRO_CAL feature
+     * and the one-shot boot bias (see dmp_bringup) aren't enough to fully
+     * null the yaw drift on this unit, and bias shifts as the chip warms up.
+     * Whenever the board is genuinely still (low accel deviation from 1g AND
+     * low reported angular rate) for a sustained window, average the
+     * "calibrated" gyro raw counts — any nonzero average at true zero rate
+     * is residual bias — and fold it into the DMP bias as an increment. */
+    int64_t  rest_gsum[3] = { 0, 0, 0 };
+    int      rest_count = 0;
+    int      rezero_cooldown_ms = 0;
+#define IMU_REZERO_WINDOW_SAMPLES 50    /* ~2s of stillness at 40ms/sample */
+#define IMU_REZERO_MIN_RAW        2     /* skip sub-noise-floor residuals (~0.12 dps) */
+#define IMU_REZERO_COOLDOWN_MS    4000
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(40));
@@ -199,6 +271,43 @@ static void imu_task(void *arg)
         bool freefall = ff_run_ms >= 80;
         if (fabsf(amag - 1.0f) > 0.25f) mv_run_ms += 20; else mv_run_ms = 0;
         bool motion = mv_run_ms >= 60 && !freefall;
+
+        if (rezero_cooldown_ms > 0) rezero_cooldown_ms -= 40;
+
+        float gmag = sqrtf(gyro_dps[0][0] * gyro_dps[0][0] +
+                           gyro_dps[0][1] * gyro_dps[0][1] +
+                           gyro_dps[0][2] * gyro_dps[0][2]);
+        bool likely_still = !motion && !freefall && gmag < 2.0f;
+        if (likely_still) {
+            rest_gsum[0] += gyro_raw[0][0];
+            rest_gsum[1] += gyro_raw[0][1];
+            rest_gsum[2] += gyro_raw[0][2];
+            rest_count++;
+        } else {
+            rest_gsum[0] = rest_gsum[1] = rest_gsum[2] = 0;
+            rest_count = 0;
+        }
+        if (rest_count >= IMU_REZERO_WINDOW_SAMPLES && rezero_cooldown_ms <= 0) {
+            int32_t resid_raw[3] = { (int32_t)(rest_gsum[0] / rest_count),
+                                     (int32_t)(rest_gsum[1] / rest_count),
+                                     (int32_t)(rest_gsum[2] / rest_count) };
+            if (abs(resid_raw[0]) >= IMU_REZERO_MIN_RAW || abs(resid_raw[1]) >= IMU_REZERO_MIN_RAW ||
+                abs(resid_raw[2]) >= IMU_REZERO_MIN_RAW) {
+                int32_t accel_dummy[3] = { 0, 0, 0 }, resid_off[3], accel_off_dummy[3];
+                if (mpu6500_dmp_gyro_accel_raw_offset_convert(&s_handle, resid_raw, accel_dummy,
+                                                              resid_off, accel_off_dummy) == 0) {
+                    s_gyro_bias_off[0] += resid_off[0];
+                    s_gyro_bias_off[1] += resid_off[1];
+                    s_gyro_bias_off[2] += resid_off[2];
+                    mpu6500_dmp_set_gyro_bias(&s_handle, s_gyro_bias_off);
+                    ESP_LOGI(TAG, "gyro rezero (resid raw %ld,%ld,%ld)",
+                             (long)resid_raw[0], (long)resid_raw[1], (long)resid_raw[2]);
+                }
+            }
+            rest_gsum[0] = rest_gsum[1] = rest_gsum[2] = 0;
+            rest_count = 0;
+            rezero_cooldown_ms = IMU_REZERO_COOLDOWN_MS;
+        }
 
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         bool was_online = s_data.online;

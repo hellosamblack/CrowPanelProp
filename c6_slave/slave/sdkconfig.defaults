@@ -14,6 +14,12 @@ CONFIG_BOOTLOADER_COMPILER_OPTIMIZATION_PERF=y
 #Disable enterprise support by default
 CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
 
+# CrowPanel prop: WiFi FTM (802.11mc) ranging, initiator only — see prop_ftm_slave.c.
+# Native esp_wifi FTM Kconfig; distinct from esp_wifi_remote's dead WIFI_RMT_FTM_ENABLE proxy gate.
+CONFIG_ESP_WIFI_FTM_ENABLE=y
+CONFIG_ESP_WIFI_FTM_INITIATOR_SUPPORT=y
+CONFIG_ESP_WIFI_FTM_RESPONDER_SUPPORT=n
+
 ##
 ## Power Management
 ##

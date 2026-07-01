@@ -66,6 +66,36 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # Log level
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
+# Crash forensics: an intermittent boot-time panic proved hard to catch with live
+# serial capture (opening the port doesn't reliably line up with the exact reboot
+# moment, and nobody's watching most of the time). Persist the full register dump +
+# backtrace to the dedicated "coredump" flash partition (see partitions.csv) on any
+# panic; read it back after the fact with
+#   idf.py -C "f:\git\personal\CrowPanelProp" -p COM8 coredump-info
+#
+# TEMPORARILY DISABLED (2026-06-30): enabling this forces FREERTOS_ISR_STACKSIZE
+# from 1536 to 2096 bytes/core (a documented ESP-IDF Kconfig floor:
+# components/freertos/Kconfig, `range 2096 ... if ESP_COREDUMP_ENABLE`). That
+# +1120 bytes lands in the narrow pre-scheduler window where main_task's own
+# 8192-byte stack is allocated (before heap_caps_enable_nonos_stack_heaps() has
+# reclaimed the startup stack — see freertos/app_startup.c) and reliably starves
+# it: measured `internal free=10832 largest=7168` bytes at that point with
+# coredump on (confirmed via a temporary ESP_SYSTEM_INIT_FN heap probe) — total
+# free exceeds what's needed, but the largest CONTIGUOUS block doesn't, so
+# esp_startup_start_app's xTaskCreatePinnedToCore(main_task, ...) fails outright
+# (assert failed: esp_startup_start_app app_startup.c:83). Confirmed via a clean
+# git-stash bisection that this is unrelated to the FTM ranging feature or the
+# telemetry/websocket work — it reproduces with just coredump enabled, on a
+# freshly-erased chip. Re-enabling needs ~1-1.5KB more contiguous internal RAM
+# at that exact boot point; the only identified lever is patching esp-hosted's
+# hardcoded 5120-byte DFLT_TASK_STACK_SIZE (host/port/esp/freertos/include/
+# port_esp_hosted_host_os.h) down, which requires vendoring the component into
+# components/ (mirrors the c6_slave/ pattern) since managed_components/ edits
+# don't survive. Not done here — flagged for follow-up.
+# CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+# CONFIG_ESP_COREDUMP_CHECK_BOOT=n
+# CONFIG_ESP_COREDUMP_FLASH_NO_OVERWRITE=y
+
 # RGB565 to match the EK79007 panel (LVGL 9 pairs this with the swap_bytes flag set
 # in bsp_illuminate.c). Keep it explicit so a menuconfig reset can't drift it.
 CONFIG_LV_COLOR_DEPTH_16=y

@@ -28,3 +28,6 @@ wifi_secret.env
 # that live locally for hardware analysis. Not firmware source; not for the repo.
 # datasheets/
 # reference/schematic/
+
+# VS Code "Local History" extension backups — editor-generated, not project content.
+.history/

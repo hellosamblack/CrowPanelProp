@@ -10,7 +10,6 @@
 #include "prop_track.h"
 #include "prop_aux_radar.h"
 #include "esp_ota_ops.h"
-
 static esp_ldo_channel_handle_t ldo3;
 static esp_ldo_channel_handle_t ldo4;
 
@@ -197,6 +196,15 @@ void app_main(void)
         /* WiFi CSI (SIGNAL ENVIRONMENT) — best-effort real CSI from the C6, with a
          * synthetic RSSI-driven fallback baked in, so it never fails the prop. */
         prop_csi_init();
+
+        /* WiFi FTM ranging (RANGE) — real 802.11mc ranging run on the C6 (see
+         * prop_ftm.c). NON-fatal: if the task can't start, the RANGE panel just
+         * shows an empty table. */
+        esp_err_t ftm_err = prop_ftm_init();
+        if (ftm_err != ESP_OK) {
+            MAIN_ERROR("FTM ranging unavailable (%s) — RANGE will show empty",
+                       esp_err_to_name(ftm_err));
+        }
     }
 
     /* Full bring-up complete: mark this OTA image valid so the bootloader won't

@@ -20,6 +20,12 @@ static int64_t s_stats_us = -1;   /* esp_timer time of last stats; <0 = none yet
 static volatile bool s_slave_alive;  /* a heartbeat has arrived since boot */
 static bool s_settings_pushed;       /* have we pushed saved settings to the slave yet? */
 
+/* FTM: at most one outstanding request at a time (the C6 only runs one
+ * session at a time), so a volatile cache + poll is enough — no semaphore
+ * needed. Mirrors the CSI stats cache above. */
+static volatile prop_ftm_result_t s_ftm_result;
+static volatile uint32_t s_ftm_result_seq;   /* bumped on every RX */
+
 /* The runtime-configurable settings, generated from the shared cfg list. These
  * live on the P4 (NVS survives reflash) and are pushed to the C6 over RPC, so
  * the C6 never needs reflashing to change them. */
@@ -100,6 +106,21 @@ static void on_csi_stats(uint32_t msg_id, const uint8_t *data, size_t len, void 
     s_slave_alive = true;
 }
 
+/* esp-hosted custom-RPC RX callback for FTM results. RPC RX thread — keep it
+ * cheap (just cache + bump the sequence counter, same discipline as on_csi_stats). */
+static void on_ftm_result(uint32_t msg_id, const uint8_t *data, size_t len, void *ctx)
+{
+    (void)msg_id;
+    (void)ctx;
+    if (len != sizeof(prop_ftm_result_t) || data == NULL) {
+        ESP_LOGW(TAG, "FTM result: unexpected len %u (want %u)",
+                 (unsigned)len, (unsigned)sizeof(prop_ftm_result_t));
+        return;
+    }
+    memcpy((void *)&s_ftm_result, data, sizeof(s_ftm_result));
+    s_ftm_result_seq++;
+}
+
 /* One-shot: wait for the slave to report in, then push the persisted config to
  * it, spaced out so we don't flood the RPC TX path. Runs off the RX thread. */
 static void push_task(void *arg)
@@ -124,9 +145,51 @@ esp_err_t prop_coproc_init(void)
     ESP_LOGI(TAG, "listening for C6 CSI custom-RPC (msg 0x%08x)",
              (unsigned)PROP_MSG_ID_CSI_STATS);
 
+    err = esp_hosted_register_custom_callback(PROP_MSG_ID_FTM_RESULT, on_ftm_result, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register FTM-result callback failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
     /* Push persisted settings once the slave reports in (off the RX thread). */
     xTaskCreatePinnedToCore(push_task, "csi_push", 3072, NULL, 4, NULL, 0);
     return ESP_OK;
+}
+
+esp_err_t prop_coproc_ftm_request(const prop_ftm_req_t *req)
+{
+    if (!req) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return esp_hosted_send_custom_data(PROP_MSG_ID_FTM_REQ, (const uint8_t *)req, sizeof(*req));
+}
+
+bool prop_coproc_ftm_wait_result(uint16_t req_id, uint32_t timeout_ms, prop_ftm_result_t *out)
+{
+    /* Wait for the RX callback to actually bump the sequence counter — do NOT
+     * trust the cache's initial/stale content on its own (its zero-valued boot
+     * state has req_id=0, status=PROP_FTM_OK=0, which would otherwise look like
+     * a false "success" for a caller's very first req_id-0 request). */
+    uint32_t seen_seq = s_ftm_result_seq;
+    uint32_t waited = 0;
+    const uint32_t step_ms = 50;
+    while (waited <= timeout_ms) {
+        uint32_t cur_seq = s_ftm_result_seq;
+        if (cur_seq != seen_seq) {
+            prop_ftm_result_t snap;
+            memcpy(&snap, (const void *)&s_ftm_result, sizeof(snap));
+            if (snap.req_id == req_id) {
+                if (out) {
+                    *out = snap;
+                }
+                return true;
+            }
+            seen_seq = cur_seq;   /* mismatched/stale result; keep waiting */
+        }
+        vTaskDelay(pdMS_TO_TICKS(step_ms));
+        waited += step_ms;
+    }
+    return false;
 }
 
 bool prop_coproc_get_csi_stats(prop_csi_stats_t *out, uint32_t *age_ms)

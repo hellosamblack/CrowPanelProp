@@ -7,6 +7,12 @@
 #include "prop_ppa_spike.h"
 #include "prop_ble.h"
 #include "prop_csi.h"
+#include "prop_ftm.h"
+#include "prop_imu.h"
+#include "prop_motion.h"
+#include "prop_track.h"
+#include "prop_mic.h"
+#include "prop_aux_radar.h"
 #include "prop_coproc.h"
 #include "prop_calib.h"
 #include "prop_settings.h"
@@ -44,6 +50,7 @@ static char *state_to_json(void)
     prop_net_get_ip(ip, sizeof(ip));
 
     cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "type", "state");
     cJSON_AddStringToObject(root, "scene", prop_scene_name(st.scene));
     cJSON_AddStringToObject(root, "status", st.status);
     cJSON_AddStringToObject(root, "channel", st.channel);
@@ -67,6 +74,14 @@ static char *state_to_json(void)
     if (prop_csi_available()) {
         cJSON_AddBoolToObject(root, "csi_live", prop_csi_is_live());
     }
+    if (prop_ftm_available()) {
+        int tracked = 0, capable = 0, ranged = 0;
+        prop_ftm_get_summary(&tracked, &capable, &ranged);
+        cJSON *ftm = cJSON_AddObjectToObject(root, "ftm");
+        cJSON_AddNumberToObject(ftm, "tracked", tracked);
+        cJSON_AddNumberToObject(ftm, "capable", capable);
+        cJSON_AddNumberToObject(ftm, "ranged", ranged);
+    }
 
     cJSON *leds = cJSON_AddArrayToObject(root, "leds");
     for (int i = 0; i < LED_COUNT; i++) {
@@ -75,6 +90,114 @@ static char *state_to_json(void)
         cJSON_AddBoolToObject(led, "on", (st.led_mask >> i) & 0x1);
         cJSON_AddItemToArray(leds, led);
     }
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    return out;   /* caller frees */
+}
+
+/* ---- Telemetry -> JSON ---------------------------------------------------
+ * A richer, higher-rate sibling of state_to_json(): every live instrument
+ * variable (IMU orientation/accel/gyro, LD2450 radar targets, PDR pose, mic
+ * level/spectrum, aux presence sensors, BLE/CSI summaries) in one snapshot, so
+ * a developer/agent can watch values change in real time instead of polling
+ * /screenshot. Each module is read from its own cached-value getter (the
+ * house "background task -> cached state -> cheap read" pattern), so this is
+ * safe to call at a few Hz. */
+static char *telemetry_to_json(void)
+{
+    prop_state_t st;
+    prop_engine_get_state(&st);
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "type", "telemetry");
+    cJSON_AddStringToObject(root, "scene", prop_scene_name(st.scene));
+    cJSON_AddStringToObject(root, "status", st.status);
+    cJSON_AddStringToObject(root, "channel", st.channel);
+    cJSON_AddNumberToObject(root, "link", st.link);
+    cJSON_AddNumberToObject(root, "sensitivity", st.sensitivity);
+    cJSON_AddStringToObject(root, "screen", prop_ui_current_screen());
+
+    if (prop_imu_available()) {
+        prop_imu_data_t d;
+        prop_imu_get_data(&d);
+        cJSON *imu = cJSON_AddObjectToObject(root, "imu");
+        cJSON_AddBoolToObject(imu, "valid", d.valid);
+        cJSON_AddNumberToObject(imu, "yaw_deg",   d.yaw   * 57.29578f);
+        cJSON_AddNumberToObject(imu, "pitch_deg", d.pitch * 57.29578f);
+        cJSON_AddNumberToObject(imu, "roll_deg",  d.roll  * 57.29578f);
+        cJSON *accel = cJSON_AddArrayToObject(imu, "accel");
+        cJSON_AddItemToArray(accel, cJSON_CreateNumber(d.ax));
+        cJSON_AddItemToArray(accel, cJSON_CreateNumber(d.ay));
+        cJSON_AddItemToArray(accel, cJSON_CreateNumber(d.az));
+        cJSON *gyro = cJSON_AddArrayToObject(imu, "gyro");
+        cJSON_AddItemToArray(gyro, cJSON_CreateNumber(d.gx));
+        cJSON_AddItemToArray(gyro, cJSON_CreateNumber(d.gy));
+        cJSON_AddItemToArray(gyro, cJSON_CreateNumber(d.gz));
+        cJSON_AddNumberToObject(imu, "temp_c", d.temp_c);
+        cJSON_AddNumberToObject(imu, "steps", d.step_count);
+    }
+
+    if (prop_motion_available()) {
+        prop_motion_target_t tgt[PROP_MOTION_MAX_TARGETS];
+        int n = prop_motion_get_targets(tgt, PROP_MOTION_MAX_TARGETS);
+        cJSON *arr = cJSON_AddArrayToObject(root, "radar");
+        for (int i = 0; i < n; i++) {
+            cJSON *t = cJSON_CreateObject();
+            cJSON_AddNumberToObject(t, "x_mm", tgt[i].x_mm);
+            cJSON_AddNumberToObject(t, "y_mm", tgt[i].y_mm);
+            cJSON_AddNumberToObject(t, "speed_mm_s", tgt[i].speed_mm_s);
+            cJSON_AddItemToArray(arr, t);
+        }
+    }
+
+    if (prop_track_available()) {
+        prop_track_pose_t pose;
+        prop_track_get_pose(&pose);
+        cJSON *tr = cJSON_AddObjectToObject(root, "track");
+        cJSON_AddBoolToObject(tr, "valid", pose.valid);
+        cJSON_AddNumberToObject(tr, "x", pose.x);
+        cJSON_AddNumberToObject(tr, "y", pose.y);
+        cJSON_AddNumberToObject(tr, "heading_deg", pose.heading * 57.29578f);
+    }
+
+    if (prop_mic_available()) {
+        cJSON *mic = cJSON_AddObjectToObject(root, "mic");
+        cJSON_AddNumberToObject(mic, "db", prop_mic_get_db());
+        uint8_t bands[PROP_MIC_BANDS];
+        prop_mic_get_bands(bands);
+        cJSON *arr = cJSON_AddArrayToObject(mic, "bands");
+        for (int i = 0; i < PROP_MIC_BANDS; i++) {
+            cJSON_AddItemToArray(arr, cJSON_CreateNumber(bands[i]));
+        }
+    }
+
+    static const char *s_aux_name[] = { "offline", "clear", "present" };
+    cJSON *aux = cJSON_AddObjectToObject(root, "aux_radar");
+    cJSON_AddStringToObject(aux, "seeed", s_aux_name[prop_aux_radar_seeed()]);
+    cJSON_AddStringToObject(aux, "sen0395", s_aux_name[prop_aux_radar_sen0395()]);
+
+    if (prop_ble_available()) {
+        int count = 0, named = 0, known = 0;
+        int8_t strongest = 0;
+        prop_ble_get_summary(&count, &strongest, &named, &known);
+        cJSON *ble = cJSON_AddObjectToObject(root, "ble");
+        cJSON_AddNumberToObject(ble, "count", count);
+        cJSON_AddNumberToObject(ble, "strongest", strongest);
+        cJSON_AddNumberToObject(ble, "named", named);
+        cJSON_AddNumberToObject(ble, "known", known);
+    }
+
+    if (prop_csi_available()) {
+        bool motion = false;
+        int movement_milli = 0, threshold_milli = 0;
+        bool live = prop_csi_get_motion(&motion, &movement_milli, &threshold_milli);
+        cJSON *csi = cJSON_AddObjectToObject(root, "csi");
+        cJSON_AddBoolToObject(csi, "live", live);
+        cJSON_AddBoolToObject(csi, "motion", motion);
+        cJSON_AddNumberToObject(csi, "movement", movement_milli / 1000.0);
+        cJSON_AddNumberToObject(csi, "threshold", threshold_milli / 1000.0);
+    }
+
     char *out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     return out;   /* caller frees */
@@ -293,10 +416,68 @@ static void broadcast_observer(const prop_state_t *st, void *ctx)
     free(json);
 }
 
+/* ---- Telemetry streaming -------------------------------------------------
+ * Pushes telemetry_to_json() to every connected WS client on a fixed cadence,
+ * independent of broadcast_observer's on-change state push above. Runs as its
+ * own task (not an engine observer) since it reads several unrelated cached
+ * modules, not just engine state. Skips building JSON entirely when no WS
+ * client is attached, so it's free when nobody's watching. Uses the async
+ * send API (queued onto the httpd work queue), same as broadcast_observer, so
+ * it never blocks the httpd task servicing /cmd, /state, /screenshot, etc. */
+#define TELEMETRY_PERIOD_MS 200   /* 5 Hz: fast enough to watch values move live */
+
+static void telemetry_task(void *arg)
+{
+    (void)arg;
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(TELEMETRY_PERIOD_MS));
+        if (!s_server) {
+            continue;
+        }
+        size_t num = CONFIG_LWIP_MAX_SOCKETS;
+        int fds[CONFIG_LWIP_MAX_SOCKETS];
+        if (httpd_get_client_list(s_server, &num, fds) != ESP_OK) {
+            continue;
+        }
+        char *json = NULL;
+        for (size_t i = 0; i < num; i++) {
+            if (httpd_ws_get_fd_info(s_server, fds[i]) != HTTPD_WS_CLIENT_WEBSOCKET) {
+                continue;
+            }
+            if (!json) {
+                json = telemetry_to_json();
+                if (!json) {
+                    break;
+                }
+            }
+            httpd_ws_frame_t frame = {
+                .type = HTTPD_WS_TYPE_TEXT,
+                .payload = (uint8_t *)json,
+                .len = strlen(json),
+            };
+            httpd_ws_send_frame_async(s_server, fds[i], &frame);
+        }
+        free(json);
+    }
+}
+
 /* ---- Handlers ----------------------------------------------------------- */
 static esp_err_t state_get_handler(httpd_req_t *req)
 {
     char *json = state_to_json();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_sendstr(req, json ? json : "{}");
+    free(json);
+    return ESP_OK;
+}
+
+/* GET /telemetry — one-shot snapshot of telemetry_to_json() for simple polling
+ * (curl / prop.py) without opening a WebSocket. The /ws stream above is the
+ * live-updating version of the same payload. */
+static esp_err_t telemetry_get_handler(httpd_req_t *req)
+{
+    char *json = telemetry_to_json();
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_sendstr(req, json ? json : "{}");
@@ -552,18 +733,21 @@ esp_err_t prop_api_init(void)
 
     httpd_uri_t root = { .uri = "/",     .method = HTTP_GET,  .handler = root_get_handler };
     httpd_uri_t st   = { .uri = "/state", .method = HTTP_GET,  .handler = state_get_handler };
+    httpd_uri_t tel  = { .uri = "/telemetry", .method = HTTP_GET, .handler = telemetry_get_handler };
     httpd_uri_t cmd  = { .uri = "/cmd",  .method = HTTP_POST, .handler = cmd_post_handler };
     httpd_uri_t ota  = { .uri = "/ota",  .method = HTTP_POST, .handler = ota_post_handler };
     httpd_uri_t ws   = { .uri = "/ws",   .method = HTTP_GET,  .handler = ws_handler, .is_websocket = true };
     httpd_uri_t shot = { .uri = "/screenshot", .method = HTTP_GET, .handler = screenshot_get_handler };
     httpd_register_uri_handler(s_server, &root);
     httpd_register_uri_handler(s_server, &st);
+    httpd_register_uri_handler(s_server, &tel);
     httpd_register_uri_handler(s_server, &cmd);
     httpd_register_uri_handler(s_server, &ota);
     httpd_register_uri_handler(s_server, &ws);
     httpd_register_uri_handler(s_server, &shot);
 
     prop_engine_add_observer(broadcast_observer, NULL);
-    ESP_LOGI(API_TAG, "HTTP API up (/, /state, /cmd, /ws, /ota, /screenshot)");
+    xTaskCreate(telemetry_task, "prop_telemetry", 4096, NULL, 4, NULL);
+    ESP_LOGI(API_TAG, "HTTP API up (/, /state, /telemetry, /cmd, /ws, /ota, /screenshot)");
     return ESP_OK;
 }

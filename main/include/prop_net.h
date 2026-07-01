@@ -81,6 +81,13 @@ esp_err_t prop_net_init(void);
  * esp_wifi_scan_get_ap_records). */
 int prop_net_scan(prop_ap_t *out, int max);
 
+/* Same underlying scan, but one entry per BSSID with NO SSID de-dup — a mesh
+ * network's nodes (or any APs sharing an SSID) stay distinct. Used by the FTM
+ * ranging table (prop_ftm.c), which tracks per-BSSID, not per-SSID. Blocking
+ * (~2 s), same call-site rules as prop_net_scan. */
+#define PROP_NET_SCAN_MAX 32
+int prop_net_scan_raw(prop_ap_t *out, int max);
+
 /* Blocking 2.4 GHz channel-occupancy scan (~2 s). Runs the same active scan as
  * prop_net_scan but folds the results into a per-channel occupancy histogram:
  * out[ch] (ch 1..13) gets a 0..100 index weighted by AP RSSI (strong/multiple APs

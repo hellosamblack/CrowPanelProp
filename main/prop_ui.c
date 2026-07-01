@@ -8,6 +8,7 @@
 #include "prop_audio.h"
 #include "prop_ble.h"
 #include "prop_csi.h"
+#include "prop_ftm.h"
 #include "prop_calib.h"
 #include "prop_coproc.h"
 #include "prop_motion.h"
@@ -125,8 +126,9 @@ typedef enum {
     PK_SCAN, PK_SPECTRUM, PK_RFBAND, PK_BLE, PK_CSI, PK_CSICFG, PK_CSISET, PK_MOTION,
     PK_DIRCAL,        /* travel-direction calibration (opened from the SCANNER apex dot) */
     PK_MINIMAP,       /* north-up dead-reckoning map (breadcrumb path + radar marks) */
+    PK_RANGE,         /* WiFi FTM ranging table (per-BSSID distance-to-AP) */
     PK_INSTRUMENTS,   /* submenu: SCANNER / SIGNAL SCAN / SPECTRUM / VITALS */
-    PK_SENSORS,       /* submenu: RF BAND / CONTACTS / SIGNAL ENV / CSI CONFIG */
+    PK_SENSORS,       /* submenu: RF BAND / CONTACTS / SIGNAL ENV / CSI CONFIG / SCANNER / MINIMAP / RANGE */
     PK_ARCHIVE,    /* data-archive browser (tabs = sections) */
     PK_ARTICLE,    /* a single archive entry */
     PK_CASSETTE,   /* cassette deck (stub) */
@@ -185,6 +187,13 @@ static lv_obj_t *s_ble_list;
 
 typedef struct { lv_obj_t *tag, *dbm, *mac, *dist, *uuid, *tx, *fill; } ble_row_t;
 static ble_row_t s_ble_rows[PROP_BLE_MAX];
+
+/* RANGE (WiFi FTM) instrument (valid only while PK_RANGE is current). */
+static lv_obj_t *s_range_summary;
+static lv_obj_t *s_range_list;
+
+typedef struct { lv_obj_t *tag, *rssi, *mac, *dist, *status, *fill; } range_row_t;
+static range_row_t s_range_rows[PROP_FTM_TABLE_MAX];
 
 /* SIGNAL ENVIRONMENT (CSI) instrument (valid only while PK_CSI is current). */
 static lv_obj_t *s_csi_bars[PROP_CSI_BINS];
@@ -416,6 +425,7 @@ static lv_obj_t *build_io_pin_panel(lv_obj_t *parent);
 static lv_obj_t *build_motion_panel(lv_obj_t *parent);
 static lv_obj_t *build_dircal_panel(lv_obj_t *parent);
 static lv_obj_t *build_minimap_panel(lv_obj_t *parent);
+static lv_obj_t *build_range_panel(lv_obj_t *parent);
 static void wifi_panel_opened(void);
 static void start_signal_scan(void);
 static void start_rfband_scan(void);
@@ -494,6 +504,8 @@ static void close_panel(void)
     for (int i = 0; i < RF_CHANNELS; i++) s_rf_bars[i] = NULL;
     s_ble_summary = NULL; s_ble_list = NULL;
     memset(s_ble_rows, 0, sizeof(s_ble_rows));
+    s_range_summary = NULL; s_range_list = NULL;
+    memset(s_range_rows, 0, sizeof(s_range_rows));
     s_csi_status = NULL;
     s_csi_motion = NULL;
     s_csi_move = NULL;
@@ -576,7 +588,7 @@ static void rail_sync(panel_kind_t kind)
         case PK_NONE: case PK_SCAN: case PK_SPECTRUM: case PK_VITALS:
             want = PK_INSTRUMENTS; break;
         case PK_RFBAND: case PK_BLE: case PK_CSI: case PK_CSICFG: case PK_CSISET: case PK_MOTION:
-        case PK_DIRCAL: case PK_MINIMAP:
+        case PK_DIRCAL: case PK_MINIMAP: case PK_RANGE:
             want = PK_SENSORS; break;
         default: break;
     }
@@ -642,6 +654,7 @@ static void open_panel(panel_kind_t kind)
         case PK_MOTION:   s_cur_panel = build_motion_panel(s_root); break;
         case PK_DIRCAL:   s_cur_panel = build_dircal_panel(s_root); break;
         case PK_MINIMAP:  s_cur_panel = build_minimap_panel(s_root); break;
+        case PK_RANGE:    s_cur_panel = build_range_panel(s_root); break;
         default: break;    /* PK_NONE: no panel - the SCANNER readout shows through */
     }
     s_cur_kind = kind;
@@ -1787,6 +1800,134 @@ static void ble_update_row(int i, const prop_ble_dev_t *d)
 
     int pct = ble_rssi_to_bar(d->rssi);
     set_meter(r->fill, pct, pct < 25 ? COL_DIM : COL_AMBER);
+}
+
+/* ---- RANGE instrument (WiFi 802.11mc FTM ranging) --------------------------
+ * Distance-to-AP for every FTM-capable BSSID the C6 has scanned, driven by
+ * prop_ftm's background probe+backoff engine. Most environments have zero or
+ * few FTM-capable APs (see prop_ftm.h) — the table filters to capable-only
+ * (prop_ftm_get_table sorts capable-first), so a quiet environment shows the
+ * empty-state message rather than a long list of APs that will never range. */
+
+#define RANGE_ROW_H 88
+
+static lv_obj_t *build_range_panel(lv_obj_t *parent)
+{
+    lv_obj_t *p = make_panel(parent, "RANGE", back_to_sensors_cb);
+
+    if (!prop_ftm_available()) {
+        lv_obj_t *off = lv_label_create(p);
+        lv_label_set_text(off, "-- FTM RANGING OFFLINE --");
+        lv_obj_set_style_text_color(off, COL_DIM, 0);
+        lv_obj_set_style_text_font(off, FONT_HEAD, 0);
+        lv_obj_center(off);
+        return p;
+    }
+
+    s_range_summary = lv_label_create(p);
+    lv_label_set_text(s_range_summary, "SCANNING FOR FTM-CAPABLE APs...");
+    lv_obj_set_style_text_color(s_range_summary, COL_AMBER, 0);
+    lv_obj_set_style_text_font(s_range_summary, FONT_HEAD, 0);
+    lv_obj_align(s_range_summary, LV_ALIGN_TOP_LEFT, 30, 84);
+
+    /* Scrolling range list — rows are pre-built and reused (no teardown per tick). */
+    s_range_list = lv_obj_create(p);
+    lv_obj_remove_style_all(s_range_list);
+    lv_obj_set_size(s_range_list, SCAN_W - 60, 600 - 140);
+    lv_obj_align(s_range_list, LV_ALIGN_TOP_LEFT, 30, 132);
+    lv_obj_set_style_pad_all(s_range_list, 0, 0);
+    lv_obj_set_scroll_dir(s_range_list, LV_DIR_VER);
+
+    for (int i = 0; i < PROP_FTM_TABLE_MAX; i++) {
+        int y = i * RANGE_ROW_H;
+        range_row_t *r = &s_range_rows[i];
+        /* Line 1: SSID/hidden (left) + RSSI (right). */
+        r->tag    = lv_label_create(s_range_list);
+        lv_obj_set_style_text_color(r->tag, COL_AMBER, 0);
+        lv_obj_align(r->tag, LV_ALIGN_TOP_LEFT, 6, y);
+        r->rssi   = lv_label_create(s_range_list);
+        lv_obj_set_style_text_color(r->rssi, COL_MUTE, 0);
+        lv_obj_align(r->rssi, LV_ALIGN_TOP_RIGHT, -6, y);
+        /* Line 2: BSSID + vendor (left) + distance (right). */
+        r->mac    = lv_label_create(s_range_list);
+        lv_obj_set_style_text_color(r->mac, COL_MUTE, 0);
+        lv_obj_set_style_text_font(r->mac, FONT_BODY, 0);
+        lv_obj_align(r->mac, LV_ALIGN_TOP_LEFT, 6, y + 22);
+        r->dist   = lv_label_create(s_range_list);
+        lv_obj_set_style_text_color(r->dist, COL_AMBER, 0);
+        lv_obj_set_style_text_font(r->dist, FONT_BODY, 0);
+        lv_obj_align(r->dist, LV_ALIGN_TOP_RIGHT, -6, y + 22);
+        /* Line 3: status tag. */
+        r->status = lv_label_create(s_range_list);
+        lv_obj_set_style_text_color(r->status, COL_MUTE, 0);
+        lv_obj_set_style_text_font(r->status, FONT_BODY, 0);
+        lv_obj_align(r->status, LV_ALIGN_TOP_LEFT, 6, y + 44);
+        r->fill   = make_meter_bar(s_range_list, 6, y + 68, SCAN_W - 60 - 150);
+        /* Start all rows hidden; observer reveals them as the table fills in. */
+        lv_obj_add_flag(r->tag,    LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(r->rssi,   LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(r->mac,    LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(r->dist,   LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(r->status, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(r->fill,   LV_OBJ_FLAG_HIDDEN);
+    }
+    return p;
+}
+
+/* Status word (+ remaining backoff, where relevant) for entry `e`. */
+static void range_fmt_status(char *out, size_t n, const prop_ftm_entry_t *e, uint32_t now)
+{
+    switch (e->status) {
+        case PROP_FTM_ENTRY_OK:        snprintf(out, n, "LIVE"); break;
+        case PROP_FTM_ENTRY_BUSY:      snprintf(out, n, "RADIO BUSY - RETRYING"); break;
+        case PROP_FTM_ENTRY_NEVER:     snprintf(out, n, "PENDING FIRST PROBE"); break;
+        case PROP_FTM_ENTRY_NO_REPLY:
+        case PROP_FTM_ENTRY_TIMEOUT:
+        default: {
+            const char *why = (e->status == PROP_FTM_ENTRY_TIMEOUT) ? "TIMEOUT" : "NO REPLY";
+            if (e->next_probe_ms > now) {
+                uint32_t s = (e->next_probe_ms - now) / 1000;
+                snprintf(out, n, "%s - RETRY IN %lus", why, (unsigned long)s);
+            } else {
+                snprintf(out, n, "%s - RETRYING", why);
+            }
+            break;
+        }
+    }
+}
+
+/* Update the content of pre-built row slot `i` in-place. */
+static void range_update_row(int i, const prop_ftm_entry_t *e, uint32_t now)
+{
+    range_row_t *r = &s_range_rows[i];
+
+    char idbuf[48];
+    snprintf(idbuf, sizeof(idbuf), "%02d  %s", i + 1, e->ssid[0] ? e->ssid : "(hidden)");
+    lv_label_set_text(r->tag, idbuf);
+    lv_label_set_text_fmt(r->rssi, "%d dBm", e->rssi);
+
+    const char *vendor = prop_net_oui_vendor(e->bssid);
+    char mb[48];
+    snprintf(mb, sizeof(mb), "%02X:%02X:%02X:%02X:%02X:%02X  %s",
+             e->bssid[0], e->bssid[1], e->bssid[2], e->bssid[3], e->bssid[4], e->bssid[5],
+             vendor ? vendor : "");
+    lv_label_set_text(r->mac, mb);
+
+    if (e->last_dist_cm >= 0) {
+        float m = e->last_dist_cm / 100.0f;
+        lv_label_set_text_fmt(r->dist, m < 10.0f ? "~ %.1f m" : "~ %.0f m", (double)m);
+    } else {
+        lv_label_set_text(r->dist, "--");
+    }
+
+    char sb[40];
+    range_fmt_status(sb, sizeof(sb), e, now);
+    lv_label_set_text(r->status, sb);
+
+    int pct = ble_rssi_to_bar(e->rssi);
+    lv_color_t col = (e->status == PROP_FTM_ENTRY_OK) ? COL_AMBER
+                    : (pct < 25 ? COL_DIM : COL_MUTE);
+    set_meter(r->fill, pct, col);
 }
 
 /* ---- SIGNAL ENVIRONMENT instrument (WiFi CSI, or synthetic fallback) -------
@@ -3446,6 +3587,7 @@ static lv_obj_t *build_sensors_panel(lv_obj_t *parent)
     kit_list_row(b, "CSI CONFIG", menu_open_cb, (void *)(intptr_t)PK_CSICFG);
     kit_list_row(b, "SCANNER", menu_open_cb, (void *)(intptr_t)PK_MOTION);
     kit_list_row(b, "MINIMAP", menu_open_cb, (void *)(intptr_t)PK_MINIMAP);
+    kit_list_row(b, "RANGE",   menu_open_cb, (void *)(intptr_t)PK_RANGE);
     return m;
 }
 
@@ -5062,6 +5204,52 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
+    /* Update the RANGE (FTM) list in-place (throttled ~2.5 Hz), same pre-built
+     * row-pool pattern as CONTACTS. Only FTM-capable BSSIDs are shown — the
+     * table itself tracks every scanned BSSID, but prop_ftm_get_table sorts
+     * capable-first so the display cutoff is just "until capable stops". */
+    if (s_cur_kind == PK_RANGE && s_range_list && (st->tick % 8 == 0)) {
+        static prop_ftm_entry_t entries[PROP_FTM_TABLE_MAX];   /* off animate_task's tight stack */
+        int total = prop_ftm_get_table(entries, PROP_FTM_TABLE_MAX);
+        int n = 0;
+        while (n < total && entries[n].ftm_capable) {
+            n++;
+        }
+
+        if (n == 0) {
+            lv_label_set_text(s_range_summary, "NO FTM-CAPABLE APs DETECTED");
+        } else {
+            int ranged = 0;
+            for (int i = 0; i < n; i++) {
+                if (entries[i].last_dist_cm >= 0) ranged++;
+            }
+            lv_label_set_text_fmt(s_range_summary, "%d FTM-CAPABLE AP%s  -  %d RANGED",
+                                  n, n == 1 ? "" : "S", ranged);
+        }
+
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        for (int i = 0; i < PROP_FTM_TABLE_MAX; i++) {
+            range_row_t *r = &s_range_rows[i];
+            if (!r->tag) break;   /* pool not built (FTM offline path) */
+            if (i < n) {
+                range_update_row(i, &entries[i], now);
+                lv_obj_clear_flag(r->tag,    LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(r->rssi,   LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(r->mac,    LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(r->dist,   LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(r->status, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(r->fill,   LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(r->tag,    LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(r->rssi,   LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(r->mac,    LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(r->dist,   LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(r->status, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(r->fill,   LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+
     /* Drive the SIGNAL ENVIRONMENT bars from the CSI movement-history FIFO. Each
      * bar is a fixed past sample — render col[i] DIRECTLY (no peak-hold decay,
      * which would let historical bars change height after the fact). The FIFO
@@ -5828,6 +6016,7 @@ void prop_ui_goto(const char *screen)
     else if (strcmp(screen, "motion") == 0)      open_panel(PK_MOTION);
     else if (strcmp(screen, "dircal") == 0)      open_panel(PK_DIRCAL);
     else if (strcmp(screen, "minimap") == 0)     open_panel(PK_MINIMAP);
+    else if (strcmp(screen, "range") == 0)       open_panel(PK_RANGE);
     else if (strcmp(screen, "archive") == 0) open_panel(PK_ARCHIVE);
     else if (strcmp(screen, "cassette") == 0) open_panel(PK_CASSETTE);
     else if (strcmp(screen, "insights") == 0) open_panel(PK_INSIGHTS);
@@ -5841,6 +6030,40 @@ void prop_ui_goto(const char *screen)
     }
     lvgl_port_unlock();
     ESP_LOGI(UI_TAG, "goto screen: %s", screen);
+}
+
+const char *prop_ui_current_screen(void)
+{
+    switch (s_cur_kind) {
+        case PK_NONE:        return "scanner";
+        case PK_HOME:        return "home";
+        case PK_MENU:        return "menu";
+        case PK_WIFI:        return "wifi";
+        case PK_DISPLAY:     return "display";
+        case PK_AUDIO:       return "audio";
+        case PK_LEDS:        return "leds";
+        case PK_ABOUT:       return "about";
+        case PK_VITALS:      return "vitals";
+        case PK_SCAN:        return "scan";
+        case PK_SPECTRUM:    return "spectrum";
+        case PK_RFBAND:      return "rfband";
+        case PK_BLE:         return "ble";
+        case PK_CSI:         return "csi";
+        case PK_CSICFG:      return "csicfg";
+        case PK_CSISET:      return "csiset";
+        case PK_MOTION:      return "motion";
+        case PK_DIRCAL:      return "dircal";
+        case PK_MINIMAP:     return "minimap";
+        case PK_INSTRUMENTS: return "instruments";
+        case PK_SENSORS:     return "sensors";
+        case PK_ARCHIVE:     return "archive";
+        case PK_ARTICLE:     return "article";
+        case PK_CASSETTE:    return "cassette";
+        case PK_INSIGHTS:    return "insights";
+        case PK_IO:          return "io";
+        case PK_IO_PIN:      return "io_pin";
+        default:             return "unknown";
+    }
 }
 
 /* ---- Physical-control input (SELECTOR dial / TAB switches / ACTION buttons)

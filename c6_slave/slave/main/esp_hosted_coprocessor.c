@@ -56,6 +56,7 @@
 #endif
 #ifdef CONFIG_ESP_HOSTED_ENABLE_PEER_DATA_TRANSFER
 #include "prop_csi_slave.h"   /* CrowPanel prop: on-C6 CSI capture (spike) */
+#include "prop_ftm_slave.h"   /* CrowPanel prop: on-C6 WiFi FTM ranging */
 #endif
 #ifdef CONFIG_ESP_HOSTED_COPROCESSOR_EXAMPLE_LIGHT_SLEEP
 #include "example_light_sleep.h"
@@ -1308,6 +1309,8 @@ void app_main(void)
 #ifdef CONFIG_ESP_HOSTED_ENABLE_PEER_DATA_TRANSFER
 	/* CrowPanel prop: start on-C6 CSI capture (headroom spike). */
 	prop_csi_slave_init();
+	/* CrowPanel prop: start on-C6 WiFi FTM ranging. */
+	prop_ftm_slave_init();
 #endif
 
 #ifdef CONFIG_ESP_HOSTED_COPROCESSOR_EXAMPLE_LIGHT_SLEEP
