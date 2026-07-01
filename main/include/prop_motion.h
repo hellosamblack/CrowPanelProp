@@ -66,8 +66,10 @@ bool prop_motion_cfg_set_mode(prop_motion_track_mode_t mode);
 /* Firmware version as a display string (e.g. "V1.02.22062416"); out_len >= 24. */
 bool prop_motion_cfg_get_fw_version(char *out, size_t out_len);
 
-/* The module's 3-byte MAC address (its onboard Bluetooth radio's MAC). */
-bool prop_motion_cfg_get_mac(uint8_t mac_out[3]);
+/* The module's 6-byte MAC address (its onboard Bluetooth radio's MAC).
+ * While Bluetooth is off the module reports the fixed placeholder
+ * 08:05:04:03:02:01 instead of its real MAC. */
+bool prop_motion_cfg_get_mac(uint8_t mac_out[6]);
 
 /* Bluetooth on/off. Write-only -- the protocol has no BT-status query
  * command, so there is no prop_motion_cfg_get_bt(). On by default from the

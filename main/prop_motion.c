@@ -301,15 +301,19 @@ bool prop_motion_cfg_get_fw_version(char *out, size_t out_len)
     return ok;
 }
 
-bool prop_motion_cfg_get_mac(uint8_t mac_out[3])
+bool prop_motion_cfg_get_mac(uint8_t mac_out[6])
 {
     if (!mac_out) return false;
     if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
-    uint8_t resp[6]; uint16_t resp_len = 0;   /* fixed type(1) + MAC(3) = 4 */
-    /* MAC bytes are BIG-endian -- the one field in this protocol that isn't LE. */
+    uint8_t resp[8]; uint16_t resp_len = 0;
+    /* The protocol PDF (V1.03) documents a type byte + 3-byte MAC, but real
+     * fw V2.04 hardware returns a plain 6-byte MAC, big-endian, no prefix
+     * (verified on the bench: raw ACK payload len=6). With Bluetooth off the
+     * module reports the placeholder 08:05:04:03:02:01 instead of its real
+     * MAC — same behavior ESPHome documents for the LD2410 sibling. */
     bool ok = ld2450_cfg_cmd(0x00A5, (const uint8_t[]){0x01, 0x00}, 2, resp, sizeof(resp), &resp_len, 300)
-              && resp_len >= 4;
-    if (ok) memcpy(mac_out, resp + 1, 3);
+              && resp_len >= 6;
+    if (ok) memcpy(mac_out, resp, 6);
     ld2450_cfg_cmd(0x00FE, NULL, 0, NULL, 0, NULL, 300);
     return ok;
 }
