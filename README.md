@@ -10,8 +10,8 @@ Forked from `example/V1.0/idf-code/Lesson09-LVGL_Lighting_Control`.
 
 | Module | Role |
 |--------|------|
-| `peripheral/bsp_display`, `bsp_illuminate`, `bsp_i2c` | Display + touch + backlight bring-up (reused from Lesson09) |
-| `peripheral/bsp_io` | Discrete on/off LEDs + debounced buttons (`espressif/button`) |
+| `components/bsp_display`, `bsp_illuminate`, `bsp_i2c` | Display + touch + backlight bring-up (reused from Lesson09) |
+| `components/bsp_io` | Discrete on/off LEDs + debounced buttons (`espressif/button`) |
 | `main/prop_engine` | **The brain.** Scene state machine + 10 Hz animation task; single source of truth, fans state out to observers |
 | `main/prop_net` | WiFi **AP+STA** via the onboard ESP32-C6 (`esp_hosted`); STA credentials in NVS |
 | `main/prop_api` | HTTP server: operator web console, REST `/cmd`, WebSocket `/ws`, OTA `/ota` |
@@ -108,7 +108,7 @@ Change `PROP_OTA_TOKEN` in [main/include/prop_api.h](main/include/prop_api.h) an
 
 ## Wiring — IMPORTANT
 
-GPIO assignments are placeholders in [peripheral/bsp_io/bsp_io.c](peripheral/bsp_io/bsp_io.c). Only **GPIO48**
+GPIO assignments are placeholders in [components/bsp_io/bsp_io.c](components/bsp_io/bsp_io.c). Only **GPIO48**
 (the UART1-RX header pin) is confirmed broken-out and free. **Verify every other pin against the V1.0
 schematic in `Eagle_SCH&PCB/1.0/` and the connector silkscreen before wiring.** Defaults used:
 

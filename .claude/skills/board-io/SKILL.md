@@ -12,7 +12,7 @@ description: >
 
 # CrowPanel ESP32-P4 7" — IO Map & Pin Advisor
 
-Source of truth: full netlist analysis of `reference/schematic/ESP32-P4 Display 7.0 inch V1.0.net`
+Source of truth: full netlist analysis of `docs/hardware/schematic/ESP32-P4 Display 7.0 inch V1.0.net`
 plus firmware scan. GPIO numbers confirmed against firmware source.
 
 **Live pin registry:** `docs/gpio_registry.yml` — read this first, update it when you assign a pin.

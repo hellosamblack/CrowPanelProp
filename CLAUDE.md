@@ -15,15 +15,23 @@ This repo left the Elecrow fork network; the original vendor material (hardware 
 stock examples, factory firmware) now lives in the **`reference/` submodule** instead of being
 tracked inline — that kept the git tree small enough for the LVGL online viewer (see `ui/` below).
 
-- **root** — the ESP-IDF app (`main/`, `peripheral/`, `CMakeLists.txt`, `sdkconfig`, …). This is
-  the build. Was previously `firmware/communicator/`.
+- **root** — the ESP-IDF app (`main/`, `components/`, `CMakeLists.txt`, `sdkconfig`, …). This is
+  the build. Was previously `firmware/communicator/`. `components/` holds all local ESP-IDF
+  components (board-support `bsp_*` drivers plus the vendored `mpu6500` driver) — a plain
+  auto-discovered ESP-IDF `components/` dir, no `EXTRA_COMPONENT_DIRS` needed.
 - **`ui/`** — the **LVGL Pro XML project** (`project.xml` + `globals.xml` + `screens/`,
   `components/`). Edited at [viewer.lvgl.io](https://viewer.lvgl.io) / lvgl.io/pro. Load it with the
   folder URL: `…/CrowPanelProp/tree/master/ui` (the viewer reads `project.xml`+`globals.xml` there).
   It mirrors the firmware look (amber palette, Eurostile) but does **not** drive the firmware build —
   it's a design surface. The live firmware UI is still hand-written C in `main/prop_ui.c`.
-- **`resources/`** — source assets (Eurostile `.ttf`s the LVGL fonts are generated from).
-- **`docs/`** — design specs / plans.
+- **`resources/`** — source assets consumed by the build: the Eurostile `.ttf`s the LVGL fonts
+  are generated from. Nothing else lives here (non-build reference material is under `docs/design/`).
+- **`docs/`** — design specs / plans (`docs/superpowers/`), the GPIO registry
+  (`docs/gpio_registry.yml`), plus two consolidated subtrees:
+  - **`docs/hardware/`** — `datasheets/` (vendor component datasheets) and `schematic/` (KiCad
+    board files for this design — not part of the `reference/` submodule).
+  - **`docs/design/`** — UI mockup (`communicator-mockup.html`) + reference screenshots
+    (`screens/`), plus `inspiration/` and `author-notes/` (non-build creative reference material).
 - **`reference/`** — submodule → `Elecrow-RD/CrowPanel-Advanced-7inch-ESP32-P4-HMI-AI-Display-1024x600`.
   Reference-only; not checked out by default. Run `git submodule update --init reference` to get the
   vendor `example/`, `factory_firmware/`, `factory_sourcecode/`, `3D file/`, `Eagle_SCH&PCB/`, `readme.md`.
@@ -220,7 +228,7 @@ Palette + helpers are at the top of `prop_ui.c` (and mirrored in `ui/globals.xml
 | `main/prop_motion.c` | **HLK-LD2450** 24 GHz multi-target mmWave radar (UART2, GPIO53/54, 256000). Cartesian X/Y/speed per target → MOTION SCAN blips. **X/Y/speed are sign-magnitude (bit15=sign, 1=positive), not two's complement** — decode via `ld2450_signmag()`. FOV ±60°. See the `ld2450-sign-magnitude` memory |
 | `main/prop_track.c` | **Dead-reckoning + spatial memory** for the MINIMAP. Step-based PDR: DMP `step_count` × fixed stride (0.75 m) along `track_heading_rad()` (= IMU yaw + NVS `dir_phi`; gyro-only Phase 1, mag-fusion seam for Phase 1.5). Maintains operator world pose, a breadcrumb ring buffer (PSRAM), and radar targets transformed into last-known world marks. Background task → cached state under a mutex; UI reads `prop_track_get_pose/crumbs/marks`. **No magnetometer → heading drifts; "north" is boot-relative.** |
 | `main/prop_aux_radar.c` | Dual auxiliary mmWave presence sensors — Seeed MR24HPC1 (J2) + DFRobot SEN0395 (J10); both query/command-driven (must send init each second / `sensorStart` at boot). OFFLINE/CLEAR/PRESENT → MOTION SCAN status |
-| `peripheral/bsp_*` | display/touch/backlight (bsp_illuminate, bsp_display, bsp_i2c), LEDs+buttons (bsp_io), I2S speaker amp (bsp_audio: I2S1 TX, amp enable IO30 active-low) |
+| `components/bsp_*` | display/touch/backlight (bsp_illuminate, bsp_display, bsp_i2c), LEDs+buttons (bsp_io), I2S speaker amp (bsp_audio: I2S1 TX, amp enable IO30 active-low) |
 
 ### Rail layout (grouped)
 

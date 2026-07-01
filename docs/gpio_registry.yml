@@ -24,7 +24,7 @@ gpios:
     status: shared          # bsp_aio "IO2 HDR"
     function: AIO bench (general digital I/O)
     connector_pin: J7/9
-    file: peripheral/bsp_aio/bsp_aio.c:19
+    file: components/bsp_aio/bsp_aio.c:19
     caps: [lp_gpio, touch_ch1, jtag_tck, gpio_matrix]
     notes: JTAG TCK alternate. LP-capable.
 
@@ -32,7 +32,7 @@ gpios:
     status: shared          # bsp_aio "IO3 HDR"
     function: AIO bench (general digital I/O)
     connector_pin: J7/11
-    file: peripheral/bsp_aio/bsp_aio.c:20
+    file: components/bsp_aio/bsp_aio.c:20
     caps: [lp_gpio, touch_ch2, jtag_tdi, gpio_matrix]
     notes: JTAG TDI alternate. LP-capable.
 
@@ -40,7 +40,7 @@ gpios:
     status: shared          # bsp_aio "IO4 HDR"
     function: AIO bench (general digital I/O)
     connector_pin: J7/13
-    file: peripheral/bsp_aio/bsp_aio.c:21
+    file: components/bsp_aio/bsp_aio.c:21
     caps: [lp_gpio, touch_ch3, jtag_tms, gpio_matrix]
     notes: JTAG TMS alternate. LP-capable.
 
@@ -48,7 +48,7 @@ gpios:
     status: shared          # bsp_aio "IO5 HDR"
     function: AIO bench (general digital I/O)
     connector_pin: J7/15
-    file: peripheral/bsp_aio/bsp_aio.c:22
+    file: components/bsp_aio/bsp_aio.c:22
     caps: [lp_gpio, touch_ch4, jtag_tdo, gpio_matrix]
     notes: JTAG TDO alternate. LP-capable.
 
@@ -56,7 +56,7 @@ gpios:
     status: radio           # bsp_aio "IO6 COMM" — radio SPI MOSI when radio fitted
     function: Radio SPI MOSI / AIO comm socket
     connector_pin: J9/4
-    file: peripheral/bsp_aio/bsp_aio.c:30
+    file: components/bsp_aio/bsp_aio.c:30
     caps: [lp_gpio, touch_ch5, spi2_hold, gpio_matrix]
     notes: J9 SPI2 MOSI. Free when no radio module. LP-capable.
 
@@ -64,7 +64,7 @@ gpios:
     status: radio           # bsp_aio "IO7 COMM" — radio SPI MISO when radio fitted
     function: Radio SPI MISO / AIO comm socket
     connector_pin: J9/3
-    file: peripheral/bsp_aio/bsp_aio.c:31
+    file: components/bsp_aio/bsp_aio.c:31
     caps: [lp_gpio, touch_ch6, spi2_cs, gpio_matrix]
     notes: J9 SPI2 MISO. Free when no radio module. LP-capable.
 
@@ -72,7 +72,7 @@ gpios:
     status: radio           # bsp_aio "IO8 COMM" — radio SPI CLK when radio fitted
     function: Radio SPI CLK / AIO comm socket
     connector_pin: J9/2
-    file: peripheral/bsp_aio/bsp_aio.c:32
+    file: components/bsp_aio/bsp_aio.c:32
     caps: [lp_gpio, touch_ch7, spi2_d, gpio_matrix]
     notes: J9 SPI2 SCK. Free when no radio module. LP-capable.
 
@@ -88,7 +88,7 @@ gpios:
     status: radio           # bsp_aio "IO10 COMM" — radio NSS/CS when radio fitted
     function: Radio NSS/CS / AIO comm socket
     connector_pin: J11/6
-    file: peripheral/bsp_aio/bsp_aio.c:33
+    file: components/bsp_aio/bsp_aio.c:33
     caps: [lp_gpio, touch_ch9, spi2_q, gpio_matrix]
     notes: J11 IO10_W_BUSY header pin. Free when no radio. LP-capable.
 
@@ -96,7 +96,7 @@ gpios:
     status: pending         # BTN_ACTION placeholder — needs schematic verification
     function: Button Action (placeholder)
     connector_pin: ~        # not yet mapped to a header pin
-    file: peripheral/bsp_io/bsp_io.c:27
+    file: components/bsp_io/bsp_io.c:27
     caps: [lp_gpio, touch_ch10, gpio_matrix]
     notes: "bsp_io.c comment: candidate free pin; verify before wiring"
 
@@ -139,7 +139,7 @@ gpios:
     status: pending         # LED_ALERT placeholder — needs verification
     function: LED Alert (placeholder)
     connector_pin: ~
-    file: peripheral/bsp_io/bsp_io.c:19
+    file: components/bsp_io/bsp_io.c:19
     caps: [gpio_matrix]
     notes: "bsp_io.c comment: candidate free pin; verify before wiring"
 
@@ -147,7 +147,7 @@ gpios:
     status: claimed
     function: I2S1 LRCLK — audio output
     connector_pin: ~
-    file: peripheral/bsp_audio/include/bsp_audio.h:18
+    file: components/bsp_audio/include/bsp_audio.h:18
     caps: [gpio_matrix, i2s]
     notes: AUDIO_GPIO_LRCLK
 
@@ -155,7 +155,7 @@ gpios:
     status: claimed
     function: I2S1 BCLK — audio output
     connector_pin: ~
-    file: peripheral/bsp_audio/include/bsp_audio.h:19
+    file: components/bsp_audio/include/bsp_audio.h:19
     caps: [gpio_matrix, i2s]
     notes: AUDIO_GPIO_BCLK
 
@@ -163,7 +163,7 @@ gpios:
     status: claimed
     function: I2S1 SDATA — audio output
     connector_pin: ~
-    file: peripheral/bsp_audio/include/bsp_audio.h:20
+    file: components/bsp_audio/include/bsp_audio.h:20
     caps: [gpio_matrix, i2s]
     notes: AUDIO_GPIO_SDATA
 
@@ -205,7 +205,7 @@ gpios:
     status: claimed         # BTN_MODE reassigned here from GPIO33
     function: Button Mode (BTN_MODE, bsp_io)
     connector_pin: J7/20
-    file: peripheral/bsp_io/bsp_io.c
+    file: components/bsp_io/bsp_io.c
     caps: [gpio_matrix]
     notes: >
       Reassigned from GPIO33 to free UART3 RX. Removed from bsp_aio s_pins[].
@@ -214,7 +214,7 @@ gpios:
     status: claimed
     function: Amp Enable (active-low) — audio output
     connector_pin: ~
-    file: peripheral/bsp_audio/include/bsp_audio.h:21
+    file: components/bsp_audio/include/bsp_audio.h:21
     caps: [gpio_matrix]
     notes: AUDIO_GPIO_CTRL
 
@@ -222,7 +222,7 @@ gpios:
     status: claimed
     function: LCD Backlight PWM (LEDC Timer 0, Channel 0)
     connector_pin: ~
-    file: peripheral/bsp_illuminate/include/bsp_illuminate.h:28
+    file: components/bsp_illuminate/include/bsp_illuminate.h:28
     caps: [gpio_matrix, ledc, pwm]
     notes: LCD_GPIO_BLIGHT
 
@@ -259,7 +259,7 @@ gpios:
     status: claimed
     function: Touch Reset
     connector_pin: ~
-    file: peripheral/bsp_display/include/bsp_display.h:26
+    file: components/bsp_display/include/bsp_display.h:26
     caps: [gpio_matrix]
     notes: Touch_GPIO_RST
 
@@ -267,7 +267,7 @@ gpios:
     status: claimed
     function: Touch Interrupt
     connector_pin: ~
-    file: peripheral/bsp_display/include/bsp_display.h:27
+    file: components/bsp_display/include/bsp_display.h:27
     caps: [gpio_matrix]
     notes: Touch_GPIO_INT
 
@@ -275,7 +275,7 @@ gpios:
     status: claimed
     function: I2C SDA — GT911 touchscreen
     connector_pin: ~
-    file: peripheral/bsp_i2c/include/bsp_i2c.h:18
+    file: components/bsp_i2c/include/bsp_i2c.h:18
     caps: [gpio_matrix, i2c]
     notes: I2C_GPIO_SDA (I2C_NUM_0, bsp_i2c driver)
 
@@ -283,7 +283,7 @@ gpios:
     status: claimed
     function: I2C SCL — GT911 touchscreen
     connector_pin: ~
-    file: peripheral/bsp_i2c/include/bsp_i2c.h:17
+    file: components/bsp_i2c/include/bsp_i2c.h:17
     caps: [gpio_matrix, i2c]
     notes: I2C_GPIO_SCL (I2C_NUM_0, bsp_i2c driver)
 
@@ -311,7 +311,7 @@ gpios:
     status: shared          # bsp_aio "IO49 HDR" — ADC2 ch0
     function: AIO bench (ADC2 ch0 / digital I/O)
     connector_pin: J7/18
-    file: peripheral/bsp_aio/bsp_aio.c:26
+    file: components/bsp_aio/bsp_aio.c:26
     caps: [gpio_matrix, adc2_ch0, acomp_capable]
     notes: ADC2 channel 0. Formula adc_ch = gpio - 49. No LP, no touch.
 
@@ -319,7 +319,7 @@ gpios:
     status: shared          # bsp_aio "IO50 HDR" — ADC2 ch1
     function: AIO bench (ADC2 ch1 / digital I/O)
     connector_pin: J7/16
-    file: peripheral/bsp_aio/bsp_aio.c:27
+    file: components/bsp_aio/bsp_aio.c:27
     caps: [gpio_matrix, adc2_ch1, acomp_capable]
     notes: ADC2 channel 1.
 
@@ -327,7 +327,7 @@ gpios:
     status: shared          # bsp_aio "IO51 HDR" — ADC2 ch2
     function: AIO bench (ADC2 ch2 / digital I/O)
     connector_pin: J7/14
-    file: peripheral/bsp_aio/bsp_aio.c:28
+    file: components/bsp_aio/bsp_aio.c:28
     caps: [gpio_matrix, adc2_ch2, acomp_ref]
     notes: ADC2 ch2. Also Analog Comparator 0 reference input.
 
@@ -335,7 +335,7 @@ gpios:
     status: shared          # bsp_aio "IO52 HDR" — ADC2 ch3
     function: AIO bench (ADC2 ch3 / digital I/O)
     connector_pin: J7/12
-    file: peripheral/bsp_aio/bsp_aio.c:29
+    file: components/bsp_aio/bsp_aio.c:29
     caps: [gpio_matrix, adc2_ch3, acomp_in]
     notes: ADC2 ch3. Also Analog Comparator 0 non-inverting input.
 
@@ -368,7 +368,7 @@ gpios:
     status: pseudo_available
     function: I2C1 SCL (touchscreen bus, 3.3V side)
     connector_pin: J11/2, J13/1
-    file: peripheral/bsp_i2c/include/bsp_i2c.h
+    file: components/bsp_i2c/include/bsp_i2c.h
     caps: [i2c]
     notes: >
       Shared with GT911 touchscreen (addr 0x14/0x5D, always active), STC8
@@ -381,6 +381,6 @@ gpios:
     status: pseudo_available
     function: I2C1 SDA (touchscreen bus, 3.3V side)
     connector_pin: J11/3, J13/2
-    file: peripheral/bsp_i2c/include/bsp_i2c.h
+    file: components/bsp_i2c/include/bsp_i2c.h
     caps: [i2c]
     notes: Same sharing constraints as I2C1 SCL. MPU-6050 also on this bus.

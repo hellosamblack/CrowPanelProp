@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Embed Eurostile-Bold.ttf into design/communicator-mockup.html as a base64 data URI.
+"""Embed Eurostile-Bold.ttf into docs/design/communicator-mockup.html as a base64 data URI.
 
 Makes the mockup fully self-contained (no external font file). Idempotent: re-running
 replaces whatever base64 is currently embedded, so you can edit the HTML freely and
@@ -10,8 +10,8 @@ re-embed after a font change.
 import base64, os, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TTF = os.path.join(HERE, "..", "..", "..", "resources", "Eurostile-Bold.ttf")
-HTML = os.path.join(HERE, "..", "design", "communicator-mockup.html")
+TTF = os.path.join(HERE, "..", "resources", "Eurostile-Bold.ttf")
+HTML = os.path.join(HERE, "..", "docs", "design", "communicator-mockup.html")
 
 b64 = base64.b64encode(open(TTF, "rb").read()).decode("ascii")
 src = open(HTML, encoding="utf-8").read()
