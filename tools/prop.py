@@ -17,6 +17,8 @@ Examples:
     python prop.py shot out.png --screen spectrum --wait   # drive + settle + capture
     python prop.py shot corner.png --crop 764,8,260,90 --zoom 3
     python prop.py trace --seconds 12            # capture serial, decode any panic/WDT
+    python prop.py trace --seconds 18 --trials 8  # repeat reboot+capture to catch an
+                                                   #   intermittent boot-time panic
     python prop.py logtail --logfile crash.log   # persistent capture: survives reconnects,
                                                    #   catches an unattended crash whenever it happens
     python prop.py decode 0x40034286 0x40034206  # addr2line against the ELF
@@ -217,15 +219,11 @@ _FLAG_RE = re.compile(r"mempool|no mem|assert failed|Guru Meditation|abort|"
                       re.IGNORECASE)
 
 
-def trace(port, seconds):
-    """Capture serial (opening the port resets the board -> fresh boot), print
-    flagged lines, and addr2line-decode any code addresses in panic/WDT dumps."""
-    try:
-        import serial  # pyserial
-    except ImportError:
-        raise SystemExit("pyserial not installed (pip install pyserial)")
+def _trace_once(port, seconds):
+    """One capture pass; returns (flagged_lines, addrs) without printing a summary.
+    Opening the port resets the board (fresh boot each call)."""
+    import serial  # pyserial
     s = serial.Serial(port, 115200, timeout=0.3)
-    print(f"[trace] capturing {seconds}s on {port} (board reset on open)...")
     end = time.time() + seconds
     flagged, addrs = [], []
     while time.time() < end:
@@ -234,16 +232,44 @@ def trace(port, seconds):
             continue
         if _FLAG_RE.search(line):
             flagged.append(line)
-            print("  !!", line)
         for m in _ADDR_RE.findall(line):
             if m not in addrs:
                 addrs.append(m)
     s.close()
-    if flagged and addrs:
-        print("\n[trace] decoding code addresses seen during the fault:")
-        decode(addrs[:12])
-    elif not flagged:
-        print("[trace] no panic/WDT/mempool markers seen (clean run?)")
+    return flagged, addrs
+
+
+def trace(port, seconds, trials=1):
+    """Capture serial (opening the port resets the board -> fresh boot), print
+    flagged lines, and addr2line-decode any code addresses in panic/WDT dumps.
+    With trials>1, repeats the reboot+capture cycle to catch an intermittent
+    boot-time issue that doesn't reproduce on every boot."""
+    try:
+        import serial  # pyserial, imported here so the error message is clean
+    except ImportError:
+        raise SystemExit("pyserial not installed (pip install pyserial)")
+    all_addrs, clean, dirty = [], 0, 0
+    for i in range(trials):
+        prefix = f"[trace] trial {i + 1}/{trials}" if trials > 1 else "[trace]"
+        print(f"{prefix} capturing {seconds}s on {port} (board reset on open)...")
+        flagged, addrs = _trace_once(port, seconds)
+        for line in flagged:
+            print("  !!", line)
+        for a in addrs:
+            if a not in all_addrs:
+                all_addrs.append(a)
+        if flagged:
+            dirty += 1
+        else:
+            clean += 1
+            print(f"{prefix} no panic/WDT/mempool markers seen (clean run?)")
+        if trials > 1 and i < trials - 1:
+            time.sleep(0.5)
+    if dirty and all_addrs:
+        print("\n[trace] decoding code addresses seen during fault(s):")
+        decode(all_addrs[:12])
+    if trials > 1:
+        print(f"\n[trace] summary: {clean}/{trials} clean, {dirty}/{trials} flagged")
 
 
 def _rotate_if_needed(logfile, max_bytes):
@@ -487,7 +513,9 @@ def main():
         shot(host, out, screen, scene, do_wait,
              tuple(int(v) for v in crop.split(",")) if crop else None, zoom)
     elif cmd == "trace":
-        trace(_pop_opt(rest, "--port") or detect_port(), int(_pop_opt(rest, "--seconds") or 12))
+        trace(_pop_opt(rest, "--port") or detect_port(),
+              int(_pop_opt(rest, "--seconds") or 12),
+              int(_pop_opt(rest, "--trials") or 1))
     elif cmd == "logtail":
         port = _pop_opt(rest, "--port") or detect_port()
         logfile = _pop_opt(rest, "--logfile") or "prop_trace.log"
