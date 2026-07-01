@@ -146,12 +146,12 @@ void app_main(void)
     prop_bootlog_mark(BOOT_STAGE_MOTION);
     esp_err_t motion_err = prop_motion_init();
     if (motion_err != ESP_OK) {
-        MAIN_ERROR("motion radar unavailable (%s) — MOTION SCAN will show offline",
+        MAIN_ERROR("motion radar unavailable (%s) — SCANNER will show offline",
                    esp_err_to_name(motion_err));
     }
 
     /* MPU-6500 IMU with DMP on the shared I2C_NUM_0 bus (GPIO45/46, addr 0x68).
-     * NON-fatal: absent if the module is not wired; VITALS/MOTION SCAN show "-- °". */
+     * NON-fatal: absent if the module is not wired; VITALS/SCANNER show "-- °". */
     prop_bootlog_mark(BOOT_STAGE_IMU);
     esp_err_t imu_err = prop_imu_init();
     if (imu_err != ESP_OK) {
@@ -169,7 +169,7 @@ void app_main(void)
                    esp_err_to_name(track_err));
     }
 
-    /* Seeed 24 GHz (UART3, GPIO33/34) + SEN0395 (UART1, GPIO25/27). NON-fatal. */
+    /* Seeed 24 GHz (UART3, GPIO47/48, J2) + SEN0395 (UART1, GPIO34/33, J10). NON-fatal. */
     prop_bootlog_mark(BOOT_STAGE_AUX_RADAR);
     esp_err_t aux_err = prop_aux_radar_init();
     if (aux_err != ESP_OK) {

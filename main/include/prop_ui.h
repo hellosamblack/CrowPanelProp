@@ -17,7 +17,9 @@ esp_err_t prop_ui_init(void);
 /* Navigate the UI to a named screen (thread-safe; takes the LVGL lock). Used by
  * the API {"cmd":"ui","screen":"..."} for remote testing + screenshots. Names:
  * "home" (console), "scanner", "archive", "cassette", "insights", "menu", "wifi",
- * "display", "audio", "leds", "about", "vitals", "scan", "spectrum". */
+ * "display", "audio", "leds", "about", "vitals", "scan", "spectrum", "rfband",
+ * "ble", "csi", "csicfg", "csiset", "instruments", "sensors", "motion", "dircal",
+ * "minimap", "range", "io", "io<N>". */
 void prop_ui_goto(const char *screen);
 
 /* Physical-control input, decoupled from hardware (web portal drives it now; the

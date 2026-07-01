@@ -1,8 +1,8 @@
 /* prop_aux_radar — optional auxiliary radar sensors.
  *
  * Drives two plug-in 24 GHz mmWave sensors over dedicated UARTs:
- *   Sensor A: Seeed 101991030 (UART3, GPIO33/34, J10) — HiLink binary protocol
- *   Sensor B: DFRobot SEN0395 (UART1, GPIO25/27, J7)  — ASCII $JYBSS protocol
+ *   Sensor A: Seeed 101991030 (UART3, GPIO47/48, J2)  — HiLink binary protocol
+ *   Sensor B: DFRobot SEN0395 (UART1, GPIO34/33, J10) — ASCII $JYBSS protocol
  *
  * Both sensors are optional.  If a sensor is not plugged in, or does not
  * deliver a valid frame within 5 s of init, its state stays AUX_OFFLINE.

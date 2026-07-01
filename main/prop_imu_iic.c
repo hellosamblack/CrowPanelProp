@@ -1,8 +1,8 @@
-/* prop_imu_iic — LibDriver mpu6050 link layer over the shared bsp_i2c bus.
+/* prop_imu_iic — LibDriver mpu6500 link layer over the shared bsp_i2c bus.
  *
- * Single device (MPU-6050 @ 0x68 / AD0 low). The `addr` argument LibDriver
+ * Single device (MPU-6500 @ 0x68 / AD0 low). The `addr` argument LibDriver
  * passes is ignored — bsp_i2c works on the registered device handle. The
- * MPU-6050 shares the bus with the GT911 touch controller (addr 0x14/0x5D)
+ * MPU-6500 shares the bus with the GT911 touch controller (addr 0x14/0x5D)
  * with no conflict.
  */
 #include "prop_imu_iic.h"

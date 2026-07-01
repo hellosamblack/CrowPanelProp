@@ -10,7 +10,8 @@
  * so LEDs and the screen never drift out of sync.
  *
  * Observers (prop_ui, prop_api) register a callback and receive a snapshot of the
- * state whenever it changes. Callbacks run in the engine task context; keep them
+ * state whenever it changes. Callbacks run in whichever task mutated the state
+ * (anim task, httpd task, WiFi event task — NOT one fixed context); keep them
  * quick and re-entrant (the UI marshals onto the LVGL task; the API broadcasts).
  */
 

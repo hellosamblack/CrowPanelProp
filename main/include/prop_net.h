@@ -3,10 +3,12 @@
 
 /* prop_net — WiFi in AP+STA mode via the onboard ESP32-C6 (esp_hosted).
  *
- * Always brings up our own hotspot (so an operator laptop can reach the prop on
- * set with zero infrastructure) AND tries to join a known upstream network. STA
- * credentials are stored in NVS so they can be changed at runtime (from the API)
- * without recompiling. Connection state is pushed to prop_engine as the LINK_*
+ * STA joins a known upstream network; our own hotspot is DEFERRED ~60 s (held
+ * back to give the C6 radio time to complete the STA join) and comes up only
+ * if STA hasn't connected or there are no saved creds — so an operator laptop
+ * can still reach the prop on set with zero infrastructure. STA credentials
+ * are stored in NVS so they can be changed at runtime (from the API) without
+ * recompiling. Connection state is pushed to prop_engine as the LINK_*
  * indicator.
  *
  * Forked from example/V1.0/idf-code/Lesson17-Wi-Fi_function/ESP32_P4-softap_sta.
@@ -112,7 +114,8 @@ prop_sta_state_t prop_net_sta_state(void);
 void prop_net_get_ip(char *out, size_t out_len);
 
 /* Current STA signal strength in dBm (negative; closer to 0 = stronger), or 0 if
- * not connected / unavailable. Crosses the SDIO bus to the C6 — call sparingly. */
+ * not connected / unavailable. Served from a cache refreshed ~1 Hz by an
+ * internal task — cheap to call from anywhere (incl. under the LVGL lock). */
 int prop_net_get_rssi(void);
 
 #endif /* _PROP_NET_H_ */

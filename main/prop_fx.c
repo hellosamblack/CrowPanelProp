@@ -15,8 +15,8 @@
  *     invalidates only its own bounded stripe (old ∪ new ≈ 82 px tall), not the
  *     whole screen. Do NOT widen it to full height or speed it up much.
  *
- * NB: /screenshot captures the active screen only, NOT this top-layer overlay —
- * judge these effects on the physical panel.
+ * NB: /screenshot reads the DPI framebuffer directly, so it DOES capture this
+ * top-layer overlay (see prop_api.c) — captures are good enough to judge it.
  */
 #include "prop_fx.h"
 #include "prop_settings.h"
@@ -352,8 +352,8 @@ uint8_t prop_fx_refresh(void) { return s_refresh_pct; }
  * it and then animates away to reveal the new screen. One object, deleted by the
  * anim ready-cb (plus cleared on the next play), so it can never get stuck.
  *
- * Deliberately on the ACTIVE screen (a normal top-most child), NOT lv_layer_top:
- * that keeps it captured by /screenshot, so a post-settle capture proves it cleared.
+ * On the ACTIVE screen (a normal top-most child), NOT lv_layer_top, so panel
+ * teardown can never leave it orphaned above an unrelated screen.
  *
  * Flavors (NVS "fx_trans"): 0 off, 1 snow, 2 roll-up, 3 collapse, 4 snow+collapse. */
 #define TR_NW 160

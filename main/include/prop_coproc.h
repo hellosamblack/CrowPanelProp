@@ -3,9 +3,9 @@
  *
  * The C6 slave runs Wi-Fi CSI capture locally (where CSI works natively, unlike
  * over the hosted RPC layer) and ships results north over esp-hosted custom RPC.
- * This module registers the host-side receive callbacks. SPIKE stage: it only
- * receives a 1 Hz CSI capture-stats heartbeat to validate the channel and gauge
- * C6 headroom; later it feeds a real motion digest into prop_csi.
+ * This module registers the host-side receive callbacks, pushes the persisted
+ * CSI config to the slave (CSI_CTRL), receives the 1 Hz capture-stats heartbeat
+ * + motion digest that feeds prop_csi, and runs the FTM request/result RPC.
  *
  * The wire structs/IDs below MUST stay byte-identical to the slave's
  * c6_slave/slave/main/prop_csi_slave.h (both ends are little-endian RISC-V).
@@ -23,7 +23,7 @@ extern "C" {
 
 /* Keep in sync with c6_slave/slave/main/prop_csi_slave.h */
 #define PROP_MSG_ID_CSI_STATS  0x43534931u  /* 'CSI1' slave -> host: capture stats */
-#define PROP_MSG_ID_CSI_CTRL   0x43534943u  /* 'CSIC' host -> slave: control (unused in spike) */
+#define PROP_MSG_ID_CSI_CTRL   0x43534943u  /* 'CSIC' host -> slave: config/control push */
 
 /* Keep in sync with c6_slave/slave/main/prop_ftm_slave.h */
 #define PROP_MSG_ID_FTM_REQ    0x46544d52u  /* 'FTMR' host -> slave: initiate one FTM session */

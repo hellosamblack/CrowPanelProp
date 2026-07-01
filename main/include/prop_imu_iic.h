@@ -3,9 +3,9 @@
 
 #include <stdint.h>
 
-/* LibDriver mpu6050 link functions bridging the eMD core to the shared bsp_i2c
- * bus. Attach these to the handle via the DRIVER_MPU6050_LINK_* macros.
- * Single device (MPU-6050 @ 0x68); the `addr` argument from LibDriver is ignored
+/* LibDriver mpu6500 link functions bridging the eMD core to the shared bsp_i2c
+ * bus. Attach these to the handle via the DRIVER_MPU6500_LINK_* macros.
+ * Single device (MPU-6500 @ 0x68); the `addr` argument from LibDriver is ignored
  * because bsp_i2c addresses the registered device handle directly.
  * All return 0 on success, 1 on failure (LibDriver convention). */
 uint8_t prop_imu_iic_init(void);

@@ -6,7 +6,7 @@
  * The installed IMU is an MPU-6500 (WHO_AM_I 0x70), not an MPU-6050. The DMP
  * on-chip processor produces a fused 6-axis quaternion + YPR + raw accel +
  * calibrated gyro via FIFO, plus tap gestures, a pedometer, and on-chip gyro
- * auto-calibration. The driver polls the FIFO every 20 ms and caches the result
+ * auto-calibration. The driver polls the FIFO every 40 ms and caches the result
  * under a mutex. Wraps the vendored LibDriver mpu6500 eMD core in
  * components/mpu6500. (Was a MotionApps 2.0 / MPU-6050 port.)
  *
@@ -14,7 +14,7 @@
  * prop_imu_available() stays false and callers get zero / false — the prop
  * never hangs.
  *
- * I2C bus: shared bsp_i2c bus (I2C_NUM_0, GPIO45/46). MPU-6050 addr 0x68
+ * I2C bus: shared bsp_i2c bus (I2C_NUM_0, GPIO45/46). MPU-6500 addr 0x68
  * does not conflict with the GT911 touch controller (addr 0x14/0x5D).
  * Config:  accel ±2g (16384 LSB/g), gyro ±2000 dps (16.4 LSB/dps).
  */
@@ -35,7 +35,7 @@ typedef struct {
     bool    online;                 /* true when sensor was found at init */
 } prop_imu_data_t;
 
-/* Tap gesture (eMD). `direction` is mpu6050_dmp_tap_t: 1..6 = X/Y/Z up/down. */
+/* Tap gesture (eMD). `direction` is mpu6500_dmp_tap_t: 1..6 = X/Y/Z up/down. */
 typedef struct {
     uint8_t count;
     uint8_t direction;
@@ -49,7 +49,7 @@ typedef enum {
     PROP_IMU_EVT_FREEFALL,
 } prop_imu_event_t;
 
-/* Bring up the MPU-6050 DMP and start the background FIFO reader task.
+/* Bring up the MPU-6500 DMP and start the background FIFO reader task.
  * Returns ESP_ERR_NOT_FOUND if the device doesn't ACK (sensor not wired).
  * Non-fatal: prop_imu_available() stays false. */
 esp_err_t prop_imu_init(void);

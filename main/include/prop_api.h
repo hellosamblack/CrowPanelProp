@@ -4,11 +4,14 @@
 /* prop_api — live control surface over WiFi (the rapid-prototyping core).
  *
  * Starts an HTTP server exposing:
- *   GET  /        -> operator "cue board" web console (single HTML page)
- *   GET  /state   -> current prop state as JSON
- *   POST /cmd     -> one JSON command (REST/curl-friendly)
- *   WS   /ws      -> bidirectional JSON: push commands, receive state broadcasts
- *   POST /ota     -> stream a new firmware .bin to the inactive OTA slot, reboot
+ *   GET  /           -> operator "cue board" web console (single HTML page)
+ *   GET  /state      -> current prop state as JSON
+ *   GET  /telemetry  -> live sensor/instrument snapshot as JSON
+ *   GET  /screenshot -> raw RGB565 framebuffer grab (whole panel)
+ *   GET  /ld2450     -> LD2450 radar config read (live UART queries)
+ *   POST /cmd        -> one JSON command (REST/curl-friendly)
+ *   WS   /ws         -> bidirectional JSON: push commands, receive state + telemetry
+ *   POST /ota        -> stream a new firmware .bin to the inactive OTA slot, reboot
  *
  * Command schema (same for /cmd and /ws):
  *   {"cmd":"scene","value":"SCANNING"}
