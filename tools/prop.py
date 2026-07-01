@@ -523,6 +523,30 @@ def main():
         logtail(port, logfile, max_bytes=int(max_mb * 1024 * 1024))
     elif cmd == "decode":
         decode(rest)
+    elif cmd == "ld2450":
+        action = rest[0] if rest else "get"
+        if action == "get":
+            with urllib.request.urlopen(f"http://{host}/ld2450", timeout=8) as r:
+                print(json.dumps(json.loads(r.read().decode()), indent=2))
+        elif action == "set_bt":
+            print(_post_cmd(host, {"cmd": "ld2450", "action": "set_bt", "on": rest[1] == "on"}))
+        elif action == "set_mode":
+            print(_post_cmd(host, {"cmd": "ld2450", "action": "set_mode", "value": rest[1]}))
+        elif action == "restart":
+            print(_post_cmd(host, {"cmd": "ld2450", "action": "restart"}))
+        elif action == "factory_reset":
+            print(_post_cmd(host, {"cmd": "ld2450", "action": "factory_reset"}))
+        elif action == "set_baud":
+            # can take up to ~11s worst case (restart + resync, with fallback)
+            # -- use a longer client timeout than _post_cmd's default 8s.
+            body = json.dumps({"cmd": "ld2450", "action": "set_baud", "value": int(rest[1])}).encode()
+            req = urllib.request.Request(f"http://{host}/cmd", data=body,
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                print(r.read().decode())
+        else:
+            print(f"unknown ld2450 action: {action}")
+            sys.exit(2)
     else:
         print(__doc__)
         sys.exit(2)

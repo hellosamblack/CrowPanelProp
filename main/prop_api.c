@@ -305,6 +305,35 @@ static esp_err_t dispatch_command(const char *json, int len)
                                                    cJSON_IsString(pass) ? pass->valuestring : "",
                                                    rem);
             }
+        } else if (strcmp(c, "ld2450") == 0) {
+            /* {"cmd":"ld2450","action":"set_bt","on":true|false}
+             * {"cmd":"ld2450","action":"set_mode","value":"single"|"multi"}
+             * {"cmd":"ld2450","action":"restart"}
+             * {"cmd":"ld2450","action":"factory_reset"}
+             * {"cmd":"ld2450","action":"set_baud","value":115200}   -- HIGH RISK, see prop_motion.h
+             * set_zone is intentionally not exposed here -- its 3-zone payload
+             * is more naturally a raw JSON body; call prop_motion_cfg_set_zone()
+             * directly from C if a scripted zone workflow is ever needed. */
+            const cJSON *action = cJSON_GetObjectItem(root, "action");
+            if (cJSON_IsString(action)) {
+                const char *a = action->valuestring;
+                if (strcmp(a, "set_bt") == 0) {
+                    const cJSON *on = cJSON_GetObjectItem(root, "on");
+                    if (cJSON_IsBool(on)) err = prop_motion_cfg_set_bt(cJSON_IsTrue(on)) ? ESP_OK : ESP_FAIL;
+                } else if (strcmp(a, "set_mode") == 0 && cJSON_IsString(value)) {
+                    prop_motion_track_mode_t m =
+                        (strcasecmp(value->valuestring, "single") == 0) ? PROP_MOTION_TRACK_SINGLE :
+                        (strcasecmp(value->valuestring, "multi")  == 0) ? PROP_MOTION_TRACK_MULTI  :
+                                                                          (prop_motion_track_mode_t)0;
+                    err = (m != 0 && prop_motion_cfg_set_mode(m)) ? ESP_OK : ESP_FAIL;
+                } else if (strcmp(a, "restart") == 0) {
+                    err = prop_motion_cfg_restart() ? ESP_OK : ESP_FAIL;
+                } else if (strcmp(a, "factory_reset") == 0) {
+                    err = prop_motion_cfg_factory_reset() ? ESP_OK : ESP_FAIL;
+                } else if (strcmp(a, "set_baud") == 0 && cJSON_IsNumber(value)) {
+                    err = prop_motion_cfg_set_baud((uint32_t)value->valueint) ? ESP_OK : ESP_FAIL;
+                }
+            }
         } else if (strcmp(c, "io") == 0) {
             /* I/O bench control for headless testing/screenshots:
              * {"cmd":"io","gpio":N,"mode":"di|do|ai|ao","value":M}
@@ -486,6 +515,71 @@ static esp_err_t state_get_handler(httpd_req_t *req)
 static esp_err_t telemetry_get_handler(httpd_req_t *req)
 {
     char *json = telemetry_to_json();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_sendstr(req, json ? json : "{}");
+    free(json);
+    return ESP_OK;
+}
+
+/* GET /ld2450 -- aggregate live read of the LD2450 config-command protocol.
+ * Each field is its own blocking UART query (~100-300ms); this handler may
+ * take up to ~1s total. Diagnostic/admin endpoint, not a hot path. */
+static char *ld2450_to_json(void)
+{
+    cJSON *root = cJSON_CreateObject();
+
+    prop_motion_track_mode_t mode;
+    if (prop_motion_cfg_get_mode(&mode))
+        cJSON_AddStringToObject(root, "track_mode", mode == PROP_MOTION_TRACK_SINGLE ? "single" : "multi");
+    else
+        cJSON_AddNullToObject(root, "track_mode");
+
+    char fw[24];
+    cJSON_AddStringToObject(root, "fw_version", prop_motion_cfg_get_fw_version(fw, sizeof(fw)) ? fw : "unknown");
+
+    uint8_t mac[6];
+    if (prop_motion_cfg_get_mac(mac)) {
+        /* 08:05:04:03:02:01 is the module's BT-off placeholder, not a real MAC. */
+        char macbuf[18];
+        snprintf(macbuf, sizeof(macbuf), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        cJSON_AddStringToObject(root, "mac", macbuf);
+    } else {
+        cJSON_AddNullToObject(root, "mac");
+    }
+
+    prop_motion_zone_mode_t zmode;
+    prop_motion_zone_t zones[3];
+    if (prop_motion_cfg_get_zone(&zmode, zones)) {
+        cJSON *z = cJSON_AddObjectToObject(root, "zone");
+        cJSON_AddStringToObject(z, "mode", zmode == PROP_MOTION_ZONE_OFF ? "off" :
+                                            zmode == PROP_MOTION_ZONE_INCLUDE ? "include" : "exclude");
+        cJSON *arr = cJSON_AddArrayToObject(z, "zones");
+        for (int i = 0; i < 3; i++) {
+            cJSON *zi = cJSON_CreateObject();
+            cJSON_AddNumberToObject(zi, "x1_mm", zones[i].x1_mm);
+            cJSON_AddNumberToObject(zi, "y1_mm", zones[i].y1_mm);
+            cJSON_AddNumberToObject(zi, "x2_mm", zones[i].x2_mm);
+            cJSON_AddNumberToObject(zi, "y2_mm", zones[i].y2_mm);
+            cJSON_AddItemToArray(arr, zi);
+        }
+    } else {
+        cJSON_AddNullToObject(root, "zone");
+    }
+
+    /* No BT-status query command exists in the protocol -- write-only via
+     * set_bt. This field is informational, not a live read. */
+    cJSON_AddStringToObject(root, "bt", "write-only (no status query in the protocol; use set_bt)");
+
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    return out;
+}
+
+static esp_err_t ld2450_get_handler(httpd_req_t *req)
+{
+    char *json = ld2450_to_json();
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_sendstr(req, json ? json : "{}");
@@ -746,6 +840,7 @@ esp_err_t prop_api_init(void)
     httpd_uri_t ota  = { .uri = "/ota",  .method = HTTP_POST, .handler = ota_post_handler };
     httpd_uri_t ws   = { .uri = "/ws",   .method = HTTP_GET,  .handler = ws_handler, .is_websocket = true };
     httpd_uri_t shot = { .uri = "/screenshot", .method = HTTP_GET, .handler = screenshot_get_handler };
+    httpd_uri_t ld   = { .uri = "/ld2450", .method = HTTP_GET, .handler = ld2450_get_handler };
     httpd_register_uri_handler(s_server, &root);
     httpd_register_uri_handler(s_server, &st);
     httpd_register_uri_handler(s_server, &tel);
@@ -753,9 +848,10 @@ esp_err_t prop_api_init(void)
     httpd_register_uri_handler(s_server, &ota);
     httpd_register_uri_handler(s_server, &ws);
     httpd_register_uri_handler(s_server, &shot);
+    httpd_register_uri_handler(s_server, &ld);
 
     prop_engine_add_observer(broadcast_observer, NULL);
     xTaskCreate(telemetry_task, "prop_telemetry", 4096, NULL, 4, NULL);
-    ESP_LOGI(API_TAG, "HTTP API up (/, /state, /telemetry, /cmd, /ws, /ota, /screenshot)");
+    ESP_LOGI(API_TAG, "HTTP API up (/, /state, /telemetry, /cmd, /ws, /ota, /screenshot, /ld2450)");
     return ESP_OK;
 }
