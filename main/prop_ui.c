@@ -257,7 +257,6 @@ static int   s_motion_dwell;        /* ticks the candidate has persisted */
 static float s_motion_ppm_from;     /* slide start ppm */
 static float s_motion_ppm_to;       /* slide target ppm */
 static int   s_motion_anim_ms;      /* slide elapsed ms; -1 = idle */
-static lv_obj_t *s_motion_grid_minor[2];  /* 0.5 m / 1.5 m rings, shown when scale <= 2 m */
 /* Comet trails: per-target ring buffer of recent world samples (mm), re-projected
  * each frame so the tail rescales with autorange. */
 #define TRAIL_LEN 8
@@ -364,9 +363,7 @@ static lv_obj_t *s_cfg_phase;    /* big calibration phase / countdown */
 static lv_obj_t *s_cfg_btn_lbl;  /* CALIBRATE / CANCEL button label */
 
 /* CSI SETTINGS editor (PK_CSISET): paginated, button-row controls. */
-#define MAX_CSI_SET 24
 #define CSISET_PER_PAGE 3
-static lv_obj_t *s_set_vallbl[MAX_CSI_SET];
 static lv_obj_t *s_set_content;   /* container holding the current page's rows */
 static lv_obj_t *s_set_pagelbl;   /* "page x/N" */
 static int       s_set_page;
@@ -441,8 +438,7 @@ static void set_rail_highlight(void);   /* persistent rail; defined with the rai
  * the scanner demoted to one entry among the instruments. */
 /* Icon ids for the persistent rail glyphs (drawn from primitives, no font assets). */
 typedef enum {
-    IC_HOME, IC_ARCHIVE, IC_SCANNER, IC_VITALS, IC_SIGNAL,
-    IC_SPECTRUM, IC_RFBAND, IC_CONTACTS, IC_SIGENV,
+    IC_HOME, IC_ARCHIVE,
     IC_INSTRUMENTS, IC_SENSORS,
     IC_CASSETTE, IC_INSIGHTS, IC_SETUP,
 } icon_id_t;
@@ -520,7 +516,6 @@ static void close_panel(void)
     s_cfg_btn_lbl = NULL;
     s_set_content = NULL;
     s_set_pagelbl = NULL;
-    for (int i = 0; i < MAX_CSI_SET; i++) s_set_vallbl[i] = NULL;
     for (int i = 0; i < PROP_CSI_BINS; i++) s_csi_bars[i] = NULL;
     s_home_clock = NULL; s_home_temp = NULL; s_home_link = NULL;
     /* s_rail_btns are the persistent rail cells on the real screen - NOT children
@@ -558,7 +553,6 @@ static void close_panel(void)
     for (int i = 0; i < 4; i++) s_motion_dir_q[i] = NULL;
     s_motion_dir_dot = NULL;
     for (int i = 0; i < 6; i++) { s_motion_grid_arc[i] = NULL; s_motion_grid_lbl[i] = NULL; }
-    for (int i = 0; i < 2; i++) s_motion_grid_minor[i] = NULL;
     for (int i = 0; i < 3; i++) {
         s_trail_n[i] = 0; s_trail_head[i] = 0;
         for (int k = 0; k < TRAIL_LEN; k++) s_motion_trail[i][k] = NULL;
@@ -2182,7 +2176,6 @@ static void render_csiset_page(void)
 {
     if (!s_set_content) { return; }
     lv_obj_clean(s_set_content);
-    for (int i = 0; i < MAX_CSI_SET; i++) { s_set_vallbl[i] = NULL; }
 
     int n = prop_coproc_csi_count();
     int pages = (n + CSISET_PER_PAGE - 1) / CSISET_PER_PAGE;
@@ -2211,7 +2204,6 @@ static void render_csiset_page(void)
         if (type == 'T' && prop_calib_auto()) { snprintf(vb, sizeof(vb), "AUTO"); }
         lv_label_set_text(vlbl, vb);
         lv_obj_set_style_text_color(vlbl, COL_MUTE, 0);
-        s_set_vallbl[i] = vlbl;
 
         /* control row */
         lv_obj_t *ctl = lv_obj_create(card);
@@ -2306,12 +2298,7 @@ static lv_obj_t *build_csiset_panel(lv_obj_t *parent)
 
 /* lv_line keeps a pointer to its points (no copy) - each polyline needs a live
  * buffer. The rail is built once, so one buffer per glyph is enough. */
-static lv_point_precise_t s_ic_scan[9];
-static lv_point_precise_t s_ic_vit[6];
-static lv_point_precise_t s_ic_sig[3][3];
 static lv_point_precise_t s_ic_ins[2][2];
-static lv_point_precise_t s_ic_ble[6];
-static lv_point_precise_t s_ic_csi[3][8];
 static lv_point_precise_t s_ic_instr[2];
 static lv_point_precise_t s_ic_sens[3][3];
 
@@ -2353,57 +2340,6 @@ static void draw_icon(lv_obj_t *cell, icon_id_t id, lv_color_t col)
         ic_box(cell, 24, 31, 28, 5, col, true, false);
         ic_box(cell, 24, 40, 28, 5, col, true, false);
         break;
-    case IC_SCANNER: {                               /* sine sweep */
-        int xs[9] = {22,26,30,34,38,42,46,50,54};
-        int ys[9] = {33,26,33,40,33,26,33,40,33};
-        for (int k = 0; k < 9; k++) { s_ic_scan[k].x = xs[k]; s_ic_scan[k].y = ys[k]; }
-        ic_poly(cell, s_ic_scan, 9, col);
-        break; }
-    case IC_VITALS: {                                /* heartbeat trace */
-        int xs[6] = {20,30,34,40,46,56};
-        int ys[6] = {33,33,22,44,33,33};
-        for (int k = 0; k < 6; k++) { s_ic_vit[k].x = xs[k]; s_ic_vit[k].y = ys[k]; }
-        ic_poly(cell, s_ic_vit, 6, col);
-        break; }
-    case IC_SIGNAL: {                                /* radiating chevrons + source dot */
-        int rx[3] = {8,14,20};
-        for (int c = 0; c < 3; c++) {
-            int r = rx[c];
-            s_ic_sig[c][0].x = 38 - r; s_ic_sig[c][0].y = 44 + (3 - c) * 0;
-            s_ic_sig[c][1].x = 38;     s_ic_sig[c][1].y = 44 - r;
-            s_ic_sig[c][2].x = 38 + r; s_ic_sig[c][2].y = 44;
-            s_ic_sig[c][0].y = 44; s_ic_sig[c][2].y = 44;
-            ic_poly(cell, s_ic_sig[c], 3, col);
-        }
-        ic_box(cell, 35, 46, 6, 6, col, true, true);
-        break; }
-    case IC_SPECTRUM: {                              /* bar analyzer */
-        int xs[4] = {22,32,42,52};
-        int hs[4] = {14,26,18,28};
-        for (int k = 0; k < 4; k++) ic_box(cell, xs[k], 48 - hs[k], 6, hs[k], col, true, false);
-        break; }
-    case IC_RFBAND: {                                /* channel-occupancy bars on a baseline */
-        int xs[5] = {21,29,37,45,53};
-        int hs[5] = {12,24,16,28,14};
-        for (int k = 0; k < 5; k++) ic_box(cell, xs[k], 47 - hs[k], 5, hs[k], col, true, false);
-        ic_box(cell, 19, 47, 40, 2, col, true, false);
-        break; }
-    case IC_CONTACTS: {                              /* bluetooth rune (nearby contacts) */
-        int xs[6] = {30,46,38,38,46,30};
-        int ys[6] = {40,24,16,48,40,24};
-        for (int k = 0; k < 6; k++) { s_ic_ble[k].x = xs[k]; s_ic_ble[k].y = ys[k]; }
-        ic_poly(cell, s_ic_ble, 6, col);
-        break; }
-    case IC_SIGENV: {                                /* signal-environment waterfall (stacked waves) */
-        for (int d = 0; d < 3; d++) {
-            int baseY = 24 + d * 9;
-            for (int i = 0; i < 8; i++) {
-                s_ic_csi[d][i].x = 20 + i * 5;
-                s_ic_csi[d][i].y = baseY + (int)(sinf(i * 1.1f + d) * 3.0f);
-            }
-            ic_poly(cell, s_ic_csi[d], 8, col);
-        }
-        break; }
     case IC_INSTRUMENTS: {                            /* gauge: dial outline + needle + hub */
         ic_box(cell, 22, 20, 32, 32, col, false, true);
         s_ic_instr[0].x = 38; s_ic_instr[0].y = 36;
@@ -3685,9 +3621,6 @@ static void motion_layout_grid(void)
         lv_obj_clear_flag(lbl, LV_OBJ_FLAG_HIDDEN);   /* label stays full-opacity (legend) */
     }
 
-    /* Minor rings are superseded by the adaptive major step — keep them hidden. */
-    for (int i = 0; i < 2; i++)
-        if (s_motion_grid_minor[i]) lv_obj_add_flag(s_motion_grid_minor[i], LV_OBJ_FLAG_HIDDEN);
 }
 
 /* Toggle the SCANNER distance-ping audio feedback; persist across reboots. */
@@ -3825,21 +3758,6 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
         lv_obj_set_style_text_color(lbl, COL_MUTE, 0);   /* camera-legible (style kit) */
         lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
         s_motion_grid_lbl[i] = lbl;
-    }
-    /* Minor half-metre rings (close-range detail); created hidden, even fainter. */
-    for (int i = 0; i < 2; i++) {
-        lv_obj_t *arc = lv_arc_create(rbox);
-        lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
-        lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-        lv_arc_set_rotation(arc, 0);
-        lv_arc_set_bg_angles(arc, FAN_LEFT_DEG, FAN_RIGHT_DEG);
-        lv_arc_set_angles(arc, FAN_LEFT_DEG, FAN_RIGHT_DEG);
-        lv_obj_set_style_arc_width(arc, 1, LV_PART_MAIN);
-        lv_obj_set_style_arc_color(arc, COL_DIM, LV_PART_MAIN);
-        lv_obj_set_style_arc_opa(arc, LV_OPA_40, LV_PART_MAIN);
-        lv_obj_set_style_arc_width(arc, 0, LV_PART_INDICATOR);
-        lv_obj_add_flag(arc, LV_OBJ_FLAG_HIDDEN);
-        s_motion_grid_minor[i] = arc;
     }
     s_motion_grav_primed = false;                 /* reseed gravity low-pass on (re)open */
     s_motion_level = MOTION_NLEVEL - 1;            /* boot at full 6 m, zoom in as targets appear */

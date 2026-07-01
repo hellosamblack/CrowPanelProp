@@ -66,9 +66,6 @@ bool prop_imu_available(void);
 /* Pitch/roll/yaw in DEGREES (not radians). Returns false until first packet. */
 bool prop_imu_get_orientation(float *pitch, float *roll, float *yaw);
 
-/* Accel in milli-g [X,Y,Z]; gyro in milli-°/s [X,Y,Z]. Arrays may be NULL. */
-void prop_imu_get_raw(int32_t accel_milli_g[3], int32_t gyro_milli_dps[3]);
-
 /* Return + clear the latest tap gesture (present=false if none since last call). */
 prop_imu_tap_t prop_imu_get_tap(void);
 

@@ -28,16 +28,7 @@
 
 extern esp_lcd_touch_handle_t tp;
 
-// Public API: Get the latest touch coordinates and press state
-void get_coor(uint16_t* x, uint16_t* y, bool* press);
-
-// Internal API: Update the stored coordinates and press state (only used inside .c file)
-void set_coor(uint16_t x, uint16_t y, bool press);
-
 // Initialize the GT911 touch panel
 esp_err_t touch_init(void);
-
-// Read the touch panel data and update coordinates
-esp_err_t touch_read(void);
 /*———————————————————————————————————————Variable declaration end——————————————-—————————————————————————*/
 #endif   // End of header guard

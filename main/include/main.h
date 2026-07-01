@@ -31,7 +31,6 @@
 #include "prop_ftm.h"
 #include "prop_traffic.h"
 #include "prop_calib.h"
-#include "prop_radar.h"
 #include "prop_imu.h"
 #include "prop_bootlog.h"
 

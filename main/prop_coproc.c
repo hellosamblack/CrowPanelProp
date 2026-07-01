@@ -18,7 +18,6 @@ static const char *TAG = "prop_coproc";
 static prop_csi_stats_t s_stats;
 static int64_t s_stats_us = -1;   /* esp_timer time of last stats; <0 = none yet */
 static volatile bool s_slave_alive;  /* a heartbeat has arrived since boot */
-static bool s_settings_pushed;       /* have we pushed saved settings to the slave yet? */
 
 /* FTM: at most one outstanding request at a time (the C6 only runs one
  * session at a time), so a volatile cache + poll is enough — no semaphore
@@ -130,7 +129,6 @@ static void push_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(200));
     }
     prop_coproc_push_settings();
-    s_settings_pushed = true;
     vTaskDelete(NULL);
 }
 

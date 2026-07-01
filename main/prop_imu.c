@@ -385,24 +385,6 @@ bool prop_imu_get_orientation(float *pitch, float *roll, float *yaw)
     return true;
 }
 
-/* Raw accel in milli-g [X,Y,Z]; calibrated gyro in milli-°/s [X,Y,Z].
- * accel ±2g (16384 LSB/g), gyro ±2000 dps (16.4 LSB/dps). */
-void prop_imu_get_raw(int32_t accel_milli_g[3], int32_t gyro_milli_dps[3])
-{
-    prop_imu_data_t d;
-    prop_imu_get_data(&d);
-    if (accel_milli_g) {
-        accel_milli_g[0] = (int32_t)d.ax * 1000 / 16384;
-        accel_milli_g[1] = (int32_t)d.ay * 1000 / 16384;
-        accel_milli_g[2] = (int32_t)d.az * 1000 / 16384;
-    }
-    if (gyro_milli_dps) {
-        gyro_milli_dps[0] = (int32_t)d.gx * 1000000 / 16384;
-        gyro_milli_dps[1] = (int32_t)d.gy * 1000000 / 16384;
-        gyro_milli_dps[2] = (int32_t)d.gz * 1000000 / 16384;
-    }
-}
-
 prop_imu_tap_t prop_imu_get_tap(void)
 {
     prop_imu_tap_t t = { 0 };
