@@ -1,3 +1,3 @@
 [submodule "reference"]
-	path = reference/factoryFirmware
+	path = reference
 	url = https://github.com/Elecrow-RD/CrowPanel-Advanced-7inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen.git
