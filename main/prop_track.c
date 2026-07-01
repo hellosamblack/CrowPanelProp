@@ -139,7 +139,7 @@ static void track_task(void *arg)
         }
         uint32_t steps = imu.step_count;
         int32_t dsteps = (int32_t)(steps - s_last_steps);
-        if (dsteps < 0) { dsteps = 0; }              /* counter reset — ignore */
+        if (dsteps < 0) { dsteps = 0; s_last_steps = steps; }  /* counter reset — resync, drop the delta */
         if (dsteps > 0) {
             s_last_steps = steps;
             float d = STRIDE_M * (float)dsteps;

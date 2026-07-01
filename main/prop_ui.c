@@ -204,9 +204,10 @@ static lv_obj_t *s_csi_move;     /* movement-vs-threshold numeric readout */
 static lv_obj_t *s_csi_rf;       /* turbulence + receiver gain readout */
 static lv_obj_t *s_csi_rssi;     /* link RSSI (upper-right) */
 static lv_obj_t *s_csi_fp_cells[64]; /* NBVI subcarrier fingerprint (lit cells) */
+static uint8_t s_csi_last_sc[12];    /* last-painted subcarrier set (repaint gate) */
 static lv_obj_t *s_csi_geiger_lbl; /* SPECTRE GEIGER button label */
 
-/* MOTION SCAN instrument (valid only while PK_MOTION is current). */
+/* SCANNER instrument (valid only while PK_MOTION is current). */
 static lv_obj_t *s_motion_tgt_label;    /* merged headline: "N TARGETS DETECTED" / "NO TARGETS" */
 static lv_obj_t *s_motion_blips[3];     /* target blips (amber circles) */
 static lv_obj_t *s_motion_tdist[3];     /* T1/T2/T3 distance labels (large) */
@@ -495,6 +496,7 @@ static void close_panel(void)
     s_sig_list = NULL; s_sig_status = NULL;
     s_spec_db = NULL; s_spec_db_bar = NULL; s_spec_status = NULL;
     s_spec_src_label = NULL;
+    for (int i = 0; i < PROP_MIC_BANDS; i++) s_spec_bars[i] = NULL;
     for (int i = 0; i < 5; i++) s_spec_axis[i] = NULL;
     s_rf_status = NULL;
     for (int i = 0; i < RF_CHANNELS; i++) s_rf_bars[i] = NULL;
@@ -508,6 +510,8 @@ static void close_panel(void)
     s_csi_rf = NULL;
     s_csi_rssi = NULL;
     for (int i = 0; i < 64; i++) s_csi_fp_cells[i] = NULL;
+    /* Freshly built fp cells start unlit — force the first observer pass to repaint. */
+    memset(s_csi_last_sc, 0xFF, sizeof(s_csi_last_sc));
     s_csi_geiger_lbl = NULL;
     s_cfg_motion = NULL;
     s_cfg_move = NULL;
@@ -1716,7 +1720,7 @@ static void ble_fmt_dist(char *out, size_t n, float d)
 }
 
 /* Best human label for a contact: advertised name, else device class, else
- * manufacturer brand, else the MAC tail. Used by the MOTION SCAN BLE row. */
+ * manufacturer brand, else the MAC tail. Used by the SCANNER BLE row. */
 static void ble_contact_name(char *out, size_t n, const prop_ble_dev_t *d)
 {
     const char *brand = prop_ble_company_label(d->company_id);
@@ -1908,8 +1912,14 @@ static void range_update_row(int i, const prop_ftm_entry_t *e, uint32_t now)
     lv_label_set_text(r->mac, mb);
 
     if (e->last_dist_cm >= 0) {
-        float m = e->last_dist_cm / 100.0f;
-        lv_label_set_text_fmt(r->dist, m < 10.0f ? "~ %.1f m" : "~ %.0f m", (double)m);
+        /* LVGL's printf has no %f — format with stdio snprintf instead. */
+        char db[16];
+        int cm = (int)e->last_dist_cm;
+        if (cm < 1000)
+            snprintf(db, sizeof(db), "~ %d.%d m", cm / 100, (cm / 10) % 10);
+        else
+            snprintf(db, sizeof(db), "~ %d m", (cm + 50) / 100);
+        lv_label_set_text(r->dist, db);
     } else {
         lv_label_set_text(r->dist, "--");
     }
@@ -3527,7 +3537,7 @@ static lv_obj_t *build_sensors_panel(lv_obj_t *parent)
     return m;
 }
 
-/* ---- MOTION SCAN panel — Alien-style pie-slice radar + gimbals + sensors ----
+/* ---- SCANNER panel — Alien-style pie-slice radar + gimbals + sensors ----
  * Left 440x440: pie-slice (fan) with oscillating sweep, range arcs, target blips
  * within the slice, a 4-quadrant travel-direction ring at the base apex, plus
  * boolean status words and analog sensor bars (all-sensor overlay).
@@ -3672,7 +3682,7 @@ static void pulse_paint_band(const lv_area_t *bbox, int r_out, int r_in, int pha
     int x1 = bbox->x2 >= RADAR_W ? RADAR_W - 1 : bbox->x2;
     int y1 = bbox->y2 >= RADAR_H ? RADAR_H - 1 : bbox->y2;
     const float inv_span = 1.0f / (float)(r_out - r_in);
-    const float tan_half = 1.7320508f;          /* tan(60 deg) — fan half-angle */
+    const float tan_half = 1.1917536f;          /* tan(FAN_HALF_DEG = 50°) — match the drawn fan edges */
     for (int y = y0; y <= y1; y++) {
         int dy = y - FAN_APEX_Y;
         if (dy >= 0) { continue; }              /* band is strictly above the apex */
@@ -4560,12 +4570,11 @@ static void build_sens_meter(lv_obj_t *parent, lv_coord_t x, lv_coord_t y)
     lv_label_set_text(lbl, "SENS");
     lv_obj_set_style_text_color(lbl, COL_MUTE, 0);
     lv_obj_set_style_text_font(lbl, FONT_BODY, 0);
-    lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, x, y);
+    lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, x, y + 2);
 
     lv_obj_t *bar = lv_obj_create(parent);
     lv_obj_remove_style_all(bar);
     lv_obj_set_size(bar, SENS_W, SENS_H);
-    lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, x, y + 2);
     lv_obj_align(bar, LV_ALIGN_TOP_LEFT, x + 56, y);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(bar, COL_PANEL_ITEM, 0);
@@ -5235,25 +5244,24 @@ static void ui_observer(const prop_state_t *st, void *ctx)
                 label_set_text_cached(s_csi_rf, rb);
             }
         }
-            if (s_csi_status) {
-                label_set_text_cached(s_csi_status, live
-                                      ? "CSI LIVE  //  ON-C6 MOTION"
-                                      : "SYNTHETIC  //  NO C6 FEED");
-            }
-            if (s_csi_fp_cells[0]) {
-                uint8_t sc[12]; prop_csi_get_subcarriers(sc);
-                static uint8_t last_sc[12];
-                if (memcmp(sc, last_sc, 12) != 0) {   /* re-light only on change */
-                    memcpy(last_sc, sc, 12);
-                    bool sel[64] = { 0 };
-                    for (int k = 0; k < 12; k++) { if (sc[k] < 64) { sel[sc[k]] = true; } }
-                    for (int b = 0; b < 64; b++) {
-                        if (!s_csi_fp_cells[b]) { continue; }
-                        lv_obj_set_height(s_csi_fp_cells[b], sel[b] ? 16 : 5);
-                        lv_obj_set_style_bg_color(s_csi_fp_cells[b], sel[b] ? COL_AMBER : COL_DIM, 0);
-                    }
+        if (s_csi_status) {
+            label_set_text_cached(s_csi_status, live
+                                  ? "CSI LIVE  //  ON-C6 MOTION"
+                                  : "SYNTHETIC  //  NO C6 FEED");
+        }
+        if (s_csi_fp_cells[0]) {
+            uint8_t sc[12]; prop_csi_get_subcarriers(sc);
+            if (memcmp(sc, s_csi_last_sc, 12) != 0) {   /* re-light only on change */
+                memcpy(s_csi_last_sc, sc, 12);
+                bool sel[64] = { 0 };
+                for (int k = 0; k < 12; k++) { if (sc[k] < 64) { sel[sc[k]] = true; } }
+                for (int b = 0; b < 64; b++) {
+                    if (!s_csi_fp_cells[b]) { continue; }
+                    lv_obj_set_height(s_csi_fp_cells[b], sel[b] ? 16 : 5);
+                    lv_obj_set_style_bg_color(s_csi_fp_cells[b], sel[b] ? COL_AMBER : COL_DIM, 0);
                 }
             }
+        }
     }
 
     /* CSI CONFIG panel: live feedback + guided calibration phase/countdown. */
@@ -5347,7 +5355,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
-    /* Drive the MOTION SCAN panel: radial pulse, target blips, gimbal, aux labels. */
+    /* Drive the SCANNER panel: radial pulse, target blips, gimbal, aux labels. */
     /* ---- MINIMAP: dead-reckoning map (event-driven canvas + glided operator) ---- */
     if (s_cur_kind == PK_MINIMAP && s_map_canvas) {
         prop_track_pose_t pose;
@@ -5445,7 +5453,10 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
-    if (s_cur_kind == PK_MOTION && s_motion_pulse && s_pulse_buf) {
+    /* Gate on the blip pool (always built with the panel), NOT the pulse canvas —
+     * if its PSRAM alloc failed the sweep is simply absent, but blips/readouts
+     * below must still update. The pulse paint helpers no-op without s_pulse_buf. */
+    if (s_cur_kind == PK_MOTION && s_motion_blips[0]) {
         /* Wavy Halo pulse: a banded sweep expands apex->rim and repeats. Advance the
          * leading edge in REAL-WORLD range (m), projected through ppm so it stays locked
          * to the rings/blips as the scale animates (~6 px/tick). Then repaint + invalidate
@@ -5459,7 +5470,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         const int PAD = 6;                                   /* scallop + slope rounding */
         int r_out = s_pulse_lead_px; if (r_out > FAN_R) { r_out = FAN_R; }
         int r_in  = s_pulse_lead_px - (PULSE_BAND - 1) * PULSE_WIDTH; if (r_in < 0) { r_in = 0; }
-        int xext  = (int)(0.8660254f * r_out + 0.999f);      /* |cos210|=|cos330| */
+        int xext  = (int)(0.7660444f * r_out + 0.999f);      /* sin(FAN_HALF_DEG = 50°) */
         /* canvas-local band bbox (canvas is at rbox 0,0 so local == rbox coords) */
         lv_area_t cur = {
             .x1 = FAN_APEX_X - xext - PAD,
@@ -5475,15 +5486,17 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         s_pulse_phase = (s_pulse_phase + 2) & 255;           /* travelling scallop */
 
         /* Invalidate the same rects in absolute coords (canvas-local + canvas origin). */
-        lv_area_t oc; lv_obj_get_coords(s_motion_pulse, &oc);
-        if (s_pulse_prev_valid) {
-            lv_area_t pabs = { s_pulse_prev_local.x1 + oc.x1, s_pulse_prev_local.y1 + oc.y1,
-                               s_pulse_prev_local.x2 + oc.x1, s_pulse_prev_local.y2 + oc.y1 };
-            lv_obj_invalidate_area(s_motion_pulse, &pabs);
-        }
-        if (r_out > 0) {
-            lv_area_t cabs = { cur.x1 + oc.x1, cur.y1 + oc.y1, cur.x2 + oc.x1, cur.y2 + oc.y1 };
-            lv_obj_invalidate_area(s_motion_pulse, &cabs);
+        if (s_motion_pulse) {
+            lv_area_t oc; lv_obj_get_coords(s_motion_pulse, &oc);
+            if (s_pulse_prev_valid) {
+                lv_area_t pabs = { s_pulse_prev_local.x1 + oc.x1, s_pulse_prev_local.y1 + oc.y1,
+                                   s_pulse_prev_local.x2 + oc.x1, s_pulse_prev_local.y2 + oc.y1 };
+                lv_obj_invalidate_area(s_motion_pulse, &pabs);
+            }
+            if (r_out > 0) {
+                lv_area_t cabs = { cur.x1 + oc.x1, cur.y1 + oc.y1, cur.x2 + oc.x1, cur.y2 + oc.y1 };
+                lv_obj_invalidate_area(s_motion_pulse, &cabs);
+            }
         }
         s_pulse_prev_local = cur;
         s_pulse_prev_valid = (r_out > 0);
@@ -5972,6 +5985,7 @@ const char *prop_ui_current_screen(void)
         case PK_MOTION:      return "motion";
         case PK_DIRCAL:      return "dircal";
         case PK_MINIMAP:     return "minimap";
+        case PK_RANGE:       return "range";
         case PK_INSTRUMENTS: return "instruments";
         case PK_SENSORS:     return "sensors";
         case PK_ARCHIVE:     return "archive";

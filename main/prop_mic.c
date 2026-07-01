@@ -57,11 +57,11 @@ static void fft(float *re, float *im, int n)
         for (int i = 0; i < n; i += len) {
             float cr = 1.0f, ci = 0.0f;
             for (int k = 0; k < len / 2; k++) {
-                float a = s_re[i + k + len / 2], b = s_im[i + k + len / 2];
+                float a = re[i + k + len / 2], b = im[i + k + len / 2];
                 float vr = a * cr - b * ci, vi = a * ci + b * cr;
-                float ur = s_re[i + k], ui = s_im[i + k];
-                s_re[i + k] = ur + vr; s_im[i + k] = ui + vi;
-                s_re[i + k + len / 2] = ur - vr; s_im[i + k + len / 2] = ui - vi;
+                float ur = re[i + k], ui = im[i + k];
+                re[i + k] = ur + vr; im[i + k] = ui + vi;
+                re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi;
                 float ncr = cr * wr - ci * wi;
                 ci = cr * wi + ci * wr; cr = ncr;
             }
@@ -131,6 +131,11 @@ static void mic_task(void *arg)
             int gpio = 49 + (int)(src - SPEC_SRC_ADC0);
             int aio  = find_aio_idx(gpio);
             if (aio < 0) {
+                /* Source GPIO isn't in the aio table (e.g. IO53/54 belong to the
+                 * LD2450 UART) — clear the cache so the UI shows silence rather
+                 * than a frozen copy of the previous source's spectrum. */
+                memset((void *)s_bands, 0, sizeof(s_bands));
+                s_db = -90;
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }

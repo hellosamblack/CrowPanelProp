@@ -83,6 +83,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
             s_retry_num++;
             esp_wifi_connect();
             ESP_LOGI(NET_TAG, "STA retry %d", s_retry_num);
+        } else if (s_sta_state == STA_IDLE) {
+            /* Deliberate disconnect (prop_net_forget) — not a failure; leave
+             * the state IDLE so SETUP doesn't show "check password". */
         } else {
             s_sta_state = STA_FAILED;
             ESP_LOGW(NET_TAG, "STA connect failed");

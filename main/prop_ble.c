@@ -270,7 +270,12 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         /* Scan windows shouldn't end (we ask for forever), but restart if one does. */
         ESP_LOGW(BLE_TAG, "scan ended (reason %d) — restarting", event->disc_complete.reason);
         struct ble_gap_disc_params dp = { .passive = 1, .filter_duplicates = 0 };
-        ble_gap_disc(s_own_addr_type, BLE_HS_FOREVER, &dp, gap_event_cb, NULL);
+        int rc = ble_gap_disc(s_own_addr_type, BLE_HS_FOREVER, &dp, gap_event_cb, NULL);
+        if (rc != 0) {
+            /* No retry path exists — if this fails, CONTACTS silently ages out
+             * to empty, so at least say why. */
+            ESP_LOGE(BLE_TAG, "scan restart failed (rc=%d) — passive scan is DOWN", rc);
+        }
     }
     return 0;
 }

@@ -26,7 +26,9 @@ Examples:
     python prop.py watch                         # live telemetry stream (Ctrl-C to stop)
     python prop.py watch --only imu.yaw_deg,radar --count 20
 
-Screens: home menu wifi display audio leds vitals scan spectrum about
+Screens: home scanner archive cassette insights menu wifi display audio leds
+         vitals scan spectrum rfband ble csi instruments sensors dircal minimap
+         range about
 Scenes:  IDLE SCANNING SIGNAL_ACQUIRED COMMS ALERT
 """
 import sys
@@ -428,15 +430,21 @@ def detect_port():
     import glob
     for path in glob.glob("/sys/class/tty/ttyUSB*") + glob.glob("/sys/class/tty/ttyACM*"):
         try:
+            # ttyUSB's device node sits under the *interface* dir; idVendor
+            # lives one level higher on the USB device itself — walk up until
+            # we find it (dev.sh does the same with two dirnames).
             device_path = os.path.realpath(os.path.join(path, "device"))
-            usb_dev_path = os.path.dirname(device_path)
-            vendor_path = os.path.join(usb_dev_path, "idVendor")
-            if os.path.exists(vendor_path):
-                with open(vendor_path, "r") as f:
-                    vendor = f.read().strip()
-                if vendor == "1a86":
-                    dev_name = os.path.basename(path)
-                    return f"/dev/{dev_name}"
+            probe = device_path
+            for _ in range(4):
+                probe = os.path.dirname(probe)
+                vendor_path = os.path.join(probe, "idVendor")
+                if os.path.exists(vendor_path):
+                    with open(vendor_path, "r") as f:
+                        vendor = f.read().strip()
+                    if vendor == "1a86":
+                        dev_name = os.path.basename(path)
+                        return f"/dev/{dev_name}"
+                    break
         except Exception:
             pass
 
@@ -504,12 +512,14 @@ def main():
     elif cmd == "status":
         print(_post_cmd(host, {"cmd": "status", "value": " ".join(rest)}))
     elif cmd == "shot":
-        out = rest[0] if rest and not rest[0].startswith("--") else "shot.png"
         crop = _pop_opt(rest, "--crop")
         zoom = int(_pop_opt(rest, "--zoom") or 1)
         screen = _pop_opt(rest, "--screen")
         scene = _pop_opt(rest, "--scene")
         do_wait = "--wait" in rest
+        # positional output name may come before OR after the options
+        pos = [a for a in rest if not a.startswith("--")]
+        out = pos[0] if pos else "shot.png"
         shot(host, out, screen, scene, do_wait,
              tuple(int(v) for v in crop.split(",")) if crop else None, zoom)
     elif cmd == "trace":

@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -41,6 +42,24 @@
 #define OTA_BUF_SIZE 1460
 
 static httpd_handle_t s_server;
+
+/* Serializes WS frame writes. Despite the name, httpd_ws_send_frame_async
+ * sends INLINE from the calling task (header write + payload write, no work
+ * queue) — so the engine-observer, telemetry task, and httpd task can
+ * otherwise interleave bytes mid-frame on the same socket and permanently
+ * corrupt that client's stream. */
+static SemaphoreHandle_t s_ws_send_mutex;
+
+static bool ws_send_lock(void)
+{
+    return s_ws_send_mutex &&
+           xSemaphoreTake(s_ws_send_mutex, pdMS_TO_TICKS(1000)) == pdTRUE;
+}
+
+static void ws_send_unlock(void)
+{
+    xSemaphoreGive(s_ws_send_mutex);
+}
 
 /* ---- State -> JSON ------------------------------------------------------- */
 static char *state_to_json(void)
@@ -236,7 +255,7 @@ static esp_err_t dispatch_command(const char *json, int len)
             err = prop_engine_set_channel(value->valuestring);
         } else if (strcmp(c, "sens") == 0 && cJSON_IsNumber(value)) {
             int v = value->valueint;
-            err = prop_engine_set_sensitivity((uint8_t)(v < 0 ? 0 : v));
+            err = prop_engine_set_sensitivity((uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v));
         } else if (strcmp(c, "fx") == 0) {
             const cJSON *on = cJSON_GetObjectItem(root, "on");
             if (cJSON_IsBool(on)) {
@@ -244,10 +263,13 @@ static esp_err_t dispatch_command(const char *json, int len)
             }
             const cJSON *j;
             bool any = false;
-            if ((j = cJSON_GetObjectItem(root, "scan"))     && cJSON_IsNumber(j)) { prop_fx_set_scanlines((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
-            if ((j = cJSON_GetObjectItem(root, "phosphor")) && cJSON_IsNumber(j)) { prop_fx_set_phosphor ((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
-            if ((j = cJSON_GetObjectItem(root, "vignette")) && cJSON_IsNumber(j)) { prop_fx_set_vignette ((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
-            if ((j = cJSON_GetObjectItem(root, "refresh"))  && cJSON_IsNumber(j)) { prop_fx_set_refresh  ((uint8_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
+            /* Clamp 0..100 — a plain uint8_t cast would truncate e.g. 300 to 44. */
+            #define FX_PCT(j) ((uint8_t)((j)->valueint < 0 ? 0 : (j)->valueint > 100 ? 100 : (j)->valueint))
+            if ((j = cJSON_GetObjectItem(root, "scan"))     && cJSON_IsNumber(j)) { prop_fx_set_scanlines(FX_PCT(j)); any = true; }
+            if ((j = cJSON_GetObjectItem(root, "phosphor")) && cJSON_IsNumber(j)) { prop_fx_set_phosphor (FX_PCT(j)); any = true; }
+            if ((j = cJSON_GetObjectItem(root, "vignette")) && cJSON_IsNumber(j)) { prop_fx_set_vignette (FX_PCT(j)); any = true; }
+            if ((j = cJSON_GetObjectItem(root, "refresh"))  && cJSON_IsNumber(j)) { prop_fx_set_refresh  (FX_PCT(j)); any = true; }
+            #undef FX_PCT
             if ((j = cJSON_GetObjectItem(root, "trans"))    && cJSON_IsNumber(j)) { prop_settings_set_u32("fx_trans", (uint32_t)(j->valueint < 0 ? 0 : j->valueint)); any = true; }
             if ((j = cJSON_GetObjectItem(root, "fps"))      && cJSON_IsBool(j))   { prop_ui_set_fps(cJSON_IsTrue(j)); any = true; }
             if ((j = cJSON_GetObjectItem(root, "ppaspike")) && cJSON_IsTrue(j))   { prop_ppa_spike_run(); any = true; }
@@ -438,7 +460,7 @@ static void broadcast_observer(const prop_state_t *st, void *ctx)
     }
     size_t num = CONFIG_LWIP_MAX_SOCKETS;
     int fds[CONFIG_LWIP_MAX_SOCKETS];
-    if (httpd_get_client_list(s_server, &num, fds) == ESP_OK) {
+    if (httpd_get_client_list(s_server, &num, fds) == ESP_OK && ws_send_lock()) {
         for (size_t i = 0; i < num; i++) {
             if (httpd_ws_get_fd_info(s_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET) {
                 httpd_ws_frame_t frame = {
@@ -449,6 +471,7 @@ static void broadcast_observer(const prop_state_t *st, void *ctx)
                 httpd_ws_send_frame_async(s_server, fds[i], &frame);
             }
         }
+        ws_send_unlock();
     }
     free(json);
 }
@@ -458,9 +481,9 @@ static void broadcast_observer(const prop_state_t *st, void *ctx)
  * independent of broadcast_observer's on-change state push above. Runs as its
  * own task (not an engine observer) since it reads several unrelated cached
  * modules, not just engine state. Skips building JSON entirely when no WS
- * client is attached, so it's free when nobody's watching. Uses the async
- * send API (queued onto the httpd work queue), same as broadcast_observer, so
- * it never blocks the httpd task servicing /cmd, /state, /screenshot, etc. */
+ * client is attached, so it's free when nobody's watching. Sends are
+ * serialized against broadcast_observer/ws_handler on s_ws_send_mutex (the
+ * "async" send API actually writes inline from the calling task). */
 #define TELEMETRY_PERIOD_MS 200   /* 5 Hz: fast enough to watch values move live */
 
 static void telemetry_task(void *arg)
@@ -492,7 +515,10 @@ static void telemetry_task(void *arg)
                 .payload = (uint8_t *)json,
                 .len = strlen(json),
             };
-            httpd_ws_send_frame_async(s_server, fds[i], &frame);
+            if (ws_send_lock()) {
+                httpd_ws_send_frame_async(s_server, fds[i], &frame);
+                ws_send_unlock();
+            }
         }
         free(json);
     }
@@ -608,20 +634,29 @@ static esp_err_t cmd_post_handler(httpd_req_t *req)
     } else {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown command");
     }
-    return err;
+    /* The 400 was already sent; returning err here would additionally make
+     * httpd drop the connection, killing keep-alive on every bad command. */
+    return ESP_OK;
 }
 
 static esp_err_t ws_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET) {
-        /* Handshake; also send a state snapshot once connected. */
+        /* Handshake only — the first state frame arrives via broadcast_observer
+         * on the next change, or in reply to the client's first message. */
         ESP_LOGI(API_TAG, "ws client connected");
         return ESP_OK;
     }
     httpd_ws_frame_t frame = { .type = HTTPD_WS_TYPE_TEXT };
     esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);  /* get length */
-    if (ret != ESP_OK || frame.len == 0 || frame.len > 255) {
+    if (ret != ESP_OK || frame.len == 0) {
         return ret;
+    }
+    if (frame.len > 255) {
+        /* Returning ESP_OK here would leave the unread payload in the socket
+         * and desync every subsequent frame (httpd doesn't drain it for us) —
+         * fail so httpd closes this client instead. */
+        return ESP_FAIL;
     }
     uint8_t buf[256];
     frame.payload = buf;
@@ -640,7 +675,10 @@ static esp_err_t ws_handler(httpd_req_t *req)
             .payload = (uint8_t *)json,
             .len = strlen(json),
         };
-        httpd_ws_send_frame(req, &out);
+        if (ws_send_lock()) {
+            httpd_ws_send_frame(req, &out);
+            ws_send_unlock();
+        }
         free(json);
     }
     return ESP_OK;
@@ -822,6 +860,8 @@ static esp_err_t screenshot_get_handler(httpd_req_t *req)
 
 esp_err_t prop_api_init(void)
 {
+    s_ws_send_mutex = xSemaphoreCreateMutex();
+
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 10;
     config.lru_purge_enable = true;

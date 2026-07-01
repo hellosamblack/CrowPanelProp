@@ -17,6 +17,7 @@ static const char *TAG = "prop_coproc";
 
 static prop_csi_stats_t s_stats;
 static int64_t s_stats_us = -1;   /* esp_timer time of last stats; <0 = none yet */
+static portMUX_TYPE s_stats_mux = portMUX_INITIALIZER_UNLOCKED;   /* RX thread writes, csi_task/HTTP read */
 static volatile bool s_slave_alive;  /* a heartbeat has arrived since boot */
 
 /* FTM: at most one outstanding request at a time (the C6 only runs one
@@ -90,11 +91,13 @@ static void on_csi_stats(uint32_t msg_id, const uint8_t *data, size_t len, void 
                  (unsigned)len, (unsigned)sizeof(prop_csi_stats_t));
         return;
     }
+    portENTER_CRITICAL(&s_stats_mux);
     memcpy(&s_stats, data, sizeof(s_stats));
     s_stats_us = esp_timer_get_time();
+    portEXIT_CRITICAL(&s_stats_mux);
 
-    ESP_LOGI(TAG, "C6 CSI: en=%u cal=%d fps=%u total=%lu MOTION=%u move=%d thr=%d",
-             (unsigned)s_stats.csi_enabled, (int)s_stats._pad,
+    ESP_LOGD(TAG, "C6 CSI: en=%u fps=%u total=%lu MOTION=%u move=%d thr=%d",
+             (unsigned)s_stats.csi_enabled,
              (unsigned)s_stats.fps, (unsigned long)s_stats.frames_total,
              (unsigned)s_stats.motion, (int)s_stats.movement_milli,
              (int)s_stats.threshold_milli);
@@ -192,14 +195,18 @@ bool prop_coproc_ftm_wait_result(uint16_t req_id, uint32_t timeout_ms, prop_ftm_
 
 bool prop_coproc_get_csi_stats(prop_csi_stats_t *out, uint32_t *age_ms)
 {
-    if (s_stats_us < 0) {
-        return false;
-    }
-    if (out) {
+    portENTER_CRITICAL(&s_stats_mux);
+    int64_t stamp = s_stats_us;
+    if (stamp >= 0 && out) {
         *out = s_stats;
     }
+    portEXIT_CRITICAL(&s_stats_mux);
+
+    if (stamp < 0) {
+        return false;
+    }
     if (age_ms) {
-        *age_ms = (uint32_t)((esp_timer_get_time() - s_stats_us) / 1000);
+        *age_ms = (uint32_t)((esp_timer_get_time() - stamp) / 1000);
     }
     return true;
 }

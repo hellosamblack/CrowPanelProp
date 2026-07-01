@@ -3,7 +3,7 @@
  * The installed IMU reports WHO_AM_I=0x70 (MPU-6500), not the MPU-6050 (0x68).
  * The MPU-6050 DMP firmware is incompatible with it, so this wraps LibDriver's
  * mpu6500 eMD core (vendored unmodified in components/mpu6500). The adapter owns
- * the singleton lifecycle, a 20 ms FIFO poll task, a mutex-protected cache, and
+ * the singleton lifecycle, a 40 ms FIFO poll task, a mutex-protected cache, and
  * the public API. Tap/orient arrive via callbacks invoked inside mpu6500_dmp_read.
  * Motion and free-fall are derived in software from accel magnitude (avoids the
  * wake-on-motion low-power mode, which conflicts with DMP gyro operation).
@@ -220,7 +220,7 @@ fail:
     return -1;
 }
 
-/* ── Poll task (20 ms, no INT pin) ───────────────────────────────────────── */
+/* ── Poll task (40 ms, no INT pin) ───────────────────────────────────────── */
 static void imu_task(void *arg)
 {
     (void)arg;
@@ -267,9 +267,9 @@ static void imu_task(void *arg)
         float amag = sqrtf(accel_g[0][0] * accel_g[0][0] +
                            accel_g[0][1] * accel_g[0][1] +
                            accel_g[0][2] * accel_g[0][2]);
-        if (amag < 0.4f) ff_run_ms += 20; else ff_run_ms = 0;
+        if (amag < 0.4f) ff_run_ms += 40; else ff_run_ms = 0;
         bool freefall = ff_run_ms >= 80;
-        if (fabsf(amag - 1.0f) > 0.25f) mv_run_ms += 20; else mv_run_ms = 0;
+        if (fabsf(amag - 1.0f) > 0.25f) mv_run_ms += 40; else mv_run_ms = 0;
         bool motion = mv_run_ms >= 60 && !freefall;
 
         if (rezero_cooldown_ms > 0) rezero_cooldown_ms -= 40;

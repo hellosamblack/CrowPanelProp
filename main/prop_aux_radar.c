@@ -225,6 +225,7 @@ check_timeout:
             if (last != 0 && (now - last) > OFFLINE_MS) {
                 portENTER_CRITICAL(&s_mux);
                 s_seeed = AUX_OFFLINE;
+                s_seeed_last_ms = 0;   /* one-shot: don't re-warn every 50ms loop pass */
                 portEXIT_CRITICAL(&s_mux);
                 ESP_LOGW(TAG, "SEEED offline (no frame for %u ms)", OFFLINE_MS);
             } else if (!no_frame_warned && last == 0 &&
@@ -406,7 +407,7 @@ esp_err_t prop_aux_radar_init(void)
             uart_driver_delete(SEN0395_UART);
             if (first_err == ESP_OK) first_err = err;
         } else {
-            /* Route UART1 to GPIO25 (TX) and GPIO27 (RX) via the GPIO matrix. */
+            /* Route UART1 to GPIO34 (TX) and GPIO33 (RX) via the GPIO matrix. */
             err = uart_set_pin(SEN0395_UART,
                                SEN0395_TX_GPIO, SEN0395_RX_GPIO,
                                UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);

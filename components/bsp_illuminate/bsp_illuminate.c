@@ -241,8 +241,10 @@ static esp_err_t lvgl_init()  // Initialize LVGL
     my_lvgl_disp = lvgl_port_add_disp_dsi(&disp_cfg, &lvgl_dpi_cfg);  // Add LVGL display
     if (my_lvgl_disp == NULL)
     {
-        err = ESP_FAIL;
+        // Don't register touch against a NULL display — bail out instead.
         ILLUMINATE_ERROR("LVGL dsi port add fail");
+        lvgl_port_unlock();
+        return ESP_FAIL;
     }
     const lvgl_port_touch_cfg_t touch_cfg = {
         .disp = my_lvgl_disp,
