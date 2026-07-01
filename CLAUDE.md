@@ -91,6 +91,19 @@ check is what finally caught it. Fixed by bumping `CONFIG_ESP_SYSTEM_EVENT_TASK_
 2 of 3 initial trials panicked at that exact point). If a new intermittent panic ever reappears here,
 check `sys_evt` first before assuming it's the same root cause.
 
+**Further internal-RAM headroom (2026-07-01).** Cross-referenced xiaozhi-esp32's `elecrow-p4-board`
+port (a community AI-chatbot firmware with a maintained board port for this exact P4+C6 hardware) for
+esp_hosted tuning ideas. Landed five changes (`sdkconfig.defaults`), each verified with its own
+`prop.py trace --trials 8` (8/8 clean): `CONFIG_WIFI_RMT_{IRAM_OPT,EXTRA_IRAM_OPT,RX_IRAM_OPT,SLP_IRAM_OPT}=n`,
+`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`, `CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL` 32768→49152,
+`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` 16384→4096, `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y`, and
+`CONFIG_ESP_TASK_WDT_TIMEOUT_S` 5→10. **Gotcha worth knowing before touching WiFi IRAM/Kconfig options
+again:** under `CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED`, the familiar `CONFIG_ESP_WIFI_*` names (e.g.
+`ESP_WIFI_IRAM_OPT`) are just mirrored aliases defined in
+`managed_components/espressif__esp_wifi_remote/*/Kconfig.wifi.in` — the real settings live under
+`CONFIG_WIFI_RMT_*`. Setting the `ESP_WIFI_*` alias directly in `sdkconfig`/`sdkconfig.defaults` has no
+effect and silently gets recomputed back to its default on the next `idf.py reconfigure`.
+
 Live serial capture (`prop.py trace`) still can't reliably catch a one-off intermittent panic —
 opening the port doesn't cleanly resync with the exact reboot moment, and often nobody's watching
 when it happens. `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH` (`sdkconfig.defaults`) persists the full
