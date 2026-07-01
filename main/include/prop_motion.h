@@ -16,6 +16,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 #include "esp_err.h"
 
 #define PROP_MOTION_MAX_TARGETS 3
@@ -26,6 +27,61 @@ typedef struct {
     int16_t  speed_mm_s; /* signed: + = approaching */
     uint16_t dist_res_mm;
 } prop_motion_target_t;
+
+/* ---- Config-command protocol (read/write access to on-module settings) --
+ * Every prop_motion_cfg_* function performs a live UART command/ACK exchange
+ * (see docs/datasheets/externalDevices/LD2450.../"LD2450 serial port
+ * communication protocol V1.03.pdf" and
+ * .claude/skills/sensor-datasheets/references/ld2450.md) and BLOCKS the
+ * calling task for up to ~300ms (several seconds for prop_motion_cfg_set_baud
+ * / prop_motion_cfg_factory_reset, which restart the module). Never call
+ * these from the LVGL/UI task or from inside lvgl_port_lock()/unlock(). Only
+ * one exchange runs at a time; concurrent callers serialize on an internal
+ * mutex. */
+
+typedef enum {
+    PROP_MOTION_TRACK_SINGLE = 1,
+    PROP_MOTION_TRACK_MULTI  = 2,
+} prop_motion_track_mode_t;
+
+typedef enum {
+    PROP_MOTION_ZONE_OFF     = 0,   /* zone filtering disabled (factory default) */
+    PROP_MOTION_ZONE_INCLUDE = 1,   /* only detect targets inside the listed zones */
+    PROP_MOTION_ZONE_EXCLUDE = 2,   /* ignore targets inside the listed zones */
+} prop_motion_zone_mode_t;
+
+typedef struct {
+    int16_t x1_mm, y1_mm, x2_mm, y2_mm;  /* diagonal rectangle corners, mm.
+                                          * Plain signed int16 (two's complement)
+                                          * -- NOT the sign-magnitude encoding
+                                          * the real-time data frames use.
+                                          * All-zero = this zone slot unused. */
+} prop_motion_zone_t;
+
+/* Tracking mode: read the module's current single/multi setting, or change it
+ * (factory default: multi). */
+bool prop_motion_cfg_get_mode(prop_motion_track_mode_t *out);
+bool prop_motion_cfg_set_mode(prop_motion_track_mode_t mode);
+
+/* Firmware version as a display string (e.g. "V1.02.22062416"); out_len >= 24. */
+bool prop_motion_cfg_get_fw_version(char *out, size_t out_len);
+
+/* The module's 3-byte MAC address (its onboard Bluetooth radio's MAC). */
+bool prop_motion_cfg_get_mac(uint8_t mac_out[3]);
+
+/* Bluetooth on/off. Write-only -- the protocol has no BT-status query
+ * command, so there is no prop_motion_cfg_get_bt(). On by default from the
+ * factory; this project turns it off at boot (see prop_motion_init). */
+bool prop_motion_cfg_set_bt(bool on);
+
+/* Rectangular zone filtering: read or replace the current configuration (up
+ * to 3 zones; a zone with all-zero coordinates is unused). */
+bool prop_motion_cfg_get_zone(prop_motion_zone_mode_t *mode, prop_motion_zone_t zones[3]);
+bool prop_motion_cfg_set_zone(prop_motion_zone_mode_t mode, const prop_motion_zone_t zones[3]);
+
+/* Restart the module (it reboots itself right after ACKing this command).
+ * Blocks until data streaming resumes or ~5s elapses. */
+bool prop_motion_cfg_restart(void);
 
 /* Init UART2, install driver, start background task.
  * Non-fatal: sets available=false and returns an error code if UART init fails.

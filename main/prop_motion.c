@@ -4,9 +4,11 @@
 #include "prop_motion.h"
 
 #include <string.h>
+#include <stdio.h>
 #include "driver/uart.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -37,6 +39,38 @@ static inline uint32_t now_ms(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000ULL);
 }
+
+/* ---- Config-command channel (shared with motion_task) --------------------
+ * Separate frame envelope from the data-output frames below: FD FC FB FA ...
+ * 04 03 02 01, length-prefixed, with the command word echoed | 0x0100 in the
+ * ACK. motion_task is the sole UART reader, so it recognizes both frame
+ * types; when a caller is waiting (s_cfg_waiting), a matching ACK is copied
+ * into s_cfg_pending and s_cfg_done_sem is given. Byte offsets verified
+ * against the protocol PDF's worked examples — see
+ * .claude/skills/sensor-datasheets/references/ld2450.md for the command
+ * table. ---- */
+
+#define CFG_HEADER_LEN 4
+#define CFG_TAIL_LEN   4
+#define CFG_MAX_ALEN   32   /* real max is 30 (zone-filter query ACK); anything
+                            * bigger looks like corrupt/garbage, not a real frame */
+#define CFG_RESP_MAX   26   /* largest real ACK payload after word+status: the
+                            * zone-filter query (2B type + 24B of 3 zones) */
+static const uint8_t CFG_HEADER[CFG_HEADER_LEN] = { 0xFD, 0xFC, 0xFB, 0xFA };
+static const uint8_t CFG_TAIL[CFG_TAIL_LEN]     = { 0x04, 0x03, 0x02, 0x01 };
+
+typedef struct {
+    uint16_t word;                  /* command word we're waiting the ACK for */
+    uint16_t status;                /* 0 = success, else failure/none-yet */
+    uint8_t  resp[CFG_RESP_MAX];    /* ACK payload after word+status, if any */
+    uint16_t resp_len;
+} ld2450_cfg_pending_t;
+
+static SemaphoreHandle_t     s_cfg_mutex;      /* serializes concurrent callers */
+static SemaphoreHandle_t     s_cfg_done_sem;   /* given by motion_task on a matching ACK */
+static ld2450_cfg_pending_t  s_cfg_pending;    /* written by motion_task, read by the waiter */
+static volatile bool         s_cfg_waiting;    /* true while a caller is blocked in ld2450_cfg_cmd */
+static uint32_t              s_current_baud = MOTION_BAUD;   /* tracks the module's UART rate across set_baud */
 
 /* ---- Frame parser -------------------------------------------------------- */
 
@@ -76,7 +110,8 @@ static void motion_task(void *arg)
     (void)arg;
 
     /* Working buffer: large enough to scan for a header and buffer one full
-     * frame even if bytes dribble in across multiple reads. */
+     * frame even if bytes dribble in across multiple reads. Also large enough
+     * for the biggest config-command ACK (zone-filter query, 40 bytes total). */
     uint8_t buf[FRAME_LEN * 2];
     int     buf_len = 0;    /* bytes currently held in buf */
 
@@ -84,27 +119,24 @@ static void motion_task(void *arg)
         /* Drain as many bytes as are available into the tail of buf. */
         int space = (int)sizeof(buf) - buf_len;
         if (space > 0) {
-            int n = uart_read_bytes(MOTION_UART,
-                                    buf + buf_len,
-                                    (uint32_t)space,
-                                    pdMS_TO_TICKS(50));
-            if (n > 0) {
-                buf_len += n;
-            }
+            int n = uart_read_bytes(MOTION_UART, buf + buf_len, (uint32_t)space, pdMS_TO_TICKS(50));
+            if (n > 0) buf_len += n;
         }
 
-        /* Scan for the 4-byte header. */
-        int hdr_pos = -1;
+        /* Find whichever recognized header appears first: the data-frame
+         * header (AA FF 03 00) or the config-command ACK header (FD FC FB
+         * FA). Config ACKs can in principle arrive between data frames if a
+         * command is issued while normal streaming is running. */
+        int  hdr_pos = -1;
+        bool is_cfg  = false;
         for (int i = 0; i <= buf_len - HEADER_LEN && buf_len >= HEADER_LEN; i++) {
-            if (memcmp(buf + i, FRAME_HEADER, HEADER_LEN) == 0) {
-                hdr_pos = i;
-                break;
-            }
+            if (memcmp(buf + i, FRAME_HEADER, HEADER_LEN) == 0) { hdr_pos = i; is_cfg = false; break; }
+            if (memcmp(buf + i, CFG_HEADER, CFG_HEADER_LEN) == 0) { hdr_pos = i; is_cfg = true; break; }
         }
 
         if (hdr_pos < 0) {
-            /* No header yet.  Keep the last 3 bytes in case the header spans
-             * two reads (header is 4 bytes; overlap = header_len - 1 = 3). */
+            /* No header yet. Keep the last 3 bytes in case a header spans
+             * two reads (both headers are 4 bytes; overlap = 3). */
             if (buf_len >= HEADER_LEN - 1) {
                 int keep = HEADER_LEN - 1;
                 memmove(buf, buf + buf_len - keep, (size_t)keep);
@@ -113,29 +145,53 @@ static void motion_task(void *arg)
             continue;
         }
 
-        /* Discard any bytes before the header. */
         if (hdr_pos > 0) {
             memmove(buf, buf + hdr_pos, (size_t)(buf_len - hdr_pos));
             buf_len -= hdr_pos;
         }
 
-        /* Do we have the full frame yet? */
-        if (buf_len < FRAME_LEN) {
-            /* Need more bytes; loop back to read more. */
+        if (is_cfg) {
+            if (buf_len < CFG_HEADER_LEN + 2) continue;   /* need the length field yet */
+            uint16_t alen = (uint16_t)buf[CFG_HEADER_LEN] | ((uint16_t)buf[CFG_HEADER_LEN + 1] << 8);
+            if (alen > CFG_MAX_ALEN) {
+                /* Bogus length -- resync past this header byte. */
+                memmove(buf, buf + 1, (size_t)(buf_len - 1)); buf_len--; continue;
+            }
+            int total = CFG_HEADER_LEN + 2 + alen + CFG_TAIL_LEN;
+            if (buf_len < total) continue;   /* frame incomplete; need more bytes */
+            if (memcmp(buf + total - CFG_TAIL_LEN, CFG_TAIL, CFG_TAIL_LEN) != 0) {
+                memmove(buf, buf + 1, (size_t)(buf_len - 1)); buf_len--; continue;
+            }
+
+            uint16_t ack_word = (uint16_t)buf[CFG_HEADER_LEN + 2] | ((uint16_t)buf[CFG_HEADER_LEN + 3] << 8);
+            if (s_cfg_waiting && ack_word == (uint16_t)(s_cfg_pending.word | 0x0100)) {
+                const uint8_t *dptr = buf + CFG_HEADER_LEN + 2 + 2;   /* just past the echoed word */
+                uint16_t dlen = (uint16_t)(alen - 2);
+                s_cfg_pending.status = (dlen >= 2) ? ((uint16_t)dptr[0] | ((uint16_t)dptr[1] << 8)) : 0xFFFF;
+                uint16_t extra = (dlen > 2) ? (uint16_t)(dlen - 2) : 0;
+                if (extra > sizeof(s_cfg_pending.resp)) extra = sizeof(s_cfg_pending.resp);
+                memcpy(s_cfg_pending.resp, dptr + 2, extra);
+                s_cfg_pending.resp_len = extra;
+                xSemaphoreGive(s_cfg_done_sem);
+            }
+            /* else: unmatched/stray ACK -- ignore, no one is waiting for it. */
+
+            memmove(buf, buf + total, (size_t)(buf_len - total));
+            buf_len -= total;
             continue;
         }
 
-        /* Verify tail. */
+        /* ---- data-frame path ---- */
+        if (buf_len < FRAME_LEN) continue;
+
         const uint8_t *tail = buf + HEADER_LEN + TARGET_DATA_LEN;
         if (tail[0] != FRAME_TAIL[0] || tail[1] != FRAME_TAIL[1]) {
-            /* Bad tail: discard header byte and resync. */
             ESP_LOGD(TAG, "bad tail %02X %02X — resyncing", tail[0], tail[1]);
             memmove(buf, buf + 1, (size_t)(buf_len - 1));
             buf_len--;
             continue;
         }
 
-        /* Parse the three target slots. */
         prop_motion_target_t targets[PROP_MOTION_MAX_TARGETS];
         int count = 0;
         for (int i = 0; i < PROP_MOTION_MAX_TARGETS; i++) {
@@ -145,7 +201,6 @@ static void motion_task(void *arg)
             }
         }
 
-        /* Commit to the shared cache. */
         uint32_t ts = now_ms();
         portENTER_CRITICAL(&s_mux);
         s_target_count = count;
@@ -155,10 +210,192 @@ static void motion_task(void *arg)
 
         ESP_LOGD(TAG, "frame ok, %d targets", count);
 
-        /* Consume the frame from the buffer and continue. */
         memmove(buf, buf + FRAME_LEN, (size_t)(buf_len - FRAME_LEN));
         buf_len -= FRAME_LEN;
     }
+}
+
+/* ---- Config-command exchange --------------------------------------------- */
+
+/* Send one config-command frame and block (up to timeout_ms) for motion_task
+ * to hand back its ACK. Serializes concurrent callers on s_cfg_mutex -- only
+ * one command exchange is ever in flight. Returns true iff the module ACK'd
+ * with status == 0 (success); resp_out/resp_len_out (if non-NULL) receive any
+ * payload the ACK carried beyond the status word. */
+static bool ld2450_cfg_cmd(uint16_t word, const uint8_t *val, uint16_t val_len,
+                           uint8_t *resp_out, uint16_t resp_out_max, uint16_t *resp_len_out,
+                           int timeout_ms)
+{
+    xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
+
+    uint8_t frame[40];   /* largest real command is zone-set: 4+2+2+26+4 = 38 bytes */
+    uint16_t plen = (uint16_t)(2 + val_len);   /* command word + value */
+    int n = 0;
+    memcpy(frame + n, CFG_HEADER, CFG_HEADER_LEN); n += CFG_HEADER_LEN;
+    frame[n++] = (uint8_t)(plen & 0xFF);
+    frame[n++] = (uint8_t)(plen >> 8);
+    frame[n++] = (uint8_t)(word & 0xFF);
+    frame[n++] = (uint8_t)(word >> 8);
+    if (val_len) { memcpy(frame + n, val, val_len); n += val_len; }
+    memcpy(frame + n, CFG_TAIL, CFG_TAIL_LEN); n += CFG_TAIL_LEN;
+
+    s_cfg_pending.word     = word;
+    s_cfg_pending.status   = 0xFFFF;
+    s_cfg_pending.resp_len = 0;
+    xSemaphoreTake(s_cfg_done_sem, 0);   /* drain any stale signal */
+    s_cfg_waiting = true;
+
+    uart_write_bytes(MOTION_UART, frame, n);
+    bool got_ack = (xSemaphoreTake(s_cfg_done_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE);
+    s_cfg_waiting = false;
+
+    bool ok = got_ack && s_cfg_pending.status == 0x0000;
+    if (ok && resp_out && resp_len_out) {
+        uint16_t nc = s_cfg_pending.resp_len < resp_out_max ? s_cfg_pending.resp_len : resp_out_max;
+        memcpy(resp_out, s_cfg_pending.resp, nc);
+        *resp_len_out = nc;
+    } else if (resp_len_out) {
+        *resp_len_out = 0;
+    }
+
+    xSemaphoreGive(s_cfg_mutex);
+    return ok;
+}
+
+bool prop_motion_cfg_get_mode(prop_motion_track_mode_t *out)
+{
+    if (!out) return false;
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
+    uint8_t resp[4]; uint16_t resp_len = 0;
+    bool ok = ld2450_cfg_cmd(0x0091, NULL, 0, resp, sizeof(resp), &resp_len, 300) && resp_len >= 2;
+    if (ok) *out = (prop_motion_track_mode_t)((uint16_t)resp[0] | ((uint16_t)resp[1] << 8));
+    ld2450_cfg_cmd(0x00FE, NULL, 0, NULL, 0, NULL, 300);
+    return ok;
+}
+
+bool prop_motion_cfg_set_mode(prop_motion_track_mode_t mode)
+{
+    if (mode != PROP_MOTION_TRACK_SINGLE && mode != PROP_MOTION_TRACK_MULTI) return false;
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
+    uint16_t word = (mode == PROP_MOTION_TRACK_SINGLE) ? 0x0080 : 0x0090;
+    bool ok = ld2450_cfg_cmd(word, NULL, 0, NULL, 0, NULL, 300);
+    ld2450_cfg_cmd(0x00FE, NULL, 0, NULL, 0, NULL, 300);
+    return ok;
+}
+
+bool prop_motion_cfg_get_fw_version(char *out, size_t out_len)
+{
+    if (!out || out_len == 0) return false;
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
+    uint8_t resp[10]; uint16_t resp_len = 0;   /* fw_type(2) + major(2) + minor(4) = 8 */
+    bool ok = ld2450_cfg_cmd(0x00A0, NULL, 0, resp, sizeof(resp), &resp_len, 300) && resp_len >= 8;
+    if (ok) {
+        /* Best-effort pretty-print inferred from the PDF's one worked example
+         * (major/minor bytes reversed, printed as hex-digit pairs: raw
+         * [02,01,16,24,06,22] -> "V1.02.22062416"). Trust the raw bytes over
+         * this string if it ever looks wrong on a real module. */
+        snprintf(out, out_len, "V%u.%02X.%02X%02X%02X%02X",
+                 resp[3], resp[2], resp[7], resp[6], resp[5], resp[4]);
+    }
+    ld2450_cfg_cmd(0x00FE, NULL, 0, NULL, 0, NULL, 300);
+    return ok;
+}
+
+bool prop_motion_cfg_get_mac(uint8_t mac_out[3])
+{
+    if (!mac_out) return false;
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
+    uint8_t resp[6]; uint16_t resp_len = 0;   /* fixed type(1) + MAC(3) = 4 */
+    /* MAC bytes are BIG-endian -- the one field in this protocol that isn't LE. */
+    bool ok = ld2450_cfg_cmd(0x00A5, (const uint8_t[]){0x01, 0x00}, 2, resp, sizeof(resp), &resp_len, 300)
+              && resp_len >= 4;
+    if (ok) memcpy(mac_out, resp + 1, 3);
+    ld2450_cfg_cmd(0x00FE, NULL, 0, NULL, 0, NULL, 300);
+    return ok;
+}
+
+bool prop_motion_cfg_set_bt(bool on)
+{
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
+    uint8_t val[2] = { 0x00, (uint8_t)(on ? 0x01 : 0x00) };   /* LE: on=0x0100, off=0x0000 */
+    bool ok = ld2450_cfg_cmd(0x00A4, val, 2, NULL, 0, NULL, 300);
+    ld2450_cfg_cmd(0x00FE, NULL, 0, NULL, 0, NULL, 300);
+    if (ok) ESP_LOGI(TAG, "LD2450 bluetooth %s", on ? "enabled" : "disabled");
+    return ok;
+}
+
+bool prop_motion_cfg_get_zone(prop_motion_zone_mode_t *mode, prop_motion_zone_t zones[3])
+{
+    if (!mode || !zones) return false;
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
+    uint8_t resp[CFG_RESP_MAX]; uint16_t resp_len = 0;
+    /* resp layout: type(2) + 3 zones x 4 int16 (x1,y1,x2,y2), plain LE two's
+     * complement -- NOT sign-magnitude, unlike the real-time data frames. */
+    bool ok = ld2450_cfg_cmd(0x00C1, NULL, 0, resp, sizeof(resp), &resp_len, 300) && resp_len >= 26;
+    if (ok) {
+        *mode = (prop_motion_zone_mode_t)((uint16_t)resp[0] | ((uint16_t)resp[1] << 8));
+        for (int i = 0; i < 3; i++) {
+            const uint8_t *z = resp + 2 + i * 8;
+            zones[i].x1_mm = (int16_t)((uint16_t)z[0] | ((uint16_t)z[1] << 8));
+            zones[i].y1_mm = (int16_t)((uint16_t)z[2] | ((uint16_t)z[3] << 8));
+            zones[i].x2_mm = (int16_t)((uint16_t)z[4] | ((uint16_t)z[5] << 8));
+            zones[i].y2_mm = (int16_t)((uint16_t)z[6] | ((uint16_t)z[7] << 8));
+        }
+    }
+    ld2450_cfg_cmd(0x00FE, NULL, 0, NULL, 0, NULL, 300);
+    return ok;
+}
+
+bool prop_motion_cfg_set_zone(prop_motion_zone_mode_t mode, const prop_motion_zone_t zones[3])
+{
+    if (!zones || (mode != PROP_MOTION_ZONE_OFF && mode != PROP_MOTION_ZONE_INCLUDE &&
+                   mode != PROP_MOTION_ZONE_EXCLUDE)) return false;
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
+    uint8_t val[26];
+    val[0] = (uint8_t)mode; val[1] = 0x00;
+    for (int i = 0; i < 3; i++) {
+        uint8_t *z = val + 2 + i * 8;
+        z[0] = (uint8_t)(zones[i].x1_mm & 0xFF); z[1] = (uint8_t)((uint16_t)zones[i].x1_mm >> 8);
+        z[2] = (uint8_t)(zones[i].y1_mm & 0xFF); z[3] = (uint8_t)((uint16_t)zones[i].y1_mm >> 8);
+        z[4] = (uint8_t)(zones[i].x2_mm & 0xFF); z[5] = (uint8_t)((uint16_t)zones[i].x2_mm >> 8);
+        z[6] = (uint8_t)(zones[i].y2_mm & 0xFF); z[7] = (uint8_t)((uint16_t)zones[i].y2_mm >> 8);
+    }
+    bool ok = ld2450_cfg_cmd(0x00C2, val, sizeof(val), NULL, 0, NULL, 300);
+    ld2450_cfg_cmd(0x00FE, NULL, 0, NULL, 0, NULL, 300);
+    return ok;
+}
+
+/* How long to wait for data streaming to resume after a restart, at whichever
+ * baud we expect the module to come back at. Shared with the baud-change path. */
+#define LD2450_RESYNC_TIMEOUT_MS 5000
+
+/* Poll prop_motion_ms_since_frame() until a FRESH data frame lands. motion_task
+ * parses it on its own -- no separate read path needed here. Used after a
+ * restart (and after a baud change) to confirm the module is back. */
+static bool ld2450_wait_for_data_frame(int timeout_ms)
+{
+    int64_t start    = esp_timer_get_time();
+    int64_t deadline = start + (int64_t)timeout_ms * 1000;
+    while (esp_timer_get_time() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        /* Only count a frame that landed AFTER this wait began — a frame
+         * received just before the restart/baud switch is still "recent" by
+         * age but proves nothing about the module having come back. */
+        uint32_t since   = prop_motion_ms_since_frame();
+        uint32_t elapsed = (uint32_t)((esp_timer_get_time() - start) / 1000);
+        if (since < elapsed) return true;
+    }
+    return false;
+}
+
+bool prop_motion_cfg_restart(void)
+{
+    if (!ld2450_cfg_cmd(0x00FF, (const uint8_t[]){0x01, 0x00}, 2, NULL, 0, NULL, 300)) return false;
+    if (!ld2450_cfg_cmd(0x00A3, NULL, 0, NULL, 0, NULL, 300)) return false;
+    ESP_LOGI(TAG, "LD2450 restart requested; waiting for the module to come back up");
+    bool back = ld2450_wait_for_data_frame(LD2450_RESYNC_TIMEOUT_MS);
+    if (!back) ESP_LOGE(TAG, "LD2450 did not resume streaming after restart");
+    return back;
 }
 
 /* ---- Public API ---------------------------------------------------------- */
@@ -174,7 +411,8 @@ esp_err_t prop_motion_init(void)
         .source_clk = UART_SCLK_DEFAULT,
     };
 
-    /* rx_buffer_size=1024, tx_buffer_size=0 (sensor is read-only in passive mode),
+    /* rx_buffer_size=1024, tx_buffer_size=0 (config commands are tiny; with no
+     * TX ring uart_write_bytes sends synchronously, which is fine here),
      * event_queue_size=0, no event queue, no interrupt flags. */
     esp_err_t err = uart_driver_install(MOTION_UART, 1024, 0, 0, NULL, 0);
     if (err != ESP_OK) {
@@ -198,6 +436,10 @@ esp_err_t prop_motion_init(void)
         return sp;
     }
 
+    s_cfg_mutex    = xSemaphoreCreateMutex();
+    s_cfg_done_sem = xSemaphoreCreateBinary();
+    s_current_baud = MOTION_BAUD;
+
     /* Task: 4096-byte stack, priority 4, pinned to core 1. */
     BaseType_t r = xTaskCreatePinnedToCore(motion_task, "prop_motion",
                                            4096, NULL, 4, NULL, 1);
@@ -210,6 +452,16 @@ esp_err_t prop_motion_init(void)
     s_available = true;
     ESP_LOGI(TAG, "PROP_MOTION UART2 ok (GPIO%d/GPIO%d @ %d 8N1)",
              MOTION_TX_GPIO, MOTION_RX_GPIO, MOTION_BAUD);
+
+    /* Best-effort: disable the module's onboard Bluetooth (on by default;
+     * unused by this project, and removing an always-on 24GHz-adjacent BT
+     * radio rules it out as an RF-interference variable for the C6's own
+     * BLE/CSI work). motion_task is already running and routes this
+     * command's ACK back to us. */
+    if (!prop_motion_cfg_set_bt(false)) {
+        ESP_LOGW(TAG, "LD2450 bluetooth-off at boot failed/timed out — leaving module default");
+    }
+
     return ESP_OK;
 }
 
