@@ -261,10 +261,12 @@ static void sen0395_task(void *arg)
 {
     (void)arg;
 
-    /* Send sensorStop then sensorStart before entering the read loop. */
+    /* Send sensorStop then sensorStart before entering the read loop.
+     * Vendor lib enforces >=1000ms between CLI commands (DFRobot_mmWave_Radar.h
+     * DELAY=1000) — give sensorStop that much room before sensorStart follows. */
     vTaskDelay(pdMS_TO_TICKS(700));
     uart_write_bytes(SEN0395_UART, "\rsensorStop\r",  12);
-    vTaskDelay(pdMS_TO_TICKS(350));
+    vTaskDelay(pdMS_TO_TICKS(1000));
     sen0395_kick();
     ESP_LOGI(TAG, "SEN0395 sensorStart sent");
 
