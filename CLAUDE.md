@@ -64,11 +64,21 @@ full list of 6.0/board quirks (cJSON, driver split, esp_lcd API, C6 SDIO pins). 
 
 ## Crash forensics (flash core dump)
 
-Live serial capture (`prop.py trace`) can't reliably catch an intermittent boot-time panic — opening
-the port doesn't cleanly resync with the exact reboot moment, and often nobody's watching when it
-happens. `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH` (`sdkconfig.defaults`) persists the full register dump
-+ backtrace to a dedicated `coredump` partition (`partitions.csv`, 64 KB) on any panic, independent of
-serial. Decode after the fact:
+**Currently disabled by default** (`sdkconfig.defaults`, commented out) — enabling it reliably breaks
+boot on this board: it forces `FREERTOS_ISR_STACKSIZE` from 1536→2096 bytes/core (a documented
+ESP-IDF Kconfig floor, `components/freertos/Kconfig`), and that extra ~1.1 KB lands in the narrow
+pre-scheduler window where `main_task`'s own 8192 B stack gets allocated — starving it (measured:
+`internal free=10832, largest contiguous block=7168` bytes at that point — enough total, not enough
+contiguous). Full root-cause + fix path (vendor esp-hosted into `components/` and shave its hardcoded
+5120 B `sdio_data_to_rx_buf_task` stack) is written up in the `sdkconfig.defaults` comment above the
+`CONFIG_ESP_COREDUMP_*` lines — read that before re-enabling, and load-test under real WiFi/BLE/CSI
+traffic afterward (that task is on the SDIO receive path).
+
+When re-enabled: live serial capture (`prop.py trace`) can't reliably catch an intermittent boot-time
+panic — opening the port doesn't cleanly resync with the exact reboot moment, and often nobody's
+watching when it happens. `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH` (`sdkconfig.defaults`) persists the
+full register dump + backtrace to a dedicated `coredump` partition (`partitions.csv`, 64 KB) on any
+panic, independent of serial. Decode after the fact:
 ```powershell
 idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 coredump-info
 ```
@@ -85,6 +95,10 @@ parttool.py -p COM7 erase_partition --partition-table-file build/partition_table
 The firmware serves a live screen capture. The board advertises **mDNS**, so reach it at
 **`comm-unit-7.local`** (hostname `PROP_HOSTNAME`) instead of hunting the IP — no serial grep
 needed. (STA IP still shows in the log, e.g. `172.17.2.167`; AP fallback is `192.168.4.1`.)
+**Windows caveat**: `.local` resolution can fail outright from a plain PowerShell/Bash shell
+(`getaddrinfo failed`) on hosts without a working mDNS resolver (no Bonjour/mDNS service) — if
+`tools/prop.py` can't resolve the hostname, fall back to the STA IP from the boot log or pass
+`--host 192.168.4.1` (AP mode) instead of chasing the mDNS name.
 
 ```bash
 # tools/prop.py is the fast loop: wait-ready -> navigate -> settle -> capture, in one go.
