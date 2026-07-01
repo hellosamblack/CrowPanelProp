@@ -57,12 +57,12 @@ static bool parse_target(const uint8_t *p, prop_motion_target_t *t)
 {
     int16_t  x   = ld2450_signmag(p + 0);
     int16_t  y   = ld2450_signmag(p + 2);
-    int16_t  spd = ld2450_signmag(p + 4);
+    int16_t  spd = ld2450_signmag(p + 4);   /* raw units: cm/s (protocol PDF), not mm/s */
     uint16_t dr  = (uint16_t)p[6] | ((uint16_t)p[7] << 8);
 
     t->x_mm        = x;
     t->y_mm        = y;
-    t->speed_mm_s  = spd;
+    t->speed_mm_s  = (int16_t)(spd * 10);   /* cm/s -> mm/s so the field name is honest */
     t->dist_res_mm = dr;
 
     /* Inactive slots are all-zero; a real target has a non-zero coordinate. */

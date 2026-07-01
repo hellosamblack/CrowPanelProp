@@ -5619,7 +5619,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
                 motion_target_screen_pos(tgts[i].x_mm, tgts[i].y_mm, &bx, &by);
                 lv_obj_set_pos(s_motion_blips[i], bx - 6, by - 6);
                 lv_obj_set_style_bg_color(s_motion_blips[i],
-                    (tgts[i].speed_mm_s > 200 || tgts[i].speed_mm_s < -200)
+                    (tgts[i].speed_mm_s > 2000 || tgts[i].speed_mm_s < -2000)
                         ? COL_ALERT : COL_AMBER, 0);
                 lv_obj_clear_flag(s_motion_blips[i], LV_OBJ_FLAG_HIDDEN);
 
