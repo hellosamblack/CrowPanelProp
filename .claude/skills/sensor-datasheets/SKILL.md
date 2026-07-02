@@ -35,9 +35,11 @@ cold.
 - **HLK-LD2450** (`references/ld2450.md`) — 24GHz FMCW, 3-target Cartesian (X/Y/speed) UART
   tracking radar, 256000 baud, 10 Hz, ±60° FOV. Firmware: `main/prop_motion.c`, UART2 on
   GPIO53/54 (J9/J11). **Sign-magnitude encoding, not two's complement** — see the
-  `ld2450-sign-magnitude` project memory. Only the read-only data-frame protocol is
-  implemented; a documented but unimplemented config-command protocol (zone filtering,
-  baud/mode switching) is captured in the reference file if ever needed.
+  `ld2450-sign-magnitude` project memory. A full config-command read/write API (mode, onboard
+  Bluetooth, zone filtering, firmware version, MAC, restart/factory-reset, baud rate) is
+  designed but not yet implemented — see
+  `docs/superpowers/plans/2026-07-01-sensor-protocol-followups.md`; check
+  `main/include/prop_motion.h` for `prop_motion_cfg_*` to see whether it's landed since.
 - **MPU-6500** (`references/mpu6500.md`) — I2C IMU (accel+gyro+DMP), address 0x68/0x69, on the
   shared I2C1 bus with the touchscreen (see the `board-io` skill for the bus map). Chip is
   confirmed genuinely MPU-6500 (WHO_AM_I 0x70) via the `imu-is-mpu6500` project memory.
