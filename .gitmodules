@@ -1,3 +1,6 @@
 [submodule "reference"]
 	path = docs/referenceDesign
 	url = https://github.com/Elecrow-RD/CrowPanel-Advanced-7inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen.git
+[submodule "submodules/lidar-roomscanner"]
+	path = submodules/lidar-roomscanner
+	url = https://github.com/hellosamblack/lidar-roomscanner
