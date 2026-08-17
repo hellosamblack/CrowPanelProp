@@ -72,53 +72,9 @@ full list of 6.0/board quirks (cJSON, driver split, esp_lcd API, C6 SDIO pins). 
 
 ## Crash forensics (flash core dump)
 
-**Enabled as of 2026-07-01.** It was disabled for a while: enabling it forces `FREERTOS_ISR_STACKSIZE`
-from 1536→2096 bytes/core (a documented ESP-IDF Kconfig floor, `components/freertos/Kconfig`), and
-that extra ~1.1 KB used to land in the narrow pre-scheduler window where `main_task`'s own 8192 B
-stack gets allocated, starving it (measured: `internal free=10832, largest contiguous block=7168`
-bytes at that point — enough total, not enough contiguous). The fix was
-`CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM` (`sdkconfig.defaults`) — moves esp_hosted's SDIO DMA mempool
-to PSRAM (safe on the P4: its PSRAM DMA is cache-coherent, unlike classic ESP32) — confirmed on
-hardware to free ~89 KB of internal RAM, comfortably clearing that ~1.1 KB shortfall.
-
-Re-enabling coredump then exposed a second, separate, genuinely-intermittent bug: the esp_event
-`sys_evt` task's default 2304 B stack overflows the hardware stack guard on some boots, in the
-STA_GOT_IP → mDNS registration → netif handler callback chain (`Stack protection fault`, SP landing
-12 bytes below the stack's lower bound). This is very likely the original "intermittent boot-time
-panic" this section was written to catch, just never pinned to a task before — coredump's stack-canary
-check is what finally caught it. Fixed by bumping `CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE` to 3584 B
-(`sdkconfig.defaults`); verified with 8/8 clean reboots afterward (was intermittent before the fix —
-2 of 3 initial trials panicked at that exact point). If a new intermittent panic ever reappears here,
-check `sys_evt` first before assuming it's the same root cause.
-
-**Further internal-RAM headroom (2026-07-01).** Cross-referenced xiaozhi-esp32's `elecrow-p4-board`
-port (a community AI-chatbot firmware with a maintained board port for this exact P4+C6 hardware) for
-esp_hosted tuning ideas. Landed five changes (`sdkconfig.defaults`), each verified with its own
-`prop.py trace --trials 8` (8/8 clean): `CONFIG_WIFI_RMT_{IRAM_OPT,EXTRA_IRAM_OPT,RX_IRAM_OPT,SLP_IRAM_OPT}=n`,
-`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`, `CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL` 32768→49152,
-`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` 16384→4096, `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y`, and
-`CONFIG_ESP_TASK_WDT_TIMEOUT_S` 5→10. **Gotcha worth knowing before touching WiFi IRAM/Kconfig options
-again:** under `CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED`, the familiar `CONFIG_ESP_WIFI_*` names (e.g.
-`ESP_WIFI_IRAM_OPT`) are just mirrored aliases defined in
-`managed_components/espressif__esp_wifi_remote/*/Kconfig.wifi.in` — the real settings live under
-`CONFIG_WIFI_RMT_*`. Setting the `ESP_WIFI_*` alias directly in `sdkconfig`/`sdkconfig.defaults` has no
-effect and silently gets recomputed back to its default on the next `idf.py reconfigure`.
-
-Live serial capture (`prop.py trace`) still can't reliably catch a one-off intermittent panic —
-opening the port doesn't cleanly resync with the exact reboot moment, and often nobody's watching
-when it happens. `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH` (`sdkconfig.defaults`) persists the full
-register dump + backtrace to a dedicated `coredump` partition (`partitions.csv`, 64 KB) on any panic,
-independent of serial. Decode after the fact:
-```powershell
-idf.py -C "f:\git\personal\CrowPanelProp" -p COM7 coredump-info
-```
-`CONFIG_ESP_COREDUMP_FLASH_NO_OVERWRITE=y` keeps only the **first** crash after a reflash/erase — this
-doubles as the flash-wear guard for a boot loop: once one dump is captured, further panics just reboot
-without touching flash again. To capture a *new* dump later, erase the partition first (a normal
-`idf.py flash` does **not** touch data partitions, so an old dump survives reflashes):
-```powershell
-parttool.py -p COM7 erase_partition --partition-table-file build/partition_table/partition-table.bin --partition-name coredump
-```
+Coredump-to-flash decoding, boot-panic root causes already diagnosed on this board, and the
+esp_hosted/WiFi-hosted Kconfig gotchas that came out of chasing them — moved to the
+`crash-forensics` skill (task-specific, not needed every session).
 
 ## Seeing the UI WITHOUT asking a human (use this constantly for graphics)
 
@@ -291,28 +247,5 @@ The C6 co-processor is mined for prop "sensor" data beyond plain WiFi — the th
 
 ## API quick reference (for scripting/tests)
 
-`POST /cmd` (JSON): `{"cmd":"scene","value":"SCANNING"}`, `{"cmd":"ui","screen":"<name>"}`
-(screens: `home`=console, `scanner archive cassette insights menu wifi display audio leds
-vitals scan spectrum rfband ble csi instruments sensors dircal minimap range about`; `instruments`/`sensors`
-are the rail submenus, `dircal` is the SCANNER travel-direction calibration (opened
-by tapping the apex operator dot), the rest deep-link straight to a panel),
-`{"cmd":"input","control":"selector|tab|action","arg":"cw|ccw|press"|N}`
-(simulated dial/tab/action nav; boots to `home`),
-`{"cmd":"sens","value":0-100}`, `{"cmd":"fx","on":true,"value":0-100}` (CRT overlay on/off + intensity),
-`{"cmd":"fx","fps":true}` (toggle FPS HUD — separate from the overlay),
-`{"cmd":"led","name":"alert","on":true}`, `{"cmd":"status","value":"..."}`,
-`{"cmd":"channel","value":"..."}`, `{"cmd":"wifi","ssid":"..","pass":"..","remember":true}`.
-`GET /state` JSON (scene/status/channel/link/sensitivity/channel_pos/ip/version/leds,
-plus `ble:{count,strongest,known}` when BLE is up, `csi_live` bool, and
-`ftm:{tracked,capable,ranged}` when FTM ranging is up);
-`GET /telemetry` JSON — richer sibling of `/state` for live sensor/instrument values
-(`screen`, `imu:{yaw_deg,pitch_deg,roll_deg,accel,gyro,temp_c,steps}`, `radar:[{x_mm,y_mm,speed_mm_s}]`,
-`track:{x,y,heading_deg}`, `mic:{db,bands}`, `aux_radar:{seeed,sen0395}`, `ble`, `csi`) — see
-"Watching live variables instead of screenshots" above;
-`GET /screenshot` RGB565 read from the DPI framebuffer (whole panel incl. the fx overlay); `WS /ws`
-pushes both `/state` (`type:"state"`, on change) and `/telemetry` (`type:"telemetry"`, ~5 Hz) payloads.
-
-**Dev CLI:** `python tools/prop.py shot out.png --screen spectrum --wait` (wait→drive→
-capture), plus `state/telemetry/watch/scene/screen/sens/fx/trace/decode`. `trace`/`decode` resolve a
-crash or boot-hang PC against `build/communicator.elf`; `coredump-info` (see Crash forensics above)
-decodes a persisted panic without needing serial capture at all. See the `communicator-ui` skill.
+The `POST /cmd`/`GET /state`/`GET /telemetry`/`GET /screenshot`/`WS /ws` request shapes and the
+`tools/prop.py` dev CLI are documented in the `communicator-ui` skill (section 7).

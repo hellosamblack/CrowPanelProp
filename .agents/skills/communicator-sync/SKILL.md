@@ -1,6 +1,15 @@
 ---
 name: communicator-sync
-description: Keep the CrowPanel communicator firmware UI (hand-written C in main/prop_ui.c) and the LVGL Pro XML design project (ui/) in sync — in either direction. A collaborator edits screens in the LVGL editor / viewer.lvgl.io; this reconciles their XML changes into the firmware, or mirrors firmware changes back into the XML. Use whenever the C and XML UIs have drifted or might have: "sync the UI", "port the editor's <screen> changes to firmware", "my collaborator redesigned the WIFI/ARCHIVE/SETUP screen in LVGL", "pull the LVGL changes into prop_ui.c", "the XML and C are out of sync", "regenerate/update the XML for <panel>", "reflect this prop_ui.c change in the design", or after either ui/*.xml or main/prop_ui.c is edited and the other side should follow. Also use to validate that ui/ still previews in the viewer.
+description: >-
+  Keep the CrowPanel communicator firmware UI (hand-written C in main/prop_ui.c) and the LVGL Pro
+  XML design project (ui/) in sync — in either direction. A collaborator edits screens in the LVGL
+  editor / viewer.lvgl.io; this reconciles their XML changes into the firmware, or mirrors firmware
+  changes back into the XML. Use whenever the C and XML UIs have drifted or might have: "sync the
+  UI", "port the editor's <screen> changes to firmware", "my collaborator redesigned the
+  WIFI/ARCHIVE/SETUP screen in LVGL", "pull the LVGL changes into prop_ui.c", "the XML and C are
+  out of sync", "regenerate/update the XML for <panel>", "reflect this prop_ui.c change in the
+  design", or after either ui/*.xml or main/prop_ui.c is edited and the other side should follow.
+  Also use to validate that ui/ still previews in the viewer.
 ---
 
 # Communicator — C ↔ XML UI sync
