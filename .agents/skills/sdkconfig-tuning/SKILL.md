@@ -5,7 +5,7 @@ description: Change and verify Kconfig/sdkconfig settings on the CrowPanel commu
 
 # sdkconfig tuning — change + verify loop
 
-This board's stability history (see `CLAUDE.md`'s Crash forensics section and the
+This board's stability history (see `AGENTS.md`'s Crash forensics section and the
 `ftm-ranging-and-ram-margin` memory) is a string of internal-RAM-margin and
 esp_hosted-WiFi Kconfig fixes, each only trusted after a real reboot-stress test on
 hardware — not just "it built." Use this loop for any sdkconfig change in that vein.
@@ -74,6 +74,6 @@ right change.
 ## 8. Document why, not just what
 
 Land the reasoning in `sdkconfig.defaults` comments (the settings' actual source of
-truth) and, if it's part of an ongoing stability saga, update `CLAUDE.md`'s Crash
+truth) and, if it's part of an ongoing stability saga, update `AGENTS.md`'s Crash
 forensics section too — that section is the narrative history future sessions read
 before touching these settings again.

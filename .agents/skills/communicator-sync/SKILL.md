@@ -13,7 +13,7 @@ a panel reworked in C should be reflected back so the design surface stays hones
 
 This skill reconciles the two **in whichever direction the drift points**. Neither side
 is globally authoritative — match by intent, screen by screen. Read the repo
-`CLAUDE.md` first for the architecture; this is the *how to reconcile them* loop.
+`AGENTS.md` first for the architecture; this is the *how to reconcile them* loop.
 
 ## The three references — read the ones you need
 
@@ -37,8 +37,8 @@ start in git. Find his UI commits and turn them into a worklist:
 git log --oneline -15 -- ui/                  # his recent editor commits
 git show <sha> -- ui/                         # what one commit changed
 # the helper turns a range into a C<->XML worklist (changed screens -> their builders):
-python3 .claude/skills/communicator-sync/scripts/drift.py --range <sha>..HEAD
-python3 .claude/skills/communicator-sync/scripts/drift.py          # uncommitted, both sides
+python3 .agents/skills/communicator-sync/scripts/drift.py --range <sha>..HEAD
+python3 .agents/skills/communicator-sync/scripts/drift.py          # uncommitted, both sides
 ```
 
 `drift.py` reads the diff and prints each changed file's counterpart and the sync
@@ -66,11 +66,11 @@ notes instead of editing them away.
 
 Always, after any XML edit:
 ```bash
-python3 .claude/skills/communicator-sync/scripts/check_ui.py
+python3 .agents/skills/communicator-sync/scripts/check_ui.py
 ```
 Green = the project loads and every screen previews. Fix every ERROR before moving on.
 
-After any C edit, build (ESP-IDF 6.0.1, not on PATH — see CLAUDE.md / communicator-ui):
+After any C edit, build (ESP-IDF 6.0.1, not on PATH — see AGENTS.md / communicator-ui):
 ```bash
 . ~/.local/esp/esp-idf/export.sh && idf.py build      # Linux
 # new main/*.c file? idf.py reconfigure first (CMake GLOBs at configure time)
@@ -88,7 +88,7 @@ the mapping. Say which tier you reached.
 State what synced (which screens, which direction), what you deliberately left
 divergent and why (the not-in-sync list), and any genuine conflict that needs the
 user's call. If a brand-new screen appeared in the editor with no C counterpart, note
-that wiring it into firmware is the full "Add a screen" procedure in `CLAUDE.md`
+that wiring it into firmware is the full "Add a screen" procedure in `AGENTS.md`
 (new `PK_*`, builder, `open_panel` case, menu row, `close_panel` NULLs, `reconfigure`).
 
 ## Guardrails

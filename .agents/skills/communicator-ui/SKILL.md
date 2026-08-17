@@ -7,7 +7,7 @@ description: Iterate on the CrowPanel communicator prop firmware UI (repo root) 
 
 Visual development workflow for the repo root. The goal is a tight
 build → flash → **look at the screen yourself** → adjust loop, so you never ask a
-human to eyeball the panel. Read `CLAUDE.md` first for the
+human to eyeball the panel. Read `AGENTS.md` first for the
 deeper architecture; this skill is the *how to iterate* checklist.
 
 ## 1. Build + flash (ESP-IDF 6.0.1, not on PATH)

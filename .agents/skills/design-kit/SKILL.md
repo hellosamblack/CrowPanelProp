@@ -100,4 +100,4 @@ after — a kit change touches every screen that uses it, so confirm the deltas 
 LVGL's heap is in PSRAM (`main/lv_port_mem.c`) so object count is no longer a hard ceiling,
 but panels are still **lazily built one-at-a-time** (`open_panel`/`close_panel`) to keep the
 per-frame render cost down. Heavy procedural screens (spectrum) run ~8 fps; don't pile static
-objects onto those. See `communicator-ui` and `CLAUDE.md` for the why.
+objects onto those. See `communicator-ui` and `AGENTS.md` for the why.
