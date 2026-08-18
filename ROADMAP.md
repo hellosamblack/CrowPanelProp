@@ -32,3 +32,24 @@ mirroring how BLE/CSI were de-risked.
   version. The SIGNAL ENV panel uses a synthetic RSSI-variance trace instead.
 - **WiFi promiscuous / monitor mode** and **FTM ranging**: also unimplemented over the
   hosted transport (signature-only entries in the esp-hosted API doc comment, no RPC).
+
+## Known issues / tech debt
+
+- **LVGL PPA patches are environment-fragile.** `CONFIG_LV_USE_PPA=y` needs 3 local fixes to
+  LVGL 9.4.0's experimental PPA draw unit (commit `b68e7cf9`); the repo reorg (`0ad5e09b`)
+  untracked `managed_components/`, so any fresh component download silently reverts to stock
+  and garbles every sub-region fill (missing rail, grey/fragmented buttons, flicker — looks
+  like a display-driver fault, cost a full diagnosis session on 2026-08-18). Stopgap:
+  `tools/apply_lvgl_patches.sh` restores the files from git history (version-guarded to
+  9.4.0; re-diff on any lvgl bump). Durable fix wanted: apply patches automatically from the
+  build (CMake hook), or upstream the three fixes to LVGL.
+- **`mpu6500: fifo data is too little` spams the serial console ~5×/sec** (LibDriver eMD
+  core, `components/mpu6500/`). Not fatal — DMP data flows fine — but it drowns the boot log.
+  Likely the FIFO poll task outrunning the DMP output rate; rate-limit or gate the driver's
+  debug print.
+- **`wifi_secret.env` created after the first CMake configure is silently ignored** by
+  `idf.py build` — the configure-dependency is only registered when the file exists at
+  configure time (`main/CMakeLists.txt`), so a fresh-host bringup bakes empty creds and the
+  unit comes up AP-only (bit the 2026-08-18 recovery: the "dark board" was just AP-only).
+  Workaround: `idf.py reconfigure` after creating the file; fix: register the dep path
+  unconditionally.

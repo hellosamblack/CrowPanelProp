@@ -88,6 +88,12 @@ CRT overlay** — scanlines/vignette appear in captures now. Reads are cache-inv
 
 ## 4. Hard-won gotchas (don't relearn these)
 
+- **Chrome renders grey/garbled/missing (rail gone, buttons grey or fragmented, flickering
+  lines) on a freshly-set-up host?** That is NOT a display/DSI fault: a fresh
+  `managed_components/` download reverts LVGL 9.4.0 to stock, which has 3 bugs in its PPA
+  draw unit (`CONFIG_LV_USE_PPA=y`; sub-region fills garble, full-area fills look fine).
+  Run `./tools/apply_lvgl_patches.sh` (restores the commit-`b68e7cf9` fixes) and rebuild —
+  check this FIRST before touching display/driver code.
 - **LVGL's heap lives in PSRAM** (custom allocator `main/lv_port_mem.c`, selected by
   `CONFIG_LV_USE_CUSTOM_MALLOC`). Do NOT switch back to the builtin internal pool / raise
   `LV_MEM`: esp_hosted's SDIO DMA mempool needs that internal RAM and boot-loops

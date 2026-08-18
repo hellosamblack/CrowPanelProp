@@ -5,8 +5,11 @@ description: Audit the CrowPanel communicator prop firmware (repo root) for perf
 
 # Communicator performance review
 
-This board renders **everything in software** on a 1024×600 RGB565 panel (no GPU/PPA on chip
-rev v1.3). That single fact dominates the whole problem: a full-screen redraw is ~250 ms (~4 fps),
+This board renders **almost everything in software** on a 1024×600 RGB565 panel. (The P4's PPA
+*is* usable on rev v1.3 — the "broken silicon" belief was disproven in commit `b68e7cf9`: LVGL's
+PPA draw unit is enabled via `CONFIG_LV_USE_PPA=y` and bids only on opaque square fills, roughly
+fps-neutral on this text/vector UI; the 2D-DMA DPI flush hook is also on. Everything else — text,
+lines, masks — is software.) Software cost still dominates: a full-screen redraw is ~250 ms (~4 fps),
 so framerate and responsiveness are won or lost by **how much area is redrawn, where the pixels and
 draw-masks live, and who else is stealing the CPU**. Your job is to find the specific code that
 violates those constraints, rank fixes by frame-time impact, and tell the user what to change —
@@ -199,7 +202,10 @@ These are settled. A "fix" that violates one is a regression, not an improvement
 - **Don't touch `CONFIG_ESP32P4_*REV*`** — board is rev v1.3; wrong rev → won't boot.
 - **Keep `swap_bytes=false`** in the display cfg — the panel takes native RGB565; true renders the
   background dark magenta.
-- **No PPA/GPU rotation path** — breaks on rev v1.3 (that's why software rendering in the first place).
+- **PPA fill acceleration requires the 3 local LVGL patches** — stock LVGL 9.4.0's PPA draw unit
+  garbles sub-region fills (missing rail, grey buttons). After any fresh `managed_components/`
+  download run `./tools/apply_lvgl_patches.sh` (fixes from commit `b68e7cf9`). The PPA *rotation*
+  path remains unverified on this board — don't assume it works; spike it off the boot path first.
 - **Never call WiFi/SDIO under the LVGL lock** — cache from a background task; the UI reads the cache.
 - **Don't run the draw pipeline (canvas layer-draw / `lv_snapshot`) from a non-LVGL task under the
   lock** — it deadlocks (that's why `/screenshot` reads the FB directly and `prop_fx` paints pixels).

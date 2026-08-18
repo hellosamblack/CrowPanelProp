@@ -12,8 +12,9 @@ config already pins the pre-v3 silicon line.
 ## Repository layout
 
 This repo left the Elecrow fork network; the original vendor material (hardware design files,
-stock examples, factory firmware) now lives in the **`reference/` submodule** instead of being
-tracked inline — that kept the git tree small enough for the LVGL online viewer (see `ui/` below).
+stock examples, factory firmware) now lives in the **`docs/referenceDesign/` submodule** (named
+`reference` in `.gitmodules`) instead of being tracked inline — that kept the git tree small
+enough for the LVGL online viewer (see `ui/` below).
 
 - **root** — the ESP-IDF app (`main/`, `components/`, `CMakeLists.txt`, `sdkconfig`, …). This is
   the build. Was previously `firmware/communicator/`. `components/` holds all local ESP-IDF
@@ -29,12 +30,15 @@ tracked inline — that kept the git tree small enough for the LVGL online viewe
 - **`docs/`** — design specs / plans (`docs/superpowers/`), the GPIO registry
   (`docs/gpio_registry.yml`), plus two consolidated subtrees:
   - **`docs/hardware/`** — `datasheets/` (vendor component datasheets) and `schematic/` (KiCad
-    board files for this design — not part of the `reference/` submodule).
+    board files for this design — not part of the vendor submodule).
   - **`docs/design/`** — UI mockup (`communicator-mockup.html`) + reference screenshots
     (`screens/`), plus `inspiration/` and `author-notes/` (non-build creative reference material).
-- **`reference/`** — submodule → `Elecrow-RD/CrowPanel-Advanced-7inch-ESP32-P4-HMI-AI-Display-1024x600`.
-  Reference-only; not checked out by default. Run `git submodule update --init reference` to get the
+- **`docs/referenceDesign/`** — submodule (name `reference`) →
+  `Elecrow-RD/CrowPanel-Advanced-7inch-ESP32-P4-HMI-AI-Display-1024x600`. Reference-only; not
+  checked out by default. Run `git submodule update --init docs/referenceDesign` to get the
   vendor `example/`, `factory_firmware/`, `factory_sourcecode/`, `3D file/`, `Eagle_SCH&PCB/`, `readme.md`.
+- **`submodules/lidar-roomscanner`** — submodule → the separate LIDAR scanning rig this prop's
+  LIDAR panel streams from (`prop_lidar.c` is only the thin client). Not needed to build.
 
 ## Build / flash / monitor
 
@@ -61,11 +65,21 @@ resolve the project as the parent of `tools/`, so they work unchanged from root.
 before building — `CMakeLists.txt` GLOBs `main/*.c` at configure time and won't pick up new files otherwise.
 Symptom: `undefined reference` link errors that disappear after a reconfigure.
 
+**After any fresh `managed_components/` download** (new clone/host, fullclean + re-resolve, lvgl
+re-pin), run **`./tools/apply_lvgl_patches.sh`** — `CONFIG_LV_USE_PPA=y` needs 3 local fixes to
+LVGL 9.4.0's experimental PPA draw unit (commit `b68e7cf9`; the files are gitignored so a stock
+re-download silently loses them). Symptom of a stock lvgl: every **sub-region fill garbles** —
+left rail missing, grey/fragmented buttons, corrupted chrome, flickering lines — while full-area
+fills look fine, so it masquerades as a display/DSI fault. Check this FIRST for that symptom.
+
 **Default WiFi (optional):** copy `wifi_secret.env.example` → `wifi_secret.env` (gitignored) and
 set `SSID=` / `PASS=`. `main/CMakeLists.txt` bakes them in as the *default* STA creds, applied only
 when NVS is empty (fresh flash / `erase-flash`); creds set later via SETUP→WI-FI or `/cmd wifi`
 (stored in NVS) always win. Blank/missing file → unit comes up AP-only. Password is plaintext in
-the image — hence gitignored. Edit the file and rebuild to change it.
+the image — hence gitignored. Edit the file and rebuild to change it. **If the file was created
+after the last CMake configure, plain `idf.py build` silently ignores it** (the configure-dep is
+only registered when the file exists) — run `idf.py reconfigure` once, and check the configure log
+says `wifi_secret: baking default STA SSID '…'`.
 
 Don't touch `CONFIG_ESP32P4_*REV*` or the board won't boot. See the `idf6-migration` memory for the
 full list of 6.0/board quirks (cJSON, driver split, esp_lcd API, C6 SDIO pins). No automated tests here.
@@ -167,7 +181,7 @@ Palette + helpers are at the top of `prop_ui.c` (and mirrored in `ui/globals.xml
 - **Images**: convert PNG→C array with the LVGL image converter (LVGL v9, RGB565 / with alpha as
   needed; v9 image headers carry an explicit `stride`), drop the `.c` in `main/`, `LV_IMAGE_DECLARE(name)`,
   use with `lv_image_set_src`. PSRAM holds big assets; keep `buff_spiram` true. The factory app
-  (`reference/factory_sourcecode` Setting.cpp + assets) is a good reference for image-heavy LVGL on this exact panel.
+  (`docs/referenceDesign/factory_sourcecode` Setting.cpp + assets) is a good reference for image-heavy LVGL on this exact panel.
 - **Pixel/retro fonts**: convert TTF→LVGL font (lv_font_conv) at the sizes you need, add the `.c`,
   `LV_FONT_DECLARE`, set via `lv_obj_set_style_text_font`.
 
@@ -206,7 +220,7 @@ Palette + helpers are at the top of `prop_ui.c` (and mirrored in `ui/globals.xml
 | `main/prop_motion.c` | **HLK-LD2450** 24 GHz multi-target mmWave radar (UART2, GPIO53/54, 256000). Cartesian X/Y/speed per target → MOTION SCAN blips. **X/Y/speed are sign-magnitude (bit15=sign, 1=positive), not two's complement** — decode via `ld2450_signmag()`. FOV ±60°. See the `ld2450-sign-magnitude` memory |
 | `main/prop_track.c` | **Dead-reckoning + spatial memory** for the MINIMAP. Step-based PDR: DMP `step_count` × fixed stride (0.75 m) along `track_heading_rad()` (= IMU yaw + NVS `dir_phi`; gyro-only Phase 1, mag-fusion seam for Phase 1.5). Maintains operator world pose, a breadcrumb ring buffer (PSRAM), and radar targets transformed into last-known world marks. Background task → cached state under a mutex; UI reads `prop_track_get_pose/crumbs/marks`. **No magnetometer → heading drifts; "north" is boot-relative.** |
 | `main/prop_aux_radar.c` | Dual auxiliary mmWave presence sensors — Seeed MR24HPC1 (J2) + DFRobot SEN0395 (J10); both query/command-driven (must send init each second / `sensorStart` at boot). OFFLINE/CLEAR/PRESENT → MOTION SCAN status |
-| `main/prop_lidar.c` | **LIDAR thin-client link** — outbound WebSocket (`esp_websocket_client`) to the `lidar-roomscanner` rig's `/ws-thin`, host found via mDNS (`_roomscan._tcp`) or the NVS `lidar_host` override. Receives already-rendered 480x480 RGB565 `THIN_FRAME`s into a PSRAM double buffer + `thin_telemetry` JSON; sends orbit/mode/record commands back off a command queue (the UI never touches the socket). All 3D math stays server-side. Drives the LIDAR panel |
+| `main/prop_lidar.c` | **LIDAR thin-client link** — outbound WebSocket (`esp_websocket_client`) to the `lidar-roomscanner` rig's `/ws-thin`, host found via mDNS (`_roomscan._tcp`) or the NVS `lidar_host` override. Receives already-rendered 480x480 RGB565 `THIN_FRAME`s into a PSRAM **triple** buffer (UI blits zero-copy via `prop_lidar_peek_frame` — no `get_frame` memcpy) + `thin_telemetry` JSON incl. orientation (`heading_deg`/`pitch_deg`/`roll_deg`/`yaw_rate_dps`) and an 8×8 `ir_grid` thermal preview; sends orbit/mode/record commands back off a command queue (the UI never touches the socket). All 3D math stays server-side. Drives the LIDAR panel |
 | `components/bsp_*` | display/touch/backlight (bsp_illuminate, bsp_display, bsp_i2c), LEDs+buttons (bsp_io), I2S speaker amp (bsp_audio: I2S1 TX, amp enable IO30 active-low) |
 
 ### Rail layout (grouped)
@@ -233,13 +247,13 @@ The C6 co-processor is mined for prop "sensor" data beyond plain WiFi — the th
 ### Hardware notes (non-obvious; confirmed from vendor examples)
 
 - **Microphone is PDM** straight into the P4's I2S0 (no codec): **CLK GPIO24, DATA GPIO26**,
-  16 kHz / 16-bit / mono, `driver/i2s_pdm.h`. The vendor `reference/readme.md` documents only audio-OUT
+  16 kHz / 16-bit / mono, `driver/i2s_pdm.h`. The vendor `docs/referenceDesign/readme.md` documents only audio-OUT
   (I2S LRCLK 21 / BCLK 22 / SDATA 23, amp ctrl 30); the input path came from
-  `reference/example/*/Lesson11-Playback_After_Recording/peripheral/bsp_mic/`. See the `board-mic-path` memory.
+  `docs/referenceDesign/example/*/Lesson11-Playback_After_Recording/peripheral/bsp_mic/`. See the `board-mic-path` memory.
 - **LVGL heap lives in PSRAM** (see Memory reality). Panels are **lazily built, one alive at a time**
   (`open_panel`/`close_panel` in `prop_ui.c`), which keeps the live object count and per-frame render cost down.
 
-## Key pin references (from the vendor `reference/readme.md`)
+## Key pin references (from the vendor `docs/referenceDesign/readme.md`)
 
 - **Display (MIPI-DSI)**: data IO40/39/36/35, CLK IO37/IO38, REXT IO34. Panel driver EK79007.
 - **Touch (GT911, I2C)**: SCL IO46, SDA IO45, INT IO42, RST IO40. I2C addr 0x5D (INT low at reset) or 0x14 (INT high).
