@@ -13,6 +13,7 @@
 #include "prop_track.h"
 #include "prop_mic.h"
 #include "prop_aux_radar.h"
+#include "prop_lidar.h"
 #include "prop_coproc.h"
 #include "prop_calib.h"
 #include "prop_settings.h"
@@ -223,6 +224,22 @@ static char *telemetry_to_json(void)
         cJSON_AddBoolToObject(csi, "motion", motion);
         cJSON_AddNumberToObject(csi, "movement", movement_milli / 1000.0);
         cJSON_AddNumberToObject(csi, "threshold", threshold_milli / 1000.0);
+    }
+
+    /* LIDAR thin-client link (prop_lidar.c). Cached reads, same pattern as the rest —
+     * `seq` is the frame counter, so a watcher can confirm frames are actually landing
+     * (and at what rate) without polling /screenshot. */
+    {
+        prop_lidar_telemetry_t lt;
+        prop_lidar_get_telemetry(&lt);
+        static const char *s_lidar_link_name[] = { "searching", "ok", "stale" };
+        static const char *s_lidar_mode_name[] = { "point_cloud", "slam", "ir" };
+        cJSON *ld = cJSON_AddObjectToObject(root, "lidar");
+        cJSON_AddStringToObject(ld, "link", s_lidar_link_name[lt.link]);
+        cJSON_AddNumberToObject(ld, "fps", lt.fps);
+        cJSON_AddStringToObject(ld, "mode", s_lidar_mode_name[lt.mode]);
+        cJSON_AddBoolToObject(ld, "recording", lt.recording);
+        cJSON_AddNumberToObject(ld, "seq", prop_lidar_get_seq());
     }
 
     char *out = cJSON_PrintUnformatted(root);

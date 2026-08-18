@@ -4406,6 +4406,10 @@ static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
      * config — no ARGB, this is a straight frame blit, not hand-painted graphics). */
     size_t canvas_sz = LV_CANVAS_BUF_SIZE(LIDAR_CANVAS_SZ, LIDAR_CANVAS_SZ, 16, LV_DRAW_BUF_STRIDE_ALIGN);
     s_lidar_canvas_buf = heap_caps_malloc(canvas_sz, MALLOC_CAP_SPIRAM);
+    if (!s_lidar_canvas_buf) {
+        ESP_LOGE(UI_TAG, "LIDAR: PSRAM alloc failed for canvas buffer (%u bytes) — "
+                      "panel opens without a render surface", (unsigned)canvas_sz);
+    }
     if (s_lidar_canvas_buf) {
         memset(s_lidar_canvas_buf, 0, canvas_sz);
         s_lidar_canvas = lv_canvas_create(p);
@@ -4418,6 +4422,10 @@ static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
         lv_obj_add_event_cb(s_lidar_canvas, lidar_canvas_pressing_cb, LV_EVENT_PRESSING, NULL);
     }
     s_lidar_frame_scratch = heap_caps_malloc(PROP_LIDAR_FRAME_PIXELS * 2, MALLOC_CAP_SPIRAM);
+    if (!s_lidar_frame_scratch) {
+        ESP_LOGE(UI_TAG, "LIDAR: PSRAM alloc failed for frame scratch (%u bytes) — "
+                         "frames will not be blitted", (unsigned)(PROP_LIDAR_FRAME_PIXELS * 2));
+    }
     s_lidar_last_seq = 0;
 
     /* Telemetry strip, right of the canvas. */
@@ -6042,38 +6050,46 @@ static void ui_observer(const prop_state_t *st, void *ctx)
 
     /* PK_LIDAR: blit the newest thin-client frame + refresh the telemetry strip. Both
      * are cheap cache reads (prop_lidar owns the actual network I/O off this task). */
-    if (s_cur_kind == PK_LIDAR && s_lidar_canvas && s_lidar_frame_scratch) {
-        uint32_t seq = 0;
-        if (prop_lidar_get_frame(s_lidar_frame_scratch, &seq) && seq != s_lidar_last_seq) {
-            lv_draw_buf_t *db = lv_canvas_get_draw_buf(s_lidar_canvas);
-            uint8_t *dst = db->data;
-            uint32_t stride = db->header.stride;
-            const uint8_t *src = (const uint8_t *)s_lidar_frame_scratch;
-            for (int y = 0; y < PROP_LIDAR_FRAME_H; y++) {
-                memcpy(dst + (size_t)y * stride, src + (size_t)y * PROP_LIDAR_FRAME_W * 2,
-                       PROP_LIDAR_FRAME_W * 2);
+    if (s_cur_kind == PK_LIDAR) {
+        /* Frame blit needs both PSRAM buffers; the telemetry strip below does not, so
+         * the two are guarded separately — a canvas-alloc failure must not also stop
+         * the readout from updating. */
+        if (s_lidar_canvas && s_lidar_frame_scratch) {
+            uint32_t seq = 0;
+            if (prop_lidar_get_frame(s_lidar_frame_scratch, &seq) && seq != s_lidar_last_seq) {
+                lv_draw_buf_t *db = lv_canvas_get_draw_buf(s_lidar_canvas);
+                uint8_t *dst = db->data;
+                uint32_t stride = db->header.stride;
+                const uint8_t *src = (const uint8_t *)s_lidar_frame_scratch;
+                for (int y = 0; y < PROP_LIDAR_FRAME_H; y++) {
+                    memcpy(dst + (size_t)y * stride, src + (size_t)y * PROP_LIDAR_FRAME_W * 2,
+                           PROP_LIDAR_FRAME_W * 2);
+                }
+                lv_obj_invalidate(s_lidar_canvas);
+                s_lidar_last_seq = seq;
             }
-            lv_obj_invalidate(s_lidar_canvas);
-            s_lidar_last_seq = seq;
         }
 
-        prop_lidar_telemetry_t t;
-        prop_lidar_get_telemetry(&t);
-        static const char *kLinkText[] = { "SEARCHING", "OK", "STALE" };
-        label_set_text_cached(s_lidar_link, kLinkText[t.link]);
-        lv_obj_set_style_text_color(s_lidar_link,
-            t.link == PROP_LIDAR_LINK_OK ? COL_AMBER : COL_ALERT, 0);
+        if (s_lidar_link && s_lidar_fps && s_lidar_power && s_lidar_i3c &&
+            s_lidar_pts && s_lidar_rec) {
+            prop_lidar_telemetry_t t;
+            prop_lidar_get_telemetry(&t);
+            static const char *kLinkText[] = { "SEARCHING", "OK", "STALE" };
+            label_set_text_cached(s_lidar_link, kLinkText[t.link]);
+            lv_obj_set_style_text_color(s_lidar_link,
+                t.link == PROP_LIDAR_LINK_OK ? COL_AMBER : COL_ALERT, 0);
 
-        char buf[24];
-        snprintf(buf, sizeof(buf), "%.1f", t.fps);
-        label_set_text_cached(s_lidar_fps, buf);
-        label_set_text_cached(s_lidar_power, t.power_mode[0] ? t.power_mode : "--");
-        snprintf(buf, sizeof(buf), "%.0f%%", t.i3c_airtime_pct);
-        label_set_text_cached(s_lidar_i3c, buf);
-        snprintf(buf, sizeof(buf), "%d", t.point_count);
-        label_set_text_cached(s_lidar_pts, buf);
-        label_set_text_cached(s_lidar_rec, t.recording ? "REC" : "off");
-        lv_obj_set_style_text_color(s_lidar_rec, t.recording ? COL_ALERT : COL_MUTE, 0);
+            char buf[24];
+            snprintf(buf, sizeof(buf), "%.1f", t.fps);
+            label_set_text_cached(s_lidar_fps, buf);
+            label_set_text_cached(s_lidar_power, t.power_mode[0] ? t.power_mode : "--");
+            snprintf(buf, sizeof(buf), "%.0f%%", t.i3c_airtime_pct);
+            label_set_text_cached(s_lidar_i3c, buf);
+            snprintf(buf, sizeof(buf), "%d", t.point_count);
+            label_set_text_cached(s_lidar_pts, buf);
+            label_set_text_cached(s_lidar_rec, t.recording ? "REC" : "off");
+            lv_obj_set_style_text_color(s_lidar_rec, t.recording ? COL_ALERT : COL_MUTE, 0);
+        }
     }
 
     lvgl_port_unlock();
