@@ -8,9 +8,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/event_groups.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "mdns.h"
+#include "esp_websocket_client.h"
 
 #define TAG "PROP_LIDAR"
 
@@ -87,14 +90,109 @@ void prop_lidar_send_record(bool on)
     /* implemented in Task 6 */
 }
 
+/* ---- mDNS resolution and WebSocket handler (Task 4) -------------------------------- */
+
+/* Resolve the roomscanner's advertised _roomscan._tcp service to "host:port". Returns
+ * true and fills uri_out (e.g. "ws://192.168.4.55:8000/ws-thin") on success. */
+static bool resolve_uri(char *uri_out, size_t uri_out_sz)
+{
+    mdns_result_t *results = NULL;
+    esp_err_t err = mdns_query_ptr("_roomscan", "_tcp", 3000, 5, &results);
+    if (err != ESP_OK || !results) {
+        if (results) mdns_query_results_free(results);
+        return false;
+    }
+    bool found = false;
+    for (mdns_result_t *r = results; r && !found; r = r->next) {
+        for (mdns_ip_addr_t *a = r->addr; a; a = a->next) {
+            if (a->addr.type == ESP_IPADDR_TYPE_V4) {
+                char ip[16];
+                esp_ip4addr_ntoa(&a->addr.u_addr.ip4, ip, sizeof(ip));
+                snprintf(uri_out, uri_out_sz, "ws://%s:%u/ws-thin", ip, (unsigned)r->port);
+                found = true;
+                break;
+            }
+        }
+    }
+    mdns_query_results_free(results);
+    return found;
+}
+
+static esp_websocket_client_handle_t s_ws;
+static EventGroupHandle_t s_evt;
+#define LIDAR_EVT_DISCONNECTED (1 << 0)
+
+static void set_link_state(prop_lidar_link_t link)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_telemetry.link = link;
+    xSemaphoreGive(s_lock);
+}
+
+static void ws_event_handler(void *handler_args, esp_event_base_t base,
+                              int32_t event_id, void *event_data)
+{
+    (void)handler_args; (void)base;
+    switch (event_id) {
+        case WEBSOCKET_EVENT_CONNECTED:
+            ESP_LOGI(TAG, "ws connected");
+            set_link_state(PROP_LIDAR_LINK_OK);
+            break;
+        case WEBSOCKET_EVENT_DISCONNECTED:
+        case WEBSOCKET_EVENT_ERROR:
+            ESP_LOGW(TAG, "ws disconnected/error (event %d)", (int)event_id);
+            xEventGroupSetBits(s_evt, LIDAR_EVT_DISCONNECTED);
+            break;
+        case WEBSOCKET_EVENT_DATA:
+            /* frame/telemetry parsing added in Tasks 5-6 */
+            break;
+        default:
+            break;
+    }
+}
+
 /* ---- Background task (connect/reconnect logic filled in by Task 4) ---------------- */
 
 static void lidar_task(void *arg)
 {
     (void)arg;
-    ESP_LOGI(TAG, "task started (mDNS/WS connect logic pending — Task 4)");
+    s_evt = xEventGroupCreate();
+    uint32_t backoff_ms = RECONNECT_BACKOFF_MIN_MS;
+
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(RECONNECT_BACKOFF_MAX_MS));
+        char uri[96];
+        set_link_state(PROP_LIDAR_LINK_SEARCHING);
+        if (!resolve_uri(uri, sizeof(uri))) {
+            ESP_LOGW(TAG, "mDNS: _roomscan._tcp not found, retrying in %u ms", (unsigned)backoff_ms);
+            vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+            backoff_ms = backoff_ms * 2 < RECONNECT_BACKOFF_MAX_MS ? backoff_ms * 2 : RECONNECT_BACKOFF_MAX_MS;
+            continue;
+        }
+        ESP_LOGI(TAG, "resolved %s", uri);
+
+        esp_websocket_client_config_t cfg = {
+            .uri = uri,
+            .buffer_size = 4096,
+            .network_timeout_ms = 8000,
+        };
+        s_ws = esp_websocket_client_init(&cfg);
+        if (!s_ws) {
+            ESP_LOGE(TAG, "esp_websocket_client_init failed");
+            vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+            continue;
+        }
+        esp_websocket_register_events(s_ws, WEBSOCKET_EVENT_ANY, ws_event_handler, NULL);
+        xEventGroupClearBits(s_evt, LIDAR_EVT_DISCONNECTED);
+        esp_websocket_client_start(s_ws);
+
+        backoff_ms = RECONNECT_BACKOFF_MIN_MS;   /* reset once a connect attempt is made */
+        xEventGroupWaitBits(s_evt, LIDAR_EVT_DISCONNECTED, pdTRUE, pdFALSE, portMAX_DELAY);
+
+        esp_websocket_client_stop(s_ws);
+        esp_websocket_client_destroy(s_ws);
+        s_ws = NULL;
+        set_link_state(PROP_LIDAR_LINK_SEARCHING);
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
 
