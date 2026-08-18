@@ -63,6 +63,11 @@ def _do_handshake(conn: socket.socket) -> None:
     conn.sendall(resp.encode("ascii"))
 
 
+# The writer thread and the reader thread (PONG replies) both write to the same socket;
+# a single sendall() per frame under this lock keeps them from interleaving mid-frame.
+_SEND_LOCK = threading.Lock()
+
+
 def _send_ws_frame(conn: socket.socket, payload: bytes, opcode: int) -> None:
     fin_op = 0x80 | opcode
     length = len(payload)
@@ -72,7 +77,8 @@ def _send_ws_frame(conn: socket.socket, payload: bytes, opcode: int) -> None:
         header = struct.pack("!BBH", fin_op, 126, length)
     else:
         header = struct.pack("!BBQ", fin_op, 127, length)
-    conn.sendall(header + payload)
+    with _SEND_LOCK:
+        conn.sendall(header + payload)
 
 
 def _send_binary(conn: socket.socket, payload: bytes) -> None:
@@ -142,6 +148,14 @@ def _reader_loop(conn: socket.socket, state: ClientState, stop: threading.Event)
         opcode, payload = frame
         if opcode == 0x8:      # close
             break
+        if opcode == 0x9:      # ping -> must PONG the same payload back, or
+            try:               # esp_websocket_client drops the session on
+                _send_ws_frame(conn, payload, opcode=0xA)   # pingpong_timeout_sec
+            except OSError:
+                break
+            continue
+        if opcode == 0xA:      # pong (we never ping, but tolerate it)
+            continue
         if opcode != 0x1:      # only text commands expected inbound
             continue
         try:

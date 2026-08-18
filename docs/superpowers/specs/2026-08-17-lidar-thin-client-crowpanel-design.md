@@ -86,6 +86,15 @@ u8  pixels[width * height * 2]   // RGB565, little-endian, row-major
 Target cadence: **~10 fps** (~460 KB/frame → ~4.6 MB/s). The server drops to the freshest
 frame if this client falls behind rather than queueing.
 
+**A `THIN_FRAME` MUST be sent as a single, unfragmented WebSocket message** (one binary
+frame with FIN=1 — no continuation frames). The embedded client reassembles each frame
+from the several `WEBSOCKET_EVENT_DATA` callbacks the transport hands it, keyed on
+`payload_len` (total message size) + `payload_offset`; WS-level fragmentation restarts
+that accounting per fragment and the frame is rejected as a size mismatch. TCP-level
+segmentation is fine and expected — this is about WS framing only.
+*(Shared contract: the server-side spec in the `lidar-roomscanner` repo needs the same
+note; it could not be edited from this repo.)*
+
 ### JSON out: `thin_telemetry`
 
 Sent at a lower cadence (~2 Hz):
