@@ -247,5 +247,28 @@ The C6 co-processor is mined for prop "sensor" data beyond plain WiFi — the th
 
 ## API quick reference (for scripting/tests)
 
-The `POST /cmd`/`GET /state`/`GET /telemetry`/`GET /screenshot`/`WS /ws` request shapes and the
-`tools/prop.py` dev CLI are documented in the `communicator-ui` skill (section 7).
+`POST /cmd` (JSON): `{"cmd":"scene","value":"SCANNING"}`, `{"cmd":"ui","screen":"<name>"}`
+(screens: `home`=console, `scanner archive cassette insights menu wifi display audio leds
+vitals scan spectrum rfband ble csi instruments sensors dircal minimap range lidar about`; `instruments`/`sensors`
+are the rail submenus, `dircal` is the SCANNER travel-direction calibration (opened
+by tapping the apex operator dot), the rest deep-link straight to a panel),
+`{"cmd":"input","control":"selector|tab|action","arg":"cw|ccw|press"|N}`
+(simulated dial/tab/action nav; boots to `home`),
+`{"cmd":"sens","value":0-100}`, `{"cmd":"fx","on":true,"value":0-100}` (CRT overlay on/off + intensity),
+`{"cmd":"fx","fps":true}` (toggle FPS HUD — separate from the overlay),
+`{"cmd":"led","name":"alert","on":true}`, `{"cmd":"status","value":"..."}`,
+`{"cmd":"channel","value":"..."}`, `{"cmd":"wifi","ssid":"..","pass":"..","remember":true}`.
+`GET /state` JSON (scene/status/channel/link/sensitivity/channel_pos/ip/version/leds,
+plus `ble:{count,strongest,known}` when BLE is up, `csi_live` bool, and
+`ftm:{tracked,capable,ranged}` when FTM ranging is up);
+`GET /telemetry` JSON — richer sibling of `/state` for live sensor/instrument values
+(`screen`, `imu:{yaw_deg,pitch_deg,roll_deg,accel,gyro,temp_c,steps}`, `radar:[{x_mm,y_mm,speed_mm_s}]`,
+`track:{x,y,heading_deg}`, `mic:{db,bands}`, `aux_radar:{seeed,sen0395}`, `ble`, `csi`) — see
+"Watching live variables instead of screenshots" above;
+`GET /screenshot` RGB565 read from the DPI framebuffer (whole panel incl. the fx overlay); `WS /ws`
+pushes both `/state` (`type:"state"`, on change) and `/telemetry` (`type:"telemetry"`, ~5 Hz) payloads.
+
+**Dev CLI:** `python tools/prop.py shot out.png --screen spectrum --wait` (wait→drive→
+capture), plus `state/telemetry/watch/scene/screen/sens/fx/trace/decode`. `trace`/`decode` resolve a
+crash or boot-hang PC against `build/communicator.elf`; `coredump-info` (see Crash forensics above)
+decodes a persisted panic without needing serial capture at all. See the `communicator-ui` skill.
