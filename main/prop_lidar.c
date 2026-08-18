@@ -375,7 +375,14 @@ static void pump_commands(void)
                 continue;
         }
         if (s_ws && esp_websocket_client_is_connected(s_ws)) {
-            esp_websocket_client_send_text(s_ws, buf, (int)strlen(buf), pdMS_TO_TICKS(200));
+            /* Return is bytes sent, or <0 on failure (including a TX-lock timeout —
+             * see the CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK note in sdkconfig.defaults).
+             * A silently-dropped command otherwise looks identical to "nothing happened"
+             * from the UI, which is exactly what hid this bug on hardware. */
+            int sent = esp_websocket_client_send_text(s_ws, buf, (int)strlen(buf), pdMS_TO_TICKS(200));
+            if (sent < 0 && warn_ok()) {
+                ESP_LOGW(TAG, "command send failed (kind=%d, ret=%d) -- dropped", (int)c.kind, sent);
+            }
         }
     }
 }

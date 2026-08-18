@@ -4558,6 +4558,15 @@ CONFIG_ESP_LCD_TOUCH_MAX_BUTTONS=1
 # end of ESP LVGL PORT
 
 #
+# ESP WebSocket client
+#
+# default:
+# CONFIG_ESP_WS_CLIENT_ENABLE_DYNAMIC_BUFFER is not set
+CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y
+CONFIG_ESP_WS_CLIENT_TX_LOCK_TIMEOUT_MS=2000
+# end of ESP WebSocket client
+
+#
 # Wi-Fi Remote
 #
 # default:

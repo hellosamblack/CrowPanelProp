@@ -175,6 +175,17 @@ CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_CHECK_BOOT=n
 CONFIG_ESP_COREDUMP_FLASH_NO_OVERWRITE=y
 
+# LIDAR thin-client (prop_lidar.c) sends outbound commands (REC/orbit/mode) via
+# esp_websocket_client_send_text() from a background task, while the client's own
+# task is busy receiving ~460 KB THIN_FRAMEs at ~10 fps. Without a separate TX lock,
+# both paths fight over the same client->lock, and the RX side wins almost every
+# time (it holds the lock for the whole multi-chunk frame read) — send calls
+# silently time out inside their 200ms window and the command is dropped. Confirmed
+# on hardware 2026-08-17: REC/orbit never reached the roomscanner rig at all (zero
+# text-opcode WS frames observed at the peer) while frame reception kept working
+# fine throughout. This gives sends their own lock so they stop contending with RX.
+CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y
+
 # RGB565 to match the EK79007 panel (LVGL 9 pairs this with the swap_bytes flag set
 # in bsp_illuminate.c). Keep it explicit so a menuconfig reset can't drift it.
 CONFIG_LV_COLOR_DEPTH_16=y
