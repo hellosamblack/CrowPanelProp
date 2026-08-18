@@ -16,6 +16,7 @@
 #include "prop_track.h"
 #include "prop_aux_radar.h"
 #include "prop_content.h"
+#include "prop_lidar.h"
 #include "bsp_io.h"
 #include "bsp_aio.h"
 #include "bsp_illuminate.h"
@@ -127,6 +128,7 @@ typedef enum {
     PK_DIRCAL,        /* travel-direction calibration (opened from the SCANNER apex dot) */
     PK_MINIMAP,       /* north-up dead-reckoning map (breadcrumb path + radar marks) */
     PK_RANGE,         /* WiFi FTM ranging table (per-BSSID distance-to-AP) */
+    PK_LIDAR,         /* thin-client render of the lidar-roomscanner rig's live view */
     PK_INSTRUMENTS,   /* submenu: SCANNER / SIGNAL SCAN / SPECTRUM / VITALS */
     PK_SENSORS,       /* submenu: RF BAND / CONTACTS / SIGNAL ENV / CSI CONFIG / SCANNER / MINIMAP / RANGE */
     PK_ARCHIVE,    /* data-archive browser (tabs = sections) */
@@ -191,6 +193,18 @@ static ble_row_t s_ble_rows[PROP_BLE_MAX];
 /* RANGE (WiFi FTM) instrument (valid only while PK_RANGE is current). */
 static lv_obj_t *s_range_summary;
 static lv_obj_t *s_range_list;
+
+/* PK_LIDAR: thin-client render + telemetry strip. */
+static lv_obj_t *s_lidar_canvas;
+static void     *s_lidar_canvas_buf;    /* PSRAM, LV_CANVAS_BUF_SIZE(480,480,16,...) */
+static uint16_t *s_lidar_frame_scratch; /* PSRAM, PROP_LIDAR_FRAME_PIXELS uint16_t's */
+static uint32_t  s_lidar_last_seq;      /* last frame seq blitted, to skip redundant copies */
+static lv_obj_t *s_lidar_fps;
+static lv_obj_t *s_lidar_power;
+static lv_obj_t *s_lidar_i3c;
+static lv_obj_t *s_lidar_pts;
+static lv_obj_t *s_lidar_rec;
+static lv_obj_t *s_lidar_link;
 
 typedef struct { lv_obj_t *tag, *rssi, *mac, *dist, *status, *fill; } range_row_t;
 static range_row_t s_range_rows[PROP_FTM_TABLE_MAX];
@@ -424,6 +438,7 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent);
 static lv_obj_t *build_dircal_panel(lv_obj_t *parent);
 static lv_obj_t *build_minimap_panel(lv_obj_t *parent);
 static lv_obj_t *build_range_panel(lv_obj_t *parent);
+static lv_obj_t *build_lidar_panel(lv_obj_t *parent);
 static void wifi_panel_opened(void);
 static void start_signal_scan(void);
 static void start_rfband_scan(void);
@@ -568,6 +583,12 @@ static void close_panel(void)
     s_map_info = NULL; s_map_msg = NULL;
     if (s_map_buf) { free(s_map_buf); s_map_buf = NULL; }
     s_map_have_fit = false; s_map_last_crumbs = -1; s_map_marks_sig = 0;
+    /* PK_LIDAR: widgets freed with the panel; its canvas + scratch PSRAM are ours. */
+    s_lidar_canvas = NULL;
+    if (s_lidar_canvas_buf) { free(s_lidar_canvas_buf); s_lidar_canvas_buf = NULL; }
+    if (s_lidar_frame_scratch) { free(s_lidar_frame_scratch); s_lidar_frame_scratch = NULL; }
+    s_lidar_last_seq = 0;
+    s_lidar_fps = s_lidar_power = s_lidar_i3c = s_lidar_pts = s_lidar_rec = s_lidar_link = NULL;
 }
 
 /* Light the rail cell for the function `kind` belongs to. Sub-panels map to their
@@ -586,7 +607,7 @@ static void rail_sync(panel_kind_t kind)
         case PK_NONE: case PK_SCAN: case PK_SPECTRUM: case PK_VITALS:
             want = PK_INSTRUMENTS; break;
         case PK_RFBAND: case PK_BLE: case PK_CSI: case PK_CSICFG: case PK_CSISET: case PK_MOTION:
-        case PK_DIRCAL: case PK_MINIMAP: case PK_RANGE:
+        case PK_DIRCAL: case PK_MINIMAP: case PK_RANGE: case PK_LIDAR:
             want = PK_SENSORS; break;
         default: break;
     }
@@ -653,6 +674,7 @@ static void open_panel(panel_kind_t kind)
         case PK_DIRCAL:   s_cur_panel = build_dircal_panel(s_root); break;
         case PK_MINIMAP:  s_cur_panel = build_minimap_panel(s_root); break;
         case PK_RANGE:    s_cur_panel = build_range_panel(s_root); break;
+        case PK_LIDAR:    s_cur_panel = build_lidar_panel(s_root); break;
         default: break;    /* PK_NONE: no panel - the SCANNER readout shows through */
     }
     s_cur_kind = kind;
@@ -3534,6 +3556,7 @@ static lv_obj_t *build_sensors_panel(lv_obj_t *parent)
     kit_list_row(b, "SCANNER", menu_open_cb, (void *)(intptr_t)PK_MOTION);
     kit_list_row(b, "MINIMAP", menu_open_cb, (void *)(intptr_t)PK_MINIMAP);
     kit_list_row(b, "RANGE",   menu_open_cb, (void *)(intptr_t)PK_RANGE);
+    kit_list_row(b, "LIDAR",   menu_open_cb, (void *)(intptr_t)PK_LIDAR);
     return m;
 }
 
@@ -4340,6 +4363,78 @@ static void map_reset_cb(lv_event_t *e)
     s_map_last_crumbs = -1;
     s_map_marks_sig = 0;
     prop_audio_play(PA_BUTTON);
+}
+
+#define LIDAR_CANVAS_SZ 480
+
+static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
+{
+    /* Full-screen hero panel, no title header / BACK button — same bare-bordered-
+     * container idiom as SCANNER (build_motion_panel). */
+    lv_obj_t *p = lv_obj_create(parent);
+    lv_obj_set_size(p, SCAN_W, 600);
+    lv_obj_align(p, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(p, COL_BG, 0);
+    lv_obj_set_style_border_color(p, COL_AMBER, 0);
+    lv_obj_set_style_border_width(p, 2, 0);
+    lv_obj_set_style_radius(p, 0, 0);
+    lv_obj_set_style_pad_all(p, 0, 0);
+    lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Render canvas: native RGB565 (swap_bytes=false matches the panel's display
+     * config — no ARGB, this is a straight frame blit, not hand-painted graphics). */
+    size_t canvas_sz = LV_CANVAS_BUF_SIZE(LIDAR_CANVAS_SZ, LIDAR_CANVAS_SZ, 16, LV_DRAW_BUF_STRIDE_ALIGN);
+    s_lidar_canvas_buf = heap_caps_malloc(canvas_sz, MALLOC_CAP_SPIRAM);
+    if (s_lidar_canvas_buf) {
+        memset(s_lidar_canvas_buf, 0, canvas_sz);
+        s_lidar_canvas = lv_canvas_create(p);
+        lv_canvas_set_buffer(s_lidar_canvas, s_lidar_canvas_buf, LIDAR_CANVAS_SZ, LIDAR_CANVAS_SZ,
+                              LV_COLOR_FORMAT_RGB565);
+        lv_obj_set_pos(s_lidar_canvas, 24, 24);
+        lv_obj_set_style_border_color(s_lidar_canvas, COL_DIM, 0);
+        lv_obj_set_style_border_width(s_lidar_canvas, 1, 0);
+    }
+    s_lidar_frame_scratch = heap_caps_malloc(PROP_LIDAR_FRAME_PIXELS * 2, MALLOC_CAP_SPIRAM);
+    s_lidar_last_seq = 0;
+
+    /* Telemetry strip, right of the canvas. */
+    lv_coord_t strip_x = 24 + LIDAR_CANVAS_SZ + 24;
+    lv_obj_t *strip = lv_obj_create(p);
+    lv_obj_set_size(strip, SCAN_W - strip_x - 24, LIDAR_CANVAS_SZ);
+    lv_obj_set_pos(strip, strip_x, 24);
+    lv_obj_set_style_bg_color(strip, COL_PANEL_ITEM, 0);
+    lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(strip, COL_DIM, 0);
+    lv_obj_set_style_border_width(strip, 1, 0);
+    lv_obj_set_style_radius(strip, 0, 0);
+    lv_obj_set_style_pad_all(strip, 12, 0);
+    lv_obj_clear_flag(strip, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(strip);
+    lv_label_set_text(title, "LIDAR LINK");
+    lv_obj_set_style_text_font(title, FONT_HEAD, 0);
+    lv_obj_set_style_text_color(title, COL_AMBER, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    static const char *kNames[] = { "LINK", "FPS", "POWER", "I3C BUS", "POINTS", "REC" };
+    lv_obj_t **kSlots[] = { &s_lidar_link, &s_lidar_fps, &s_lidar_power, &s_lidar_i3c,
+                             &s_lidar_pts, &s_lidar_rec };
+    for (int i = 0; i < 6; i++) {
+        lv_obj_t *lbl = lv_label_create(strip);
+        lv_label_set_text(lbl, kNames[i]);
+        lv_obj_set_style_text_font(lbl, FONT_BODY, 0);
+        lv_obj_set_style_text_color(lbl, COL_MUTE, 0);
+        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 40 + i * 32);
+
+        lv_obj_t *val = lv_label_create(strip);
+        lv_label_set_text(val, "--");
+        lv_obj_set_style_text_font(val, FONT_BODY, 0);
+        lv_obj_set_style_text_color(val, COL_AMBER, 0);
+        lv_obj_align(val, LV_ALIGN_TOP_LEFT, 140, 40 + i * 32);
+        *kSlots[i] = val;
+    }
+
+    return p;
 }
 
 static lv_obj_t *build_minimap_panel(lv_obj_t *parent)
@@ -5918,6 +6013,42 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
+    /* PK_LIDAR: blit the newest thin-client frame + refresh the telemetry strip. Both
+     * are cheap cache reads (prop_lidar owns the actual network I/O off this task). */
+    if (s_cur_kind == PK_LIDAR && s_lidar_canvas && s_lidar_frame_scratch) {
+        uint32_t seq = 0;
+        if (prop_lidar_get_frame(s_lidar_frame_scratch, &seq) && seq != s_lidar_last_seq) {
+            lv_draw_buf_t *db = lv_canvas_get_draw_buf(s_lidar_canvas);
+            uint8_t *dst = db->data;
+            uint32_t stride = db->header.stride;
+            const uint8_t *src = (const uint8_t *)s_lidar_frame_scratch;
+            for (int y = 0; y < PROP_LIDAR_FRAME_H; y++) {
+                memcpy(dst + (size_t)y * stride, src + (size_t)y * PROP_LIDAR_FRAME_W * 2,
+                       PROP_LIDAR_FRAME_W * 2);
+            }
+            lv_obj_invalidate(s_lidar_canvas);
+            s_lidar_last_seq = seq;
+        }
+
+        prop_lidar_telemetry_t t;
+        prop_lidar_get_telemetry(&t);
+        static const char *kLinkText[] = { "SEARCHING", "OK", "STALE" };
+        label_set_text_cached(s_lidar_link, kLinkText[t.link]);
+        lv_obj_set_style_text_color(s_lidar_link,
+            t.link == PROP_LIDAR_LINK_OK ? COL_AMBER : COL_ALERT, 0);
+
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%.1f", t.fps);
+        label_set_text_cached(s_lidar_fps, buf);
+        label_set_text_cached(s_lidar_power, t.power_mode[0] ? t.power_mode : "--");
+        snprintf(buf, sizeof(buf), "%.0f%%", t.i3c_airtime_pct);
+        label_set_text_cached(s_lidar_i3c, buf);
+        snprintf(buf, sizeof(buf), "%d", t.point_count);
+        label_set_text_cached(s_lidar_pts, buf);
+        label_set_text_cached(s_lidar_rec, t.recording ? "REC" : "off");
+        lv_obj_set_style_text_color(s_lidar_rec, t.recording ? COL_ALERT : COL_MUTE, 0);
+    }
+
     lvgl_port_unlock();
 }
 
@@ -5948,6 +6079,7 @@ void prop_ui_goto(const char *screen)
     else if (strcmp(screen, "dircal") == 0)      open_panel(PK_DIRCAL);
     else if (strcmp(screen, "minimap") == 0)     open_panel(PK_MINIMAP);
     else if (strcmp(screen, "range") == 0)       open_panel(PK_RANGE);
+    else if (strcmp(screen, "lidar") == 0)       open_panel(PK_LIDAR);
     else if (strcmp(screen, "archive") == 0) open_panel(PK_ARCHIVE);
     else if (strcmp(screen, "cassette") == 0) open_panel(PK_CASSETTE);
     else if (strcmp(screen, "insights") == 0) open_panel(PK_INSIGHTS);
@@ -5986,6 +6118,7 @@ const char *prop_ui_current_screen(void)
         case PK_DIRCAL:      return "dircal";
         case PK_MINIMAP:     return "minimap";
         case PK_RANGE:       return "range";
+        case PK_LIDAR:       return "lidar";
         case PK_INSTRUMENTS: return "instruments";
         case PK_SENSORS:     return "sensors";
         case PK_ARCHIVE:     return "archive";
