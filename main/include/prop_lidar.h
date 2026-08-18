@@ -45,6 +45,11 @@ esp_err_t prop_lidar_init(void);
  * Cheap to call every UI tick — skip the canvas blit when *out_seq hasn't changed. */
 bool prop_lidar_get_frame(uint16_t *dst, uint32_t *out_seq);
 
+/* Current frame sequence number without copying the frame (0 before the first frame
+ * ever arrives). For observers that only want to know whether/how fast frames are
+ * landing — e.g. /telemetry — without paying the 460 KB memcpy. */
+uint32_t prop_lidar_get_seq(void);
+
 /* Copies the current cached telemetry. Always succeeds; before the first thin_telemetry
  * message arrives it reports link=PROP_LIDAR_LINK_SEARCHING and zeroed fields. */
 void prop_lidar_get_telemetry(prop_lidar_telemetry_t *out);
