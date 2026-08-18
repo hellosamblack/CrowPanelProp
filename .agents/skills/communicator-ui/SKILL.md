@@ -165,7 +165,7 @@ from the project dir), not under ``.
 
 `POST /cmd` (JSON): `{"cmd":"scene","value":"SCANNING"}`, `{"cmd":"ui","screen":"<name>"}`
 (screens: `home`=console, `scanner archive cassette insights menu wifi display audio leds
-vitals scan spectrum rfband ble csi instruments sensors dircal minimap range about`; `instruments`/`sensors`
+vitals scan spectrum rfband ble csi instruments sensors dircal minimap range lidar about`; `instruments`/`sensors`
 are the rail submenus, `dircal` is the SCANNER travel-direction calibration (opened
 by tapping the apex operator dot), the rest deep-link straight to a panel),
 `{"cmd":"input","control":"selector|tab|action","arg":"cw|ccw|press"|N}`
