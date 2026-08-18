@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+#include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -73,23 +74,31 @@ void prop_lidar_get_telemetry(prop_lidar_telemetry_t *out)
 }
 
 /* ---- Outbound commands (filled in by Task 6) -------------------------------------- */
+/* Forward declarations for the helper functions (defined later after s_ws is declared) */
+static void send_text_if_connected(const char *json);
+static const char *mode_to_str(prop_lidar_mode_t m);
 
 void prop_lidar_send_orbit(float dyaw, float dpitch, float dzoom)
 {
-    (void)dyaw; (void)dpitch; (void)dzoom;
-    /* implemented in Task 6 */
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+             "{\"type\":\"thin_orbit\",\"dyaw\":%.3f,\"dpitch\":%.3f,\"dzoom\":%.3f}",
+             dyaw, dpitch, dzoom);
+    send_text_if_connected(buf);
 }
 
 void prop_lidar_send_mode(prop_lidar_mode_t mode)
 {
-    (void)mode;
-    /* implemented in Task 6 */
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"type\":\"thin_mode\",\"mode\":\"%s\"}", mode_to_str(mode));
+    send_text_if_connected(buf);
 }
 
 void prop_lidar_send_record(bool on)
 {
-    (void)on;
-    /* implemented in Task 6 */
+    char buf[48];
+    snprintf(buf, sizeof(buf), "{\"type\":\"thin_record\",\"on\":%s}", on ? "true" : "false");
+    send_text_if_connected(buf);
 }
 
 /* ---- mDNS resolution and WebSocket handler (Task 4) -------------------------------- */
@@ -124,6 +133,21 @@ static esp_websocket_client_handle_t s_ws;
 static EventGroupHandle_t s_evt;
 #define LIDAR_EVT_DISCONNECTED (1 << 0)
 
+static void send_text_if_connected(const char *json)
+{
+    if (!s_ws || !esp_websocket_client_is_connected(s_ws)) return;
+    esp_websocket_client_send_text(s_ws, json, (int)strlen(json), pdMS_TO_TICKS(200));
+}
+
+static const char *mode_to_str(prop_lidar_mode_t m)
+{
+    switch (m) {
+        case PROP_LIDAR_MODE_SLAM: return "slam";
+        case PROP_LIDAR_MODE_IR:   return "ir";
+        default:                   return "point_cloud";
+    }
+}
+
 static void set_link_state(prop_lidar_link_t link)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -151,6 +175,45 @@ static void on_frame_complete(const uint8_t *buf, int len)
     xSemaphoreGive(s_lock);
 }
 
+static prop_lidar_mode_t mode_from_str(const char *s)
+{
+    if (!s) return PROP_LIDAR_MODE_POINT_CLOUD;
+    if (strcmp(s, "slam") == 0) return PROP_LIDAR_MODE_SLAM;
+    if (strcmp(s, "ir") == 0)   return PROP_LIDAR_MODE_IR;
+    return PROP_LIDAR_MODE_POINT_CLOUD;
+}
+
+static void on_telemetry_json(const char *text, int len)
+{
+    cJSON *root = cJSON_ParseWithLength(text, len);
+    if (!root) return;
+    const cJSON *type = cJSON_GetObjectItem(root, "type");
+    if (!cJSON_IsString(type) || strcmp(type->valuestring, "thin_telemetry") != 0) {
+        cJSON_Delete(root);
+        return;
+    }
+    prop_lidar_telemetry_t t = {0};
+    t.link = PROP_LIDAR_LINK_OK;
+    const cJSON *fps   = cJSON_GetObjectItem(root, "fps");
+    const cJSON *pw    = cJSON_GetObjectItem(root, "power_mode");
+    const cJSON *i3c   = cJSON_GetObjectItem(root, "i3c_airtime_pct");
+    const cJSON *pts   = cJSON_GetObjectItem(root, "point_count");
+    const cJSON *rec   = cJSON_GetObjectItem(root, "recording");
+    const cJSON *mode  = cJSON_GetObjectItem(root, "mode");
+    if (cJSON_IsNumber(fps)) t.fps = (float)fps->valuedouble;
+    if (cJSON_IsString(pw))  snprintf(t.power_mode, sizeof(t.power_mode), "%s", pw->valuestring);
+    if (cJSON_IsNumber(i3c)) t.i3c_airtime_pct = (float)i3c->valuedouble;
+    if (cJSON_IsNumber(pts)) t.point_count = pts->valueint;
+    if (cJSON_IsBool(rec))   t.recording = cJSON_IsTrue(rec);
+    if (cJSON_IsString(mode)) t.mode = mode_from_str(mode->valuestring);
+    cJSON_Delete(root);
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_telemetry = t;
+    s_have_telemetry = true;
+    xSemaphoreGive(s_lock);
+}
+
 static void ws_event_handler(void *handler_args, esp_event_base_t base,
                               int32_t event_id, void *event_data)
 {
@@ -174,8 +237,9 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base,
                 if (d->payload_offset + d->payload_len == d->data_len) {
                     on_frame_complete(s_rx_buf, d->data_len);
                 }
-            } else if (d->op_code == 0x1 /* text */) {
-                /* telemetry parsing added in Task 6 */
+            } else if (d->op_code == 0x1 /* text */ &&
+                       d->payload_offset + d->payload_len == d->data_len) {
+                on_telemetry_json(d->data_ptr, d->payload_len);
             }
             break;
         }
