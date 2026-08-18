@@ -58,6 +58,7 @@ static const char *s_stage_names[BOOT_STAGE_COUNT] = {
     [BOOT_STAGE_BLE]         = "ble",
     [BOOT_STAGE_CSI]         = "csi",
     [BOOT_STAGE_FTM]         = "ftm",
+    [BOOT_STAGE_LIDAR]       = "lidar",
     [BOOT_STAGE_READY]       = "ready",
 };
 

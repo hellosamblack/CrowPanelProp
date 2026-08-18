@@ -53,6 +53,7 @@ typedef enum {
     BOOT_STAGE_BLE,
     BOOT_STAGE_CSI,
     BOOT_STAGE_FTM,
+    BOOT_STAGE_LIDAR,
     BOOT_STAGE_READY,
     BOOT_STAGE_COUNT,
 } prop_boot_stage_t;

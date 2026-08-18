@@ -9,6 +9,7 @@
 #include "prop_imu.h"
 #include "prop_track.h"
 #include "prop_aux_radar.h"
+#include "prop_lidar.h"
 #include "esp_ota_ops.h"
 static esp_ldo_channel_handle_t ldo3;
 static esp_ldo_channel_handle_t ldo4;
@@ -233,6 +234,16 @@ void app_main(void)
         if (ftm_err != ESP_OK) {
             MAIN_ERROR("FTM ranging unavailable (%s) — RANGE will show empty",
                        esp_err_to_name(ftm_err));
+        }
+
+        /* LiDAR thin-client render link (LIDAR panel) — connects out to the
+         * lidar-roomscanner rig's /ws-thin endpoint via mDNS. NON-fatal: if the task
+         * can't start, the panel just shows LINK: SEARCHING forever. */
+        prop_bootlog_mark(BOOT_STAGE_LIDAR);
+        esp_err_t lidar_err = prop_lidar_init();
+        if (lidar_err != ESP_OK) {
+            MAIN_ERROR("LiDAR link unavailable (%s) — LIDAR panel will show no data",
+                       esp_err_to_name(lidar_err));
         }
     }
 
