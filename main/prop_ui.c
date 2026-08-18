@@ -4366,6 +4366,27 @@ static void map_reset_cb(lv_event_t *e)
 }
 
 #define LIDAR_CANVAS_SZ 480
+#define LIDAR_DRAG_DEG_PER_PX 0.5f
+
+static void lidar_canvas_pressing_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_indev_t *indev = lv_indev_active();
+    if (!indev) return;
+    lv_point_t v;
+    lv_indev_get_vect(indev, &v);
+    if (v.x == 0 && v.y == 0) return;
+    prop_lidar_send_orbit((float)v.x * LIDAR_DRAG_DEG_PER_PX,
+                           (float)-v.y * LIDAR_DRAG_DEG_PER_PX, 0.0f);
+}
+
+static void lidar_record_toggle_cb(lv_event_t *e)
+{
+    (void)e;
+    prop_lidar_telemetry_t t;
+    prop_lidar_get_telemetry(&t);
+    prop_lidar_send_record(!t.recording);
+}
 
 static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
 {
@@ -4393,6 +4414,8 @@ static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
         lv_obj_set_pos(s_lidar_canvas, 24, 24);
         lv_obj_set_style_border_color(s_lidar_canvas, COL_DIM, 0);
         lv_obj_set_style_border_width(s_lidar_canvas, 1, 0);
+        lv_obj_add_flag(s_lidar_canvas, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(s_lidar_canvas, lidar_canvas_pressing_cb, LV_EVENT_PRESSING, NULL);
     }
     s_lidar_frame_scratch = heap_caps_malloc(PROP_LIDAR_FRAME_PIXELS * 2, MALLOC_CAP_SPIRAM);
     s_lidar_last_seq = 0;
@@ -4433,6 +4456,10 @@ static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
         lv_obj_align(val, LV_ALIGN_TOP_LEFT, 140, 40 + i * 32);
         *kSlots[i] = val;
     }
+
+    lv_obj_t *rec_btn = make_btn(strip, LV_SYMBOL_VIDEO " REC", 160, LV_ALIGN_TOP_LEFT,
+                                  0, LIDAR_CANVAS_SZ - 60, lidar_record_toggle_cb);
+    (void)rec_btn;
 
     return p;
 }
@@ -6138,9 +6165,14 @@ const char *prop_ui_current_screen(void)
  * prop_ui_goto - the engine stays a pure behavior model. */
 
 /* SELECTOR rotation: context-dependent. */
+#define LIDAR_DIAL_STEP_DEG 5.0f
+
 static void nav_select_move(int dir)
 {
     switch (s_cur_kind) {
+        case PK_LIDAR:
+            prop_lidar_send_orbit((float)dir * LIDAR_DIAL_STEP_DEG, 0.0f, 0.0f);
+            break;
         case PK_HOME:
             s_rail_sel = (s_rail_sel + dir + RAIL_COUNT) % RAIL_COUNT;
             set_rail_highlight();
@@ -6176,6 +6208,12 @@ static void nav_select_press(void)
 /* TAB switch: archive section selection (opens/switches the ARCHIVE). */
 static void nav_tab(int n)
 {
+    if (s_cur_kind == PK_LIDAR) {
+        prop_lidar_telemetry_t t;
+        prop_lidar_get_telemetry(&t);
+        prop_lidar_send_mode((prop_lidar_mode_t)((t.mode + 1) % 3));
+        return;
+    }
     s_archive_section = clamp_section(n);
     s_archive_entry = 0;
     open_panel(PK_ARCHIVE);
