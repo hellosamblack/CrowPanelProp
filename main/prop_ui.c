@@ -194,17 +194,27 @@ static ble_row_t s_ble_rows[PROP_BLE_MAX];
 static lv_obj_t *s_range_summary;
 static lv_obj_t *s_range_list;
 
-/* PK_LIDAR: thin-client render + telemetry strip. */
+/* PK_LIDAR: thin-client render + telemetry sidebar. The big canvas is ZERO-COPY:
+ * it points straight at prop_lidar's PSRAM front buffer (prop_lidar_peek_frame).
+ * It is created hidden with NO buffer; the first frame attaches one via
+ * lv_canvas_set_buffer (once — that call re-runs the whole image-source setup),
+ * and every later frame only swaps the draw buffer's data pointer + invalidates. */
 static lv_obj_t *s_lidar_canvas;
-static void     *s_lidar_canvas_buf;    /* PSRAM, LV_CANVAS_BUF_SIZE(480,480,16,...) */
-static uint16_t *s_lidar_frame_scratch; /* PSRAM, PROP_LIDAR_FRAME_PIXELS uint16_t's */
-static uint32_t  s_lidar_last_seq;      /* last frame seq blitted, to skip redundant copies */
+static bool      s_lidar_canvas_set;    /* buffer attached + canvas shown */
+static uint32_t  s_lidar_last_seq;      /* last frame seq pointed at, to skip redundant swaps */
 static lv_obj_t *s_lidar_fps;
-static lv_obj_t *s_lidar_power;
-static lv_obj_t *s_lidar_i3c;
 static lv_obj_t *s_lidar_pts;
 static lv_obj_t *s_lidar_rec;
 static lv_obj_t *s_lidar_link;
+static lv_obj_t *s_lidar_hdg;           /* "HDG 248.5° WSW" — COL_DIM "---" when invalid */
+static lv_obj_t *s_lidar_attitude;      /* "P -2.4°  R +1.1°" */
+static lv_obj_t *s_lidar_stab;          /* yaw-rate stability verdict */
+static lv_obj_t *s_lidar_ir_canvas;     /* 160x120 upscale of the 8x8 IR grid */
+static uint16_t *s_lidar_ir_buf;        /* PSRAM RGB565, 160x120 */
+static uint8_t   s_lidar_ir_last[PROP_LIDAR_IR_CELLS];  /* last rendered grid (skip identical repaints) */
+static bool      s_lidar_ir_drawn;      /* false until the first grid is rasterised */
+/* Style-color shadow bands (lv_obj_set_style_* has no same-value early-out). */
+static int8_t    s_lidar_link_band, s_lidar_rec_band, s_lidar_hdg_band, s_lidar_stab_band;
 
 typedef struct { lv_obj_t *tag, *rssi, *mac, *dist, *status, *fill; } range_row_t;
 static range_row_t s_range_rows[PROP_FTM_TABLE_MAX];
@@ -583,12 +593,17 @@ static void close_panel(void)
     s_map_info = NULL; s_map_msg = NULL;
     if (s_map_buf) { free(s_map_buf); s_map_buf = NULL; }
     s_map_have_fit = false; s_map_last_crumbs = -1; s_map_marks_sig = 0;
-    /* PK_LIDAR: widgets freed with the panel; its canvas + scratch PSRAM are ours. */
+    /* PK_LIDAR: widgets freed with the panel; the IR raster PSRAM is ours (the live
+     * frame buffers belong to prop_lidar and are never freed here). */
     s_lidar_canvas = NULL;
-    if (s_lidar_canvas_buf) { free(s_lidar_canvas_buf); s_lidar_canvas_buf = NULL; }
-    if (s_lidar_frame_scratch) { free(s_lidar_frame_scratch); s_lidar_frame_scratch = NULL; }
+    s_lidar_canvas_set = false;
     s_lidar_last_seq = 0;
-    s_lidar_fps = s_lidar_power = s_lidar_i3c = s_lidar_pts = s_lidar_rec = s_lidar_link = NULL;
+    s_lidar_fps = s_lidar_pts = s_lidar_rec = s_lidar_link = NULL;
+    s_lidar_hdg = s_lidar_attitude = s_lidar_stab = NULL;
+    s_lidar_link_band = s_lidar_rec_band = s_lidar_hdg_band = s_lidar_stab_band = -1;
+    s_lidar_ir_canvas = NULL;
+    if (s_lidar_ir_buf) { free(s_lidar_ir_buf); s_lidar_ir_buf = NULL; }
+    s_lidar_ir_drawn = false;
 }
 
 /* Light the rail cell for the function `kind` belongs to. Sub-panels map to their
@@ -4388,6 +4403,39 @@ static void lidar_record_toggle_cb(lv_event_t *e)
     prop_lidar_send_record(!t.recording);
 }
 
+/* 16-wind compass point for a heading in degrees (any range; normalised here). */
+static const char *compass16(float deg)
+{
+    static const char *kPts[16] = {
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+    };
+    float d = fmodf(deg, 360.0f);
+    if (d < 0) d += 360.0f;
+    return kPts[(int)(d / 22.5f + 0.5f) & 15];
+}
+
+/* Black-body-ish thermal ramp for the IR preview: black -> red -> yellow -> white. */
+static uint16_t ir_thermal_rgb565(uint8_t v)
+{
+    uint8_t r, g, b;
+    if (v < 96) {                       /* black -> red */
+        r = (uint8_t)(v * 255 / 95); g = 0; b = 0;
+    } else if (v < 192) {               /* red -> yellow */
+        r = 255; g = (uint8_t)((v - 96) * 255 / 95); b = 0;
+    } else {                            /* yellow -> white */
+        r = 255; g = 255; b = (uint8_t)((v - 192) * 255 / 63);
+    }
+    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+}
+
+/* IR preview geometry: the 8x8 grid rasterised as 20x15 px cells. */
+#define LIDAR_IR_GRID 8
+#define LIDAR_IR_W 160
+#define LIDAR_IR_H 120
+_Static_assert(LIDAR_IR_GRID * LIDAR_IR_GRID == PROP_LIDAR_IR_CELLS,
+               "IR raster geometry must match the telemetry grid size");
+
 static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
 {
     /* Full-screen hero panel, no title header / BACK button — same bare-bordered-
@@ -4402,36 +4450,34 @@ static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
     lv_obj_set_style_pad_all(p, 0, 0);
     lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* Render canvas: native RGB565 (swap_bytes=false matches the panel's display
-     * config — no ARGB, this is a straight frame blit, not hand-painted graphics). */
-    size_t canvas_sz = LV_CANVAS_BUF_SIZE(LIDAR_CANVAS_SZ, LIDAR_CANVAS_SZ, 16, LV_DRAW_BUF_STRIDE_ALIGN);
-    s_lidar_canvas_buf = heap_caps_malloc(canvas_sz, MALLOC_CAP_SPIRAM);
-    if (!s_lidar_canvas_buf) {
-        ESP_LOGE(UI_TAG, "LIDAR: PSRAM alloc failed for canvas buffer (%u bytes) — "
-                      "panel opens without a render surface", (unsigned)canvas_sz);
-    }
-    if (s_lidar_canvas_buf) {
-        memset(s_lidar_canvas_buf, 0, canvas_sz);
-        s_lidar_canvas = lv_canvas_create(p);
-        lv_canvas_set_buffer(s_lidar_canvas, s_lidar_canvas_buf, LIDAR_CANVAS_SZ, LIDAR_CANVAS_SZ,
-                              LV_COLOR_FORMAT_RGB565);
-        lv_obj_set_pos(s_lidar_canvas, 24, 24);
-        lv_obj_set_style_border_color(s_lidar_canvas, COL_DIM, 0);
-        lv_obj_set_style_border_width(s_lidar_canvas, 1, 0);
-        lv_obj_add_flag(s_lidar_canvas, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(s_lidar_canvas, lidar_canvas_pressing_cb, LV_EVENT_PRESSING, NULL);
-    }
-    s_lidar_frame_scratch = heap_caps_malloc(PROP_LIDAR_FRAME_PIXELS * 2, MALLOC_CAP_SPIRAM);
-    if (!s_lidar_frame_scratch) {
-        ESP_LOGE(UI_TAG, "LIDAR: PSRAM alloc failed for frame scratch (%u bytes) — "
-                         "frames will not be blitted", (unsigned)(PROP_LIDAR_FRAME_PIXELS * 2));
-    }
+    /* Render surface. The bezel owns the border, black fill, and the orbit-drag
+     * touch handler; the canvas inside starts HIDDEN with NO buffer — zero PSRAM
+     * until the first frame, when ui_observer points it straight at prop_lidar's
+     * front buffer (native RGB565, tightly packed — a straight frame blit). */
+    lv_obj_t *bezel = lv_obj_create(p);
+    lv_obj_remove_style_all(bezel);
+    lv_obj_set_size(bezel, LIDAR_CANVAS_SZ, LIDAR_CANVAS_SZ);
+    lv_obj_set_pos(bezel, 24, 24);
+    lv_obj_set_style_bg_color(bezel, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(bezel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(bezel, COL_DIM, 0);
+    lv_obj_set_style_border_width(bezel, 1, 0);
+    lv_obj_clear_flag(bezel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(bezel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(bezel, lidar_canvas_pressing_cb, LV_EVENT_PRESSING, NULL);
+
+    s_lidar_canvas = lv_canvas_create(bezel);
+    lv_obj_set_pos(s_lidar_canvas, 0, 0);
+    lv_obj_add_flag(s_lidar_canvas, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(s_lidar_canvas, LV_OBJ_FLAG_CLICKABLE);   /* drags hit the bezel */
+    s_lidar_canvas_set = false;
     s_lidar_last_seq = 0;
 
-    /* Telemetry strip, right of the canvas. */
+    /* Telemetry sidebar, right of the canvas. */
     lv_coord_t strip_x = 24 + LIDAR_CANVAS_SZ + 24;
+    lv_coord_t strip_w = SCAN_W - strip_x - 24;
     lv_obj_t *strip = lv_obj_create(p);
-    lv_obj_set_size(strip, SCAN_W - strip_x - 24, LIDAR_CANVAS_SZ);
+    lv_obj_set_size(strip, strip_w, LIDAR_CANVAS_SZ);
     lv_obj_set_pos(strip, strip_x, 24);
     lv_obj_set_style_bg_color(strip, COL_PANEL_ITEM, 0);
     lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, 0);
@@ -4447,26 +4493,68 @@ static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
     lv_obj_set_style_text_color(title, COL_AMBER, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    static const char *kNames[] = { "LINK", "FPS", "POWER", "I3C BUS", "POINTS", "REC" };
-    lv_obj_t **kSlots[] = { &s_lidar_link, &s_lidar_fps, &s_lidar_power, &s_lidar_i3c,
-                             &s_lidar_pts, &s_lidar_rec };
-    for (int i = 0; i < 6; i++) {
+    /* Telemetry block: LINK / FPS / POINTS / REC. */
+    static const char *kNames[] = { "LINK", "FPS", "POINTS", "REC" };
+    lv_obj_t **kSlots[] = { &s_lidar_link, &s_lidar_fps, &s_lidar_pts, &s_lidar_rec };
+    for (int i = 0; i < 4; i++) {
         lv_obj_t *lbl = lv_label_create(strip);
         lv_label_set_text(lbl, kNames[i]);
         lv_obj_set_style_text_font(lbl, FONT_BODY, 0);
         lv_obj_set_style_text_color(lbl, COL_MUTE, 0);
-        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 40 + i * 32);
+        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 38 + i * 27);
 
         lv_obj_t *val = lv_label_create(strip);
         lv_label_set_text(val, "--");
         lv_obj_set_style_text_font(val, FONT_BODY, 0);
         lv_obj_set_style_text_color(val, COL_AMBER, 0);
-        lv_obj_align(val, LV_ALIGN_TOP_LEFT, 140, 40 + i * 32);
+        lv_obj_align(val, LV_ALIGN_TOP_LEFT, 120, 38 + i * 27);
         *kSlots[i] = val;
     }
 
-    lv_obj_t *rec_btn = make_btn(strip, LV_SYMBOL_VIDEO " REC", 160, LV_ALIGN_TOP_LEFT,
-                                  0, LIDAR_CANVAS_SZ - 60, lidar_record_toggle_cb);
+    /* Orientation & heading block. */
+    s_lidar_hdg = lv_label_create(strip);
+    lv_label_set_text(s_lidar_hdg, "HDG ---");
+    lv_obj_set_style_text_font(s_lidar_hdg, FONT_HEAD, 0);
+    lv_obj_set_style_text_color(s_lidar_hdg, COL_DIM, 0);
+    lv_obj_align(s_lidar_hdg, LV_ALIGN_TOP_LEFT, 0, 158);
+
+    s_lidar_attitude = lv_label_create(strip);
+    lv_label_set_text(s_lidar_attitude, "P --   R --");
+    lv_obj_set_style_text_font(s_lidar_attitude, FONT_BODY, 0);
+    lv_obj_set_style_text_color(s_lidar_attitude, COL_MUTE, 0);
+    lv_obj_align(s_lidar_attitude, LV_ALIGN_TOP_LEFT, 0, 194);
+
+    s_lidar_stab = lv_label_create(strip);
+    lv_label_set_text(s_lidar_stab, "GIMBAL --");
+    lv_obj_set_style_text_font(s_lidar_stab, FONT_BODY, 0);
+    lv_obj_set_style_text_color(s_lidar_stab, COL_MUTE, 0);
+    lv_obj_align(s_lidar_stab, LV_ALIGN_TOP_LEFT, 0, 220);
+
+    /* IR preview block: 8x8 grid upscaled to a 160x120 thermal raster. */
+    lv_obj_t *ir_lbl = lv_label_create(strip);
+    lv_label_set_text(ir_lbl, "IR PREVIEW");
+    lv_obj_set_style_text_font(ir_lbl, FONT_BODY, 0);
+    lv_obj_set_style_text_color(ir_lbl, COL_MUTE, 0);
+    lv_obj_align(ir_lbl, LV_ALIGN_TOP_LEFT, 0, 254);
+
+    s_lidar_ir_buf = heap_caps_malloc(LIDAR_IR_W * LIDAR_IR_H * 2, MALLOC_CAP_SPIRAM);
+    if (s_lidar_ir_buf) {
+        memset(s_lidar_ir_buf, 0, LIDAR_IR_W * LIDAR_IR_H * 2);
+        s_lidar_ir_canvas = lv_canvas_create(strip);
+        lv_canvas_set_buffer(s_lidar_ir_canvas, s_lidar_ir_buf, LIDAR_IR_W, LIDAR_IR_H,
+                             LV_COLOR_FORMAT_RGB565);
+        lv_obj_align(s_lidar_ir_canvas, LV_ALIGN_TOP_LEFT, 0, 278);
+        lv_obj_set_style_border_color(s_lidar_ir_canvas, COL_DIM, 0);
+        lv_obj_set_style_border_width(s_lidar_ir_canvas, 1, 0);
+    } else {
+        ESP_LOGE(UI_TAG, "LIDAR: PSRAM alloc failed for IR preview (%u bytes)",
+                 (unsigned)(LIDAR_IR_W * LIDAR_IR_H * 2));
+    }
+    s_lidar_ir_drawn = false;
+
+    /* Full-width record toggle pinned to the sidebar bottom. */
+    lv_obj_t *rec_btn = make_btn(strip, LV_SYMBOL_VIDEO " REC", strip_w - 24,
+                                 LV_ALIGN_BOTTOM_MID, 0, 0, lidar_record_toggle_cb);
     (void)rec_btn;
 
     return p;
@@ -5185,6 +5273,8 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             else s_spec_decay[i] *= 0.80f;
             int pct = (int)s_spec_decay[i];
             int h = 2 + pct * SPEC_MAXH / 100;
+            /* lv_obj_set_height early-outs on an unchanged value (lv_obj_pos.c), so
+             * no shadow-compare is needed here. */
             lv_obj_set_height(s_spec_bars[i], h);
             int8_t band = (pct > 85) ? 2 : (pct > 35) ? 1 : 0;
             if (band != s_spec_band[i]) {
@@ -6048,47 +6138,123 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         }
     }
 
-    /* PK_LIDAR: blit the newest thin-client frame + refresh the telemetry strip. Both
-     * are cheap cache reads (prop_lidar owns the actual network I/O off this task). */
+    /* PK_LIDAR: point the canvas at the newest thin-client frame + refresh the
+     * sidebar. Both are cheap cache reads (prop_lidar owns the network I/O). */
     if (s_cur_kind == PK_LIDAR) {
-        /* Frame blit needs both PSRAM buffers; the telemetry strip below does not, so
-         * the two are guarded separately — a canvas-alloc failure must not also stop
-         * the readout from updating. */
-        if (s_lidar_canvas && s_lidar_frame_scratch) {
+        /* ZERO-COPY frame swap: retarget the canvas at prop_lidar's front buffer
+         * (packed RGB565, same layout the canvas expects) — no 460 KB memcpy per
+         * frame. lv_canvas_set_buffer re-runs the whole image-source setup (decoder
+         * walk + layout dirty), so it runs ONCE; steady-state frames only swap the
+         * draw buffer's data pointer and invalidate the canvas. */
+        if (s_lidar_canvas) {
             uint32_t seq = 0;
-            if (prop_lidar_get_frame(s_lidar_frame_scratch, &seq) && seq != s_lidar_last_seq) {
-                lv_draw_buf_t *db = lv_canvas_get_draw_buf(s_lidar_canvas);
-                uint8_t *dst = db->data;
-                uint32_t stride = db->header.stride;
-                const uint8_t *src = (const uint8_t *)s_lidar_frame_scratch;
-                for (int y = 0; y < PROP_LIDAR_FRAME_H; y++) {
-                    memcpy(dst + (size_t)y * stride, src + (size_t)y * PROP_LIDAR_FRAME_W * 2,
-                           PROP_LIDAR_FRAME_W * 2);
+            const uint16_t *frame = prop_lidar_peek_frame(&seq);
+            if (frame && seq != s_lidar_last_seq) {
+                if (!s_lidar_canvas_set) {
+                    lv_canvas_set_buffer(s_lidar_canvas, (void *)frame,
+                                         PROP_LIDAR_FRAME_W, PROP_LIDAR_FRAME_H,
+                                         LV_COLOR_FORMAT_RGB565);
+                    lv_obj_clear_flag(s_lidar_canvas, LV_OBJ_FLAG_HIDDEN);
+                    s_lidar_canvas_set = true;
+                } else {
+                    lv_draw_buf_t *db = lv_canvas_get_draw_buf(s_lidar_canvas);
+                    if (db) {
+                        db->data = (uint8_t *)frame;
+                        lv_obj_invalidate(s_lidar_canvas);
+                    }
                 }
-                lv_obj_invalidate(s_lidar_canvas);
                 s_lidar_last_seq = seq;
             }
         }
 
-        if (s_lidar_link && s_lidar_fps && s_lidar_power && s_lidar_i3c &&
-            s_lidar_pts && s_lidar_rec) {
+        /* Sidebar text at ~5 Hz (every 4th engine tick) — formatting labels at full
+         * observer rate is wasted work the eye can't see. */
+        if (st->tick % 4 == 0 && s_lidar_link && s_lidar_fps && s_lidar_pts && s_lidar_rec) {
             prop_lidar_telemetry_t t;
             prop_lidar_get_telemetry(&t);
+            /* Style colors have no same-value early-out in LVGL — every set is a
+             * style refresh + invalidate, so each is banded behind a shadow value. */
             static const char *kLinkText[] = { "SEARCHING", "OK", "STALE" };
             label_set_text_cached(s_lidar_link, kLinkText[t.link]);
-            lv_obj_set_style_text_color(s_lidar_link,
-                t.link == PROP_LIDAR_LINK_OK ? COL_AMBER : COL_ALERT, 0);
+            int8_t band = (t.link == PROP_LIDAR_LINK_OK) ? 1 : 0;
+            if (band != s_lidar_link_band) {
+                s_lidar_link_band = band;
+                lv_obj_set_style_text_color(s_lidar_link, band ? COL_AMBER : COL_ALERT, 0);
+            }
 
-            char buf[24];
+            char buf[40];
             snprintf(buf, sizeof(buf), "%.1f", t.fps);
             label_set_text_cached(s_lidar_fps, buf);
-            label_set_text_cached(s_lidar_power, t.power_mode[0] ? t.power_mode : "--");
-            snprintf(buf, sizeof(buf), "%.0f%%", t.i3c_airtime_pct);
-            label_set_text_cached(s_lidar_i3c, buf);
             snprintf(buf, sizeof(buf), "%d", t.point_count);
             label_set_text_cached(s_lidar_pts, buf);
             label_set_text_cached(s_lidar_rec, t.recording ? "REC" : "off");
-            lv_obj_set_style_text_color(s_lidar_rec, t.recording ? COL_ALERT : COL_MUTE, 0);
+            band = t.recording ? 1 : 0;
+            if (band != s_lidar_rec_band) {
+                s_lidar_rec_band = band;
+                lv_obj_set_style_text_color(s_lidar_rec, band ? COL_ALERT : COL_MUTE, 0);
+            }
+
+            /* Orientation & heading. Camera-legibility rule: the invalid state is
+             * de-emphasised with COL_DIM because it is exactly "unlit instrument". */
+            if (s_lidar_hdg) {
+                if (t.orientation_valid) {
+                    snprintf(buf, sizeof(buf), "HDG %.1f\xc2\xb0 %s",
+                             (double)t.heading_deg, compass16(t.heading_deg));
+                    label_set_text_cached(s_lidar_hdg, buf);
+                } else {
+                    label_set_text_cached(s_lidar_hdg, "HDG ---");
+                }
+                band = t.orientation_valid ? 1 : 0;
+                if (band != s_lidar_hdg_band) {
+                    s_lidar_hdg_band = band;
+                    lv_obj_set_style_text_color(s_lidar_hdg, band ? COL_AMBER : COL_DIM, 0);
+                }
+            }
+            if (s_lidar_attitude) {
+                if (t.orientation_valid) {
+                    snprintf(buf, sizeof(buf), "P %+.1f\xc2\xb0   R %+.1f\xc2\xb0",
+                             (double)t.pitch_deg, (double)t.roll_deg);
+                    label_set_text_cached(s_lidar_attitude, buf);
+                } else {
+                    label_set_text_cached(s_lidar_attitude, "P --   R --");
+                }
+            }
+            if (s_lidar_stab) {
+                float yr = fabsf(t.yaw_rate_dps);
+                if (!t.orientation_valid)  band = 0;
+                else if (yr < 2.0f)        band = 1;
+                else if (yr < 20.0f)       band = 2;
+                else                       band = 3;
+                static const char *kStabText[] = { "GIMBAL --", "GIMBAL STEADY",
+                                                   "GIMBAL SLEWING", "GIMBAL FAST" };
+                label_set_text_cached(s_lidar_stab, kStabText[band]);
+                if (band != s_lidar_stab_band) {
+                    s_lidar_stab_band = band;
+                    const lv_color_t stab_col[] = { COL_DIM, COL_MUTE, COL_AMBER, COL_ALERT };
+                    lv_obj_set_style_text_color(s_lidar_stab, stab_col[band], 0);
+                }
+            }
+
+            /* IR preview: rasterise the 8x8 grid as 20x15 px thermal cells. Direct
+             * buffer write (same idiom as prop_fx) — repaint only when it changed. */
+            if (s_lidar_ir_canvas && s_lidar_ir_buf && t.has_ir_grid &&
+                (!s_lidar_ir_drawn ||
+                 memcmp(s_lidar_ir_last, t.ir_grid, sizeof(s_lidar_ir_last)) != 0)) {
+                memcpy(s_lidar_ir_last, t.ir_grid, sizeof(s_lidar_ir_last));
+                s_lidar_ir_drawn = true;
+                for (int gy = 0; gy < LIDAR_IR_GRID; gy++) {
+                    for (int gx = 0; gx < LIDAR_IR_GRID; gx++) {
+                        uint16_t c = ir_thermal_rgb565(t.ir_grid[gy * LIDAR_IR_GRID + gx]);
+                        int y0 = gy * (LIDAR_IR_H / LIDAR_IR_GRID);
+                        int x0 = gx * (LIDAR_IR_W / LIDAR_IR_GRID);
+                        for (int y = 0; y < LIDAR_IR_H / LIDAR_IR_GRID; y++) {
+                            uint16_t *row = s_lidar_ir_buf + (size_t)(y0 + y) * LIDAR_IR_W + x0;
+                            for (int x = 0; x < LIDAR_IR_W / LIDAR_IR_GRID; x++) row[x] = c;
+                        }
+                    }
+                }
+                lv_obj_invalidate(s_lidar_ir_canvas);
+            }
         }
     }
 

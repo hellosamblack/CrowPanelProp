@@ -7,15 +7,17 @@
 
 /* ---- Hardware tables -----------------------------------------------------
  * Edit these to match your wiring. Indices MUST match the enums in bsp_io.h.
- * Only GPIO48 is confirmed broken-out + free (UART1-RX header). The others are
- * placeholders on candidate-free pins — verify against the V1.0 schematic.
+ * gpio = -1 marks an unassigned slot: state is still tracked but no pin is
+ * configured or driven. GPIO47/48 belong to the Seeed MR24HPC1 UART3 link
+ * (prop_aux_radar) and GPIO11 is hardwired to CSI_RESET on the camera
+ * connector — none of them may be driven as IO here.
  */
 static const struct {
     int gpio;
     const char *name;
 } led_table[LED_COUNT] = {
-    [LED_POWER]  = { 48, "power"  },
-    [LED_SIGNAL] = { 47, "signal" },  /* UART1-TX header pin; verify before wiring */
+    [LED_POWER]  = { -1, "power"  },  /* GPIO48 = Seeed radar UART3 RX — unassigned */
+    [LED_SIGNAL] = { -1, "signal" },  /* GPIO47 = Seeed radar UART3 TX — unassigned */
     [LED_ALERT]  = { 20, "alert"  },  /* candidate free pin; verify before wiring  */
 };
 
@@ -24,7 +26,7 @@ static const struct {
     const char *name;
 } button_table[BTN_COUNT] = {
     [BTN_MODE]   = { 28, "mode"   },  /* reassigned to J7/B20; GPIO33 freed for Seeed UART3 */
-    [BTN_ACTION] = { 11, "action" },  /* candidate free pin; verify before wiring  */
+    [BTN_ACTION] = { -1, "action" },  /* GPIO11 = CSI_RESET (camera connector) — unassigned */
 };
 
 /* ---- State -------------------------------------------------------------- */
@@ -55,6 +57,9 @@ esp_err_t bsp_io_led_set(prop_led_t led, bool on)
         return ESP_ERR_INVALID_ARG;
     }
     s_led_state[led] = on;
+    if (led_table[led].gpio < 0) {
+        return ESP_OK;   /* unassigned slot: track state only, no pin to drive */
+    }
     return gpio_set_level(led_table[led].gpio, on ? 1 : 0);
 }
 
@@ -79,7 +84,12 @@ static esp_err_t led_init(void)
 {
     uint64_t pin_mask = 0;
     for (int i = 0; i < LED_COUNT; i++) {
-        pin_mask |= (1ULL << led_table[i].gpio);
+        if (led_table[i].gpio >= 0) {
+            pin_mask |= (1ULL << led_table[i].gpio);
+        }
+    }
+    if (pin_mask == 0) {
+        return bsp_io_led_set_mask(0);   /* nothing wired; just clear cached state */
     }
     const gpio_config_t cfg = {
         .pin_bit_mask = pin_mask,
@@ -98,6 +108,9 @@ static esp_err_t led_init(void)
 /* Registers one iot_button with PRESS_DOWN, LONG_PRESS_START, PRESS_UP callbacks. */
 static esp_err_t register_button(prop_button_t idx)
 {
+    if (button_table[idx].gpio < 0) {
+        return ESP_OK;   /* unassigned slot: nothing to register */
+    }
     const button_config_t btn_cfg = { 0 };
     const button_gpio_config_t gpio_cfg = {
         .gpio_num = button_table[idx].gpio,

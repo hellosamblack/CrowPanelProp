@@ -44,8 +44,12 @@
 static uint8_t *s_rx_buf;      /* PSRAM, RX_HEADER_BYTES + FRAME_BYTES */
 static SemaphoreHandle_t s_lock;
 
-static uint16_t *s_frame_buf[2];   /* PSRAM double buffer, FRAME_BYTES each */
-static int       s_frame_front;    /* index of the buffer readers should copy from */
+/* Triple buffer: the writer always fills (front+1)%3, so the two most recently
+ * published buffers are never written. A zero-copy reader (the LIDAR canvas) that
+ * keeps up within one flip can therefore never be scribbled on mid-render; even a
+ * reader a full flip behind is safe. */
+static uint16_t *s_frame_buf[3];   /* PSRAM triple buffer, FRAME_BYTES each */
+static int       s_frame_front;    /* index of the buffer readers should use */
 static uint32_t  s_frame_seq;      /* increments each time a new frame lands */
 static uint32_t  s_last_frame_ms;  /* esp_timer ms at the last complete frame */
 
@@ -58,18 +62,14 @@ static inline uint32_t now_ms(void)
 
 /* ---- Public getters -------------------------------------------------------------- */
 
-bool prop_lidar_get_frame(uint16_t *dst, uint32_t *out_seq)
+const uint16_t *prop_lidar_peek_frame(uint32_t *out_seq)
 {
-    if (!s_lock || !dst) return false;
-    bool ok = false;
+    if (!s_lock) return NULL;
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (s_frame_seq > 0) {
-        memcpy(dst, s_frame_buf[s_frame_front], FRAME_BYTES);
-        if (out_seq) *out_seq = s_frame_seq;
-        ok = true;
-    }
+    const uint16_t *front = (s_frame_seq > 0) ? s_frame_buf[s_frame_front] : NULL;
+    if (out_seq) *out_seq = s_frame_seq;
     xSemaphoreGive(s_lock);
-    return ok;
+    return front;
 }
 
 uint32_t prop_lidar_get_seq(void)
@@ -235,9 +235,11 @@ static void on_frame_complete(const uint8_t *buf, int len)
         ESP_LOGW(TAG, "bad THIN_FRAME header tag=%u w=%u h=%u", (unsigned)tag, w, h);
         return;
     }
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    int back = 1 - s_frame_front;
+    /* The 460 KB copy happens OUTSIDE the lock: only this task ever writes frame
+     * buffers, and (front+1)%3 is by construction not the front a reader can see. */
+    int back = (s_frame_front + 1) % 3;
     memcpy(s_frame_buf[back], buf + RX_HEADER_BYTES, FRAME_BYTES);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     s_frame_front = back;
     s_frame_seq++;
     s_last_frame_ms = now_ms();
@@ -264,17 +266,38 @@ static void on_telemetry_json(const char *text, int len)
     prop_lidar_telemetry_t t = {0};
     t.link = PROP_LIDAR_LINK_OK;
     const cJSON *fps   = cJSON_GetObjectItem(root, "fps");
-    const cJSON *pw    = cJSON_GetObjectItem(root, "power_mode");
-    const cJSON *i3c   = cJSON_GetObjectItem(root, "i3c_airtime_pct");
     const cJSON *pts   = cJSON_GetObjectItem(root, "point_count");
     const cJSON *rec   = cJSON_GetObjectItem(root, "recording");
     const cJSON *mode  = cJSON_GetObjectItem(root, "mode");
     if (cJSON_IsNumber(fps)) t.fps = (float)fps->valuedouble;
-    if (cJSON_IsString(pw))  snprintf(t.power_mode, sizeof(t.power_mode), "%s", pw->valuestring);
-    if (cJSON_IsNumber(i3c)) t.i3c_airtime_pct = (float)i3c->valuedouble;
     if (cJSON_IsNumber(pts)) t.point_count = pts->valueint;
     if (cJSON_IsBool(rec))   t.recording = cJSON_IsTrue(rec);
     if (cJSON_IsString(mode)) t.mode = mode_from_str(mode->valuestring);
+
+    /* Rig orientation. heading/pitch/roll/yaw-rate are only meaningful while
+     * orientation_valid is true (vertical boresight / uncalibrated clears it). */
+    const cJSON *hdg  = cJSON_GetObjectItem(root, "heading_deg");
+    const cJSON *pit  = cJSON_GetObjectItem(root, "pitch_deg");
+    const cJSON *rol  = cJSON_GetObjectItem(root, "roll_deg");
+    const cJSON *yr   = cJSON_GetObjectItem(root, "yaw_rate_dps");
+    const cJSON *ovld = cJSON_GetObjectItem(root, "orientation_valid");
+    if (cJSON_IsNumber(hdg)) t.heading_deg  = (float)hdg->valuedouble;
+    if (cJSON_IsNumber(pit)) t.pitch_deg    = (float)pit->valuedouble;
+    if (cJSON_IsNumber(rol)) t.roll_deg     = (float)rol->valuedouble;
+    if (cJSON_IsNumber(yr))  t.yaw_rate_dps = (float)yr->valuedouble;
+    if (cJSON_IsBool(ovld))  t.orientation_valid = cJSON_IsTrue(ovld);
+
+    /* 8x8 IR preview grid: 64 ints, 0..255, row-major. */
+    const cJSON *ir = cJSON_GetObjectItem(root, "ir_grid");
+    if (cJSON_IsArray(ir) && cJSON_GetArraySize(ir) == PROP_LIDAR_IR_CELLS) {
+        int i = 0;
+        const cJSON *cell;
+        cJSON_ArrayForEach(cell, ir) {
+            int v = cJSON_IsNumber(cell) ? cell->valueint : 0;
+            t.ir_grid[i++] = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
+        }
+        t.has_ir_grid = true;
+    }
     cJSON_Delete(root);
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -469,7 +492,7 @@ esp_err_t prop_lidar_init(void)
     s_cmd_q = xQueueCreate(LIDAR_CMD_QUEUE_DEPTH, sizeof(lidar_cmd_t));
     if (!s_cmd_q) goto fail;
 
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 3; i++) {
         s_frame_buf[i] = heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_SPIRAM);
         if (!s_frame_buf[i]) {
             ESP_LOGE(TAG, "PSRAM alloc failed for frame buffer %d (%u bytes)", i, (unsigned)FRAME_BYTES);
@@ -491,7 +514,7 @@ esp_err_t prop_lidar_init(void)
     memset(&s_telemetry, 0, sizeof(s_telemetry));
     s_telemetry.link = PROP_LIDAR_LINK_SEARCHING;
 
-    BaseType_t ok = xTaskCreate(lidar_task, "prop_lidar", 6144, NULL, 4, NULL);
+    BaseType_t ok = xTaskCreatePinnedToCore(lidar_task, "prop_lidar", 6144, NULL, 4, NULL, 0);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "xTaskCreate failed");
         err = ESP_FAIL;
@@ -503,7 +526,7 @@ fail:
     /* Partial bring-up: release everything acquired so far rather than leaking it for
      * the lifetime of the boot (these are ~1 MB of PSRAM plus kernel objects). */
     if (s_rx_buf) { free(s_rx_buf); s_rx_buf = NULL; }
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 3; i++) {
         if (s_frame_buf[i]) { free(s_frame_buf[i]); s_frame_buf[i] = NULL; }
     }
     if (s_cmd_q) { vQueueDelete(s_cmd_q); s_cmd_q = NULL; }

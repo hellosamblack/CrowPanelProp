@@ -14,6 +14,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import socket
 import struct
 import threading
@@ -187,16 +188,30 @@ def _writer_loop(conn: socket.socket, state: ClientState, stop: threading.Event)
             tick += 1
             next_frame = now + FRAME_INTERVAL
         if now >= next_telem:
+            # Animated orientation + IR grid so the panel's HDG/GIMBAL/IR PREVIEW
+            # blocks visibly exercise (heading sweeps, a warm blob orbits the grid).
+            hdg = (now * 6.0) % 360.0
+            ir_cx = 3.5 + 2.5 * math.cos(now * 0.7)
+            ir_cy = 3.5 + 2.5 * math.sin(now * 0.7)
+            ir_grid = [
+                max(0, min(255, int(30 + 220 * math.exp(
+                    -((gx - ir_cx) ** 2 + (gy - ir_cy) ** 2) / 3.0))))
+                for gy in range(8) for gx in range(8)
+            ]
             with state.lock:
                 telem = {
                     "type": "thin_telemetry",
                     "fps": 10.0,
-                    "power_mode": "ULP",
-                    "i3c_airtime_pct": 35.6,
                     "point_count": 2268,
                     "recording": state.recording,
                     "mode": state.mode,
                     "link": "ok",
+                    "heading_deg": round(hdg, 1),
+                    "pitch_deg": round(3.0 * math.sin(now * 0.5), 1),
+                    "roll_deg": round(1.5 * math.cos(now * 0.3), 1),
+                    "yaw_rate_dps": 6.0,
+                    "orientation_valid": True,
+                    "ir_grid": ir_grid,
                 }
             try:
                 _send_text(conn, json.dumps(telem))

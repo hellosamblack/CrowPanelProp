@@ -26,10 +26,17 @@
 #define LV_SRAM_CAPS  (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
 
 /* Small allocations (transient draw-mask buffers LVGL 9 allocates per-line during
- * software rendering, typically ≤ 512 B) go to internal SRAM first for lower latency.
- * Larger allocations (widget trees, image caches) go straight to PSRAM.
- * PSRAM fallback keeps us safe if internal RAM runs low. */
-#define LV_SRAM_THRESHOLD 512
+ * software rendering — line anti-alias masks run 256–1024 B) go to internal SRAM
+ * first for lower latency. Larger allocations (widget trees, image caches) go
+ * straight to PSRAM. PSRAM fallback keeps us safe if internal RAM runs low.
+ *
+ * The SRAM fast path is gated on internal-RAM headroom: this class also catches
+ * persistent allocations (style arrays, label text), and letting them erode
+ * internal RAM until exhaustion would make esp_hosted/lwip's internal-only
+ * buffers fail first at runtime, not LVGL. Below the floor, everything goes to
+ * PSRAM. (heap_caps_get_free_size is O(#heaps) — counters, not a heap walk.) */
+#define LV_SRAM_THRESHOLD 1024
+#define LV_SRAM_HEADROOM  (128 * 1024)
 
 void lv_mem_init(void) { }
 void lv_mem_deinit(void) { }
@@ -45,7 +52,8 @@ void lv_mem_remove_pool(lv_mem_pool_t pool) { LV_UNUSED(pool); }
 
 void *lv_malloc_core(size_t size)
 {
-    if (size <= LV_SRAM_THRESHOLD) {
+    if (size <= LV_SRAM_THRESHOLD &&
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL) > LV_SRAM_HEADROOM) {
         void *p = heap_caps_malloc(size, LV_SRAM_CAPS);
         if (p) return p;
     }

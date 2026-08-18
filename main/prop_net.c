@@ -42,6 +42,7 @@ static char s_ip[16] = "0.0.0.0";
 static volatile prop_sta_state_t s_sta_state = STA_IDLE;
 static volatile int s_rssi;      /* cached signal strength (dBm), 0 = unknown */
 static prop_uplink_t s_uplink;   /* cached connected-AP dossier (filled by rssi_task) */
+static portMUX_TYPE s_uplink_mux = portMUX_INITIALIZER_UNLOCKED;   /* guards s_uplink */
 static volatile bool s_scanning; /* a WiFi scan is in flight (RF BAND / WIFI panel) */
 static bool s_ap_up;             /* true once the fallback hotspot is running */
 static void rssi_task(void *arg);
@@ -542,7 +543,9 @@ int prop_net_get_rssi(void)
 void prop_net_get_uplink(prop_uplink_t *out)
 {
     if (out) {
-        *out = s_uplink;   /* struct copy; benign race for a readout */
+        taskENTER_CRITICAL(&s_uplink_mux);
+        *out = s_uplink;
+        taskEXIT_CRITICAL(&s_uplink_mux);
     }
 }
 
@@ -567,28 +570,31 @@ static void rssi_task(void *arg)
 {
     (void)arg;
     for (;;) {
+        /* Assemble locally, then publish in one shot — the SDIO round-trips must
+         * stay outside the critical section. */
+        prop_uplink_t up = { 0 };
         wifi_ap_record_t ap;
         if (!s_scanning && s_sta_state == STA_CONNECTED &&
             esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
             s_rssi = ap.rssi;
-            s_uplink.connected = true;
-            strlcpy(s_uplink.ssid, (const char *)ap.ssid, sizeof(s_uplink.ssid));
-            memcpy(s_uplink.bssid, ap.bssid, 6);
-            s_uplink.rssi = ap.rssi;
-            s_uplink.channel = ap.primary;
-            s_uplink.country[0] = (ap.country.cc[0] > ' ') ? ap.country.cc[0] : '\0';
-            s_uplink.country[1] = (ap.country.cc[1] > ' ') ? ap.country.cc[1] : '\0';
-            s_uplink.country[2] = '\0';
+            up.connected = true;
+            strlcpy(up.ssid, (const char *)ap.ssid, sizeof(up.ssid));
+            memcpy(up.bssid, ap.bssid, 6);
+            up.rssi = ap.rssi;
+            up.channel = ap.primary;
+            up.country[0] = (ap.country.cc[0] > ' ') ? ap.country.cc[0] : '\0';
+            up.country[1] = (ap.country.cc[1] > ' ') ? ap.country.cc[1] : '\0';
+            up.country[2] = '\0';
             wifi_phy_mode_t pm;
             if (esp_wifi_sta_get_negotiated_phymode(&pm) == ESP_OK) {
-                strlcpy(s_uplink.phy, phymode_label(pm), sizeof(s_uplink.phy));
-            } else {
-                s_uplink.phy[0] = '\0';
+                strlcpy(up.phy, phymode_label(pm), sizeof(up.phy));
             }
         } else {
             s_rssi = 0;
-            s_uplink.connected = false;
         }
+        taskENTER_CRITICAL(&s_uplink_mux);
+        s_uplink = up;
+        taskEXIT_CRITICAL(&s_uplink_mux);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

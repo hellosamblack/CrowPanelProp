@@ -14,6 +14,8 @@
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 
+static void start_scan(void);
+
 #define BLE_TAG "PROP_BLE"
 
 static bool s_available;
@@ -267,18 +269,17 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
                       (const char *)fields.name, fields.name_len, company,
                       tx_power, appearance, uuid, uuid_len);
     } else if (event->type == BLE_GAP_EVENT_DISC_COMPLETE) {
-        /* Scan windows shouldn't end (we ask for forever), but restart if one does. */
+        /* Scan windows shouldn't end (we ask for forever), but restart if one does.
+         * start_scan latches s_scan_restart_pending on failure; prune_task retries. */
         ESP_LOGW(BLE_TAG, "scan ended (reason %d) — restarting", event->disc_complete.reason);
-        struct ble_gap_disc_params dp = { .passive = 1, .filter_duplicates = 0 };
-        int rc = ble_gap_disc(s_own_addr_type, BLE_HS_FOREVER, &dp, gap_event_cb, NULL);
-        if (rc != 0) {
-            /* No retry path exists — if this fails, CONTACTS silently ages out
-             * to empty, so at least say why. */
-            ESP_LOGE(BLE_TAG, "scan restart failed (rc=%d) — passive scan is DOWN", rc);
-        }
+        start_scan();
     }
     return 0;
 }
+
+/* Set when ble_gap_disc failed and the passive scan is down; prune_task keeps
+ * retrying start_scan until it sticks. */
+static volatile bool s_scan_restart_pending;
 
 static void start_scan(void)
 {
@@ -290,10 +291,12 @@ static void start_scan(void)
         .limited = 0,
     };
     int rc = ble_gap_disc(s_own_addr_type, BLE_HS_FOREVER, &dp, gap_event_cb, NULL);
-    if (rc != 0) {
-        ESP_LOGE(BLE_TAG, "ble_gap_disc start failed: %d", rc);
-    } else {
+    if (rc == 0 || rc == BLE_HS_EALREADY) {
+        s_scan_restart_pending = false;
         ESP_LOGI(BLE_TAG, "passive scan started");
+    } else {
+        s_scan_restart_pending = true;
+        ESP_LOGE(BLE_TAG, "ble_gap_disc start failed: %d — will retry", rc);
     }
 }
 
@@ -333,6 +336,9 @@ static void prune_task(void *arg)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(500));
         prune_stale();
+        if (s_scan_restart_pending) {
+            start_scan();   /* passive scan went down; keep retrying until it sticks */
+        }
     }
 }
 

@@ -196,7 +196,7 @@ esp_err_t prop_track_init(void)
 
     s_available = prop_imu_available();
 
-    BaseType_t ok = xTaskCreate(track_task, "prop_track", 4096, NULL, 4, NULL);
+    BaseType_t ok = xTaskCreatePinnedToCore(track_task, "prop_track", 4096, NULL, 4, NULL, 0);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "task create failed");
         return ESP_ERR_NO_MEM;

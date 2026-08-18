@@ -93,12 +93,15 @@ gpios:
     notes: J11 IO10_W_BUSY header pin. Free when no radio. LP-capable.
 
   - gpio: 11
-    status: pending         # BTN_ACTION placeholder — needs schematic verification
-    function: Button Action (placeholder)
-    connector_pin: ~        # not yet mapped to a header pin
-    file: components/bsp_io/bsp_io.c:27
+    status: reserved        # CSI_RESET — hardwired to the camera connector
+    function: Camera CSI_RESET
+    connector_pin: ~        # camera FPC connector, not a user header
+    file: components/bsp_io/bsp_io.c
     caps: [lp_gpio, touch_ch10, gpio_matrix]
-    notes: "bsp_io.c comment: candidate free pin; verify before wiring"
+    notes: >
+      Hardwired to CSI_RESET on the camera connector — must NOT be driven as
+      general IO. The former BTN_ACTION placeholder here was removed from
+      bsp_io.c (gpio -1, unassigned) on 2026-08-18.
 
   - gpio: 14
     status: claimed

@@ -537,9 +537,9 @@ esp_err_t prop_motion_init(void)
     s_cfg_done_sem = xSemaphoreCreateBinary();
     s_current_baud = MOTION_BAUD;
 
-    /* Task: 4096-byte stack, priority 4, pinned to core 1. */
+    /* Task: 4096-byte stack, priority 4, pinned to core 0 (core 1 = LVGL). */
     BaseType_t r = xTaskCreatePinnedToCore(motion_task, "prop_motion",
-                                           4096, NULL, 4, NULL, 1);
+                                           4096, NULL, 4, NULL, 0);
     if (r != pdPASS) {
         ESP_LOGE(TAG, "xTaskCreatePinnedToCore failed");
         uart_driver_delete(MOTION_UART);

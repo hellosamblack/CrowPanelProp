@@ -630,21 +630,35 @@ static esp_err_t ld2450_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+#define CMD_BODY_MAX 2048   /* largest accepted /cmd JSON body */
+
 static esp_err_t cmd_post_handler(httpd_req_t *req)
 {
-    char buf[256];
     int total = req->content_len;
-    if (total <= 0 || total >= (int)sizeof(buf)) {
+    if (total <= 0 || total > CMD_BODY_MAX) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad length");
         return ESP_FAIL;
     }
-    int received = httpd_req_recv(req, buf, total);
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv failed");
+    char *buf = malloc(total + 1);
+    if (!buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no mem");
         return ESP_FAIL;
+    }
+    /* Drain the whole body — a ~2 KB POST can arrive in several TCP segments and
+     * httpd_req_recv returns per-segment (same loop as ota_post_handler below). */
+    int received = 0;
+    while (received < total) {
+        int r = httpd_req_recv(req, buf + received, total - received);
+        if (r <= 0) {
+            free(buf);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv failed");
+            return ESP_FAIL;
+        }
+        received += r;
     }
     buf[received] = '\0';
     esp_err_t err = dispatch_command(buf, received);
+    free(buf);
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     if (err == ESP_OK) {
         httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -669,13 +683,13 @@ static esp_err_t ws_handler(httpd_req_t *req)
     if (ret != ESP_OK || frame.len == 0) {
         return ret;
     }
-    if (frame.len > 255) {
+    if (frame.len > 1023) {
         /* Returning ESP_OK here would leave the unread payload in the socket
          * and desync every subsequent frame (httpd doesn't drain it for us) —
          * fail so httpd closes this client instead. */
         return ESP_FAIL;
     }
-    uint8_t buf[256];
+    uint8_t buf[1024];
     frame.payload = buf;
     ret = httpd_ws_recv_frame(req, &frame, frame.len);
     if (ret != ESP_OK) {
@@ -908,7 +922,7 @@ esp_err_t prop_api_init(void)
     httpd_register_uri_handler(s_server, &ld);
 
     prop_engine_add_observer(broadcast_observer, NULL);
-    xTaskCreate(telemetry_task, "prop_telemetry", 4096, NULL, 4, NULL);
+    xTaskCreatePinnedToCore(telemetry_task, "prop_telemetry", 4096, NULL, 4, NULL, 0);
     ESP_LOGI(API_TAG, "HTTP API up (/, /state, /telemetry, /cmd, /ws, /ota, /screenshot, /ld2450)");
     return ESP_OK;
 }

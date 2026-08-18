@@ -42,7 +42,7 @@
 #define OFFLINE_MS       5000 /* ms without a valid frame → AUX_OFFLINE */
 #define TASK_STACK       3072 /* bytes per task */
 #define TASK_PRIO        3
-#define TASK_CORE        1
+#define TASK_CORE        0   /* core 1 is reserved for the LVGL render task */
 
 /* ---- Cached state -------------------------------------------------------- */
 

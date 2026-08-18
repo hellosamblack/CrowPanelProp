@@ -107,30 +107,75 @@ static void fx_fill(void *buf, int bw, int bh, int x0, int y0, int w, int h,
     }
 }
 
+/* ---- LUT-accelerated bake ---------------------------------------------------
+ * Every canvas pixel is "solid black at some alpha `a`, src-over the constant
+ * phosphor wash". The final ARGB value therefore depends ONLY on `a` — so instead
+ * of running the src-over math per pixel (the old fx_fill loops, ~40 ms per full
+ * bake), precompute a 256-entry alpha→ARGB table once per bake and reduce the whole
+ * composite to one table lookup per pixel.
+ *
+ * (The PPA blend engine was evaluated for this — prop_ppa_spike.c verified A8-over-
+ * RGB565 at ~2.5x the src-over loop — but the ARGB8888-out variant this canvas
+ * needs is unverified on hardware, and a blocking PPA call sits on the boot path
+ * before mark_app_valid, where a hang is unrecoverable over OTA. The LUT removes
+ * the per-pixel math entirely, which is the same win with zero hardware risk.)
+ *
+ * Black alphas stack like the old sequential fills did: src-over of two black
+ * layers a1 then a2 combines to a1 + a2 - a1*a2/255, so output parity with the
+ * previous look is exact. */
+static uint8_t combine_black_alpha(uint8_t a1, uint8_t a2)
+{
+    return (uint8_t)((uint32_t)a1 + a2 - ((uint32_t)a1 * a2) / 255u);
+}
+
 /* Bake the static overlay (scanlines + phosphor wash + vignette) into the canvas. */
 static void paint_canvas(void)
 {
-    /* Phosphor amber wash (lv_canvas_fill_bg is a direct buffer write — safe). */
-    lv_canvas_fill_bg(s_canvas, FX_AMBER, scale_opa(FX_WASH_OPA, s_phosphor_pct));
-
-    /* Horizontal scanlines: darkened rows. */
+    lv_opa_t wash = scale_opa(FX_WASH_OPA, s_phosphor_pct);
     lv_opa_t scan = scale_opa(FX_SCAN_OPA, s_scan_pct);
-    if (scan) {
-        for (int y = 0; y < FX_H; y += FX_SCAN_STEP) {
-            fx_fill(s_canvas_buf, FX_W, FX_H, 0, y, FX_W, 1, FX_BLACK, scan);
+    lv_color_t amber = FX_AMBER;
+
+    /* lut[a] = ARGB of (black @ alpha a) src-over (amber wash @ alpha `wash`). */
+    uint32_t lut[256];
+    for (int a = 0; a < 256; a++) {
+        uint32_t oa = (uint32_t)a + wash - ((uint32_t)a * wash) / 255u;
+        if (oa == 0) {
+            lut[a] = 0;
+            continue;
         }
+        /* Black contributes no colour, so each channel is wash_c * wash * (1-a). */
+        uint32_t k = (uint32_t)wash * (255u - a) / 255u;   /* effective wash weight */
+        uint32_t r = (uint32_t)amber.red   * k / oa;
+        uint32_t g = (uint32_t)amber.green * k / oa;
+        uint32_t b = (uint32_t)amber.blue  * k / oa;
+        lut[a] = (oa << 24) | (r << 16) | (g << 8) | b;
     }
 
-    /* Vignette: nested 1px black frames, darkest at the edge, fading inward — the
-     * CRT tube's darkened corners / glow falloff. */
+    /* Per-column black alpha from the left/right vignette; per-row from the
+     * scanline pattern + top/bottom vignette. Pixel alpha = row ⊕ column. */
+    static uint8_t col_a[FX_W];
+    memset(col_a, 0, sizeof(col_a));
     for (int i = 0; i < FX_VIGN; i++) {
         lv_opa_t edge = (lv_opa_t)(FX_VIGN_MAX * (FX_VIGN - i) / FX_VIGN);
         lv_opa_t o = scale_opa(edge, s_vignette_pct);
         if (!o) continue;
-        fx_fill(s_canvas_buf, FX_W, FX_H, 0, i, FX_W, 1, FX_BLACK, o);              /* top */
-        fx_fill(s_canvas_buf, FX_W, FX_H, 0, FX_H - 1 - i, FX_W, 1, FX_BLACK, o);   /* bottom */
-        fx_fill(s_canvas_buf, FX_W, FX_H, i, 0, 1, FX_H, FX_BLACK, o);              /* left */
-        fx_fill(s_canvas_buf, FX_W, FX_H, FX_W - 1 - i, 0, 1, FX_H, FX_BLACK, o);   /* right */
+        col_a[i]            = combine_black_alpha(col_a[i], o);
+        col_a[FX_W - 1 - i] = combine_black_alpha(col_a[FX_W - 1 - i], o);
+    }
+
+    uint32_t *px = (uint32_t *)s_canvas_buf;
+    for (int y = 0; y < FX_H; y++) {
+        uint8_t row_a = (y % FX_SCAN_STEP == 0) ? scan : 0;
+        int vd = (y < FX_H - 1 - y) ? y : FX_H - 1 - y;   /* distance to nearer h-edge */
+        if (vd < FX_VIGN) {
+            lv_opa_t edge = (lv_opa_t)(FX_VIGN_MAX * (FX_VIGN - vd) / FX_VIGN);
+            row_a = combine_black_alpha(row_a, scale_opa(edge, s_vignette_pct));
+        }
+        uint32_t *row = px + (size_t)y * FX_W;
+        uint32_t base = lut[row_a];
+        for (int x = 0; x < FX_W; x++) {
+            row[x] = col_a[x] ? lut[combine_black_alpha(row_a, col_a[x])] : base;
+        }
     }
 }
 

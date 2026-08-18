@@ -28,7 +28,7 @@ Examples:
 
 Screens: home scanner archive cassette insights menu wifi display audio leds
          vitals scan spectrum rfband ble csi instruments sensors dircal minimap
-         range about
+         range lidar about
 Scenes:  IDLE SCANNING SIGNAL_ACQUIRED COMMS ALERT
 """
 import sys

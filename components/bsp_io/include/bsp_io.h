@@ -17,9 +17,11 @@
 
 #define IO_TAG "BSP_IO"
 
-/* Logical LED identifiers. Keep in sync with led_table[] in bsp_io.c. */
+/* Logical LED identifiers. Keep in sync with led_table[] in bsp_io.c.
+ * LED_POWER and LED_SIGNAL are currently UNASSIGNED (their old pins, GPIO48/47,
+ * belong to the Seeed radar UART3 link) — state is tracked but no pin is driven. */
 typedef enum {
-    LED_POWER = 0,   /* GPIO48 — known-good default (UART1-RX header pin) */
+    LED_POWER = 0,
     LED_SIGNAL,
     LED_ALERT,
     LED_COUNT,
