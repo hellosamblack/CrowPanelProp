@@ -31,3 +31,6 @@ wifi_secret.env
 
 # VS Code "Local History" extension backups — editor-generated, not project content.
 .history/
+
+# Subagent-driven-development scratch workspace (ledgers, briefs, review packages).
+.superpowers/
