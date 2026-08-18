@@ -21,8 +21,10 @@
 #define STALE_MS           2000
 #define RECONNECT_BACKOFF_MIN_MS 1000
 #define RECONNECT_BACKOFF_MAX_MS 30000
+#define RX_HEADER_BYTES    8   /* u32 tag + u16 w + u16 h */
 
 /* ---- Cached state (written by the task, read by getters under s_lock) ---------- */
+static uint8_t *s_rx_buf;      /* PSRAM, RX_HEADER_BYTES + FRAME_BYTES */
 static SemaphoreHandle_t s_lock;
 
 static uint16_t *s_frame_buf[2];   /* PSRAM double buffer, FRAME_BYTES each */
@@ -129,6 +131,26 @@ static void set_link_state(prop_lidar_link_t link)
     xSemaphoreGive(s_lock);
 }
 
+static void on_frame_complete(const uint8_t *buf, int len)
+{
+    if (len != (int)(RX_HEADER_BYTES + FRAME_BYTES)) return;
+    uint32_t tag; uint16_t w, h;
+    memcpy(&tag, buf + 0, 4);
+    memcpy(&w,   buf + 4, 2);
+    memcpy(&h,   buf + 6, 2);
+    if (tag != 1 || w != PROP_LIDAR_FRAME_W || h != PROP_LIDAR_FRAME_H) {
+        ESP_LOGW(TAG, "bad THIN_FRAME header tag=%u w=%u h=%u", (unsigned)tag, w, h);
+        return;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int back = 1 - s_frame_front;
+    memcpy(s_frame_buf[back], buf + RX_HEADER_BYTES, FRAME_BYTES);
+    s_frame_front = back;
+    s_frame_seq++;
+    s_last_frame_ms = now_ms();
+    xSemaphoreGive(s_lock);
+}
+
 static void ws_event_handler(void *handler_args, esp_event_base_t base,
                               int32_t event_id, void *event_data)
 {
@@ -143,9 +165,20 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base,
             ESP_LOGW(TAG, "ws disconnected/error (event %d)", (int)event_id);
             xEventGroupSetBits(s_evt, LIDAR_EVT_DISCONNECTED);
             break;
-        case WEBSOCKET_EVENT_DATA:
-            /* frame/telemetry parsing added in Tasks 5-6 */
+        case WEBSOCKET_EVENT_DATA: {
+            esp_websocket_event_data_t *d = (esp_websocket_event_data_t *)event_data;
+            if (d->op_code == 0x2 /* binary */ &&
+                d->data_len == (int)(RX_HEADER_BYTES + FRAME_BYTES) &&
+                d->payload_offset + d->payload_len <= (int)(RX_HEADER_BYTES + FRAME_BYTES)) {
+                memcpy(s_rx_buf + d->payload_offset, d->data_ptr, d->payload_len);
+                if (d->payload_offset + d->payload_len == d->data_len) {
+                    on_frame_complete(s_rx_buf, d->data_len);
+                }
+            } else if (d->op_code == 0x1 /* text */) {
+                /* telemetry parsing added in Task 6 */
+            }
             break;
+        }
         default:
             break;
     }
@@ -209,6 +242,13 @@ esp_err_t prop_lidar_init(void)
         }
         memset(s_frame_buf[i], 0, FRAME_BYTES);
     }
+
+    s_rx_buf = heap_caps_malloc(RX_HEADER_BYTES + FRAME_BYTES, MALLOC_CAP_SPIRAM);
+    if (!s_rx_buf) {
+        ESP_LOGE(TAG, "PSRAM alloc failed for rx buffer");
+        return ESP_ERR_NO_MEM;
+    }
+
     s_frame_front = 0;
     s_frame_seq = 0;
     s_last_frame_ms = 0;
