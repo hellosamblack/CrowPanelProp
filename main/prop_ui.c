@@ -13,6 +13,7 @@
 #include "prop_coproc.h"
 #include "prop_motion.h"
 #include "prop_imu.h"
+#include "prop_battery.h"
 #include "prop_track.h"
 #include "prop_aux_radar.h"
 #include "prop_content.h"
@@ -209,9 +210,15 @@ static lv_obj_t *s_lidar_link;
 static lv_obj_t *s_lidar_hdg;           /* "HDG 248.5° WSW" — COL_DIM "---" when invalid */
 static lv_obj_t *s_lidar_attitude;      /* "P -2.4°  R +1.1°" */
 static lv_obj_t *s_lidar_stab;          /* yaw-rate stability verdict */
-static lv_obj_t *s_lidar_ir_canvas;     /* 160x120 upscale of the 8x8 IR grid */
+static lv_obj_t *s_lidar_ir_canvas;     /* 160x120 upscale of the IR zone grid */
 static uint16_t *s_lidar_ir_buf;        /* PSRAM RGB565, 160x120 */
-static uint8_t   s_lidar_ir_last[PROP_LIDAR_IR_CELLS];  /* last rendered grid (skip identical repaints) */
+/* Fetched and last-rendered zone grids. PSRAM, and sized for the CEILING rather than a
+ * fixed shape: the rig sends its native grid (54x42 today) whose dimensions arrive per
+ * message and transpose when the pane rotates with gravity. Compared to skip repainting
+ * a grid that has not changed, which at telemetry rate is most of them. */
+static uint8_t  *s_lidar_ir_cur;
+static uint8_t  *s_lidar_ir_last;
+static int       s_lidar_ir_last_w, s_lidar_ir_last_h;
 static bool      s_lidar_ir_drawn;      /* false until the first grid is rasterised */
 /* Style-color shadow bands (lv_obj_set_style_* has no same-value early-out). */
 static int8_t    s_lidar_link_band, s_lidar_rec_band, s_lidar_hdg_band, s_lidar_stab_band;
@@ -490,6 +497,7 @@ static int s_archive_entry;            /* selected entry within the section */
 
 /* Console (PK_HOME) live readouts - valid only while PK_HOME is the live panel. */
 static lv_obj_t *s_home_clock, *s_home_temp, *s_home_link;
+static lv_obj_t *s_home_batt, *s_home_batt_time;   /* BATTERY cell: "78%  3.82V" + TO FULL/EMPTY line */
 static lv_obj_t *s_rail_btns[RAIL_COUNT];   /* rail rows, for dial highlighting */
 
 /* ARCHIVE browser widgets - valid only while PK_ARCHIVE is live. */
@@ -502,6 +510,14 @@ static lv_obj_t *s_article_scroll;      /* PK_ARTICLE body scroll container (dia
  * async users (the WiFi scan task, the observer) never touch freed objects. */
 static void close_panel(void)
 {
+    /* Release the LIDAR stream the moment its panel goes away. A 460 KB/frame feed on
+     * this board's ~1-2 Mbit/s link saturates the radio for everything else, so it must
+     * not outlive the one screen that renders it. prop_lidar keeps the socket for a
+     * short grace period, so nav away-and-back doesn't pay a reconnect. */
+    if (s_cur_kind == PK_LIDAR) prop_lidar_set_active(false);
+    /* Same deal for RANGE: its cycle is a full WiFi scan that takes the shared C6 radio
+     * off-channel, so it must not outlive the panel that displays the result. */
+    if (s_cur_kind == PK_RANGE) prop_ftm_set_active(false);
     if (s_cur_panel) {
         lv_obj_del(s_cur_panel);   /* frees the panel + all child widgets */
         s_cur_panel = NULL;
@@ -547,6 +563,7 @@ static void close_panel(void)
     s_set_pagelbl = NULL;
     for (int i = 0; i < PROP_CSI_BINS; i++) s_csi_bars[i] = NULL;
     s_home_clock = NULL; s_home_temp = NULL; s_home_link = NULL;
+    s_home_batt = NULL; s_home_batt_time = NULL;
     /* s_rail_btns are the persistent rail cells on the real screen - NOT children
      * of the torn-down panel, so they survive close_panel and are never nulled. */
     for (int i = 0; i < (int)(sizeof(s_arch_tabs) / sizeof(s_arch_tabs[0])); i++) s_arch_tabs[i] = NULL;
@@ -603,6 +620,9 @@ static void close_panel(void)
     s_lidar_link_band = s_lidar_rec_band = s_lidar_hdg_band = s_lidar_stab_band = -1;
     s_lidar_ir_canvas = NULL;
     if (s_lidar_ir_buf) { free(s_lidar_ir_buf); s_lidar_ir_buf = NULL; }
+    if (s_lidar_ir_cur)  { free(s_lidar_ir_cur);  s_lidar_ir_cur  = NULL; }
+    if (s_lidar_ir_last) { free(s_lidar_ir_last); s_lidar_ir_last = NULL; }
+    s_lidar_ir_last_w = s_lidar_ir_last_h = 0;
     s_lidar_ir_drawn = false;
 }
 
@@ -1218,6 +1238,48 @@ static float read_core_temp(void)
         return c;
     }
     return -1000.0f;
+}
+
+/* Format the STC8-sourced battery reading into a headline value ("78%  3.82V")
+ * and a secondary trend line ("TO FULL 1:32" / "TO EMPTY 4:10" / etc). Shared
+ * by the CONSOLE BATTERY cell and the VITALS CELL row. `sub` may be "" when
+ * there's nothing to say yet (no trend established, or n/a for this state). */
+static void battery_cell_text(char *val, size_t valsz, char *sub, size_t subsz)
+{
+    if (!prop_battery_available()) {
+        snprintf(val, valsz, "OFFLINE");
+        sub[0] = '\0';
+        return;
+    }
+    prop_battery_data_t bd;
+    prop_battery_get_data(&bd);
+    if (!bd.valid) {
+        snprintf(val, valsz, "--");
+        sub[0] = '\0';
+        return;
+    }
+    if (bd.state == PROP_BATT_NOT_PRESENT) {
+        snprintf(val, valsz, "NO BATTERY");
+        sub[0] = '\0';
+        return;
+    }
+    snprintf(val, valsz, "%u%%  %.2fV", bd.level_pct, bd.voltage_mv / 1000.0f);
+
+    if (bd.state == PROP_BATT_FULLY_CHARGED) {
+        snprintf(sub, subsz, "FULLY CHARGED");
+    } else if (bd.state == PROP_BATT_ERROR) {
+        snprintf(sub, subsz, "CHARGER FAULT");
+    } else if (bd.time_to_full_valid) {
+        snprintf(sub, subsz, "TO FULL %lu:%02lu",
+                 (unsigned long)(bd.time_to_full_min / 60), (unsigned long)(bd.time_to_full_min % 60));
+    } else if (bd.time_to_empty_valid) {
+        snprintf(sub, subsz, "TO EMPTY %lu:%02lu",
+                 (unsigned long)(bd.time_to_empty_min / 60), (unsigned long)(bd.time_to_empty_min % 60));
+    } else if (bd.state == PROP_BATT_CHARGING) {
+        snprintf(sub, subsz, "CHARGING...");
+    } else {
+        sub[0] = '\0';
+    }
 }
 
 /* A non-interactive horizontal readout bar (square, amber fill). Returns the fill
@@ -1849,6 +1911,9 @@ static void ble_update_row(int i, const prop_ble_dev_t *d)
 static lv_obj_t *build_range_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "RANGE", back_to_sensors_cb);
+    /* Panel on screen -> the ranging task may scan. It idles otherwise: one cycle is a
+     * full WiFi scan and the C6 radio is shared with everything else on the board. */
+    prop_ftm_set_active(true);
 
     if (!prop_ftm_available()) {
         lv_obj_t *off = lv_label_create(p);
@@ -2544,6 +2609,30 @@ static lv_obj_t *build_home_panel(lv_obj_t *parent)
     lv_label_set_text(date, prop_date_stamp);   /* static placeholder (no RTC yet) */
     s_home_temp  = status_cell(p, "CORE TEMP", 600);
     s_home_link  = status_cell(p, "INTAKE", 790);
+
+    /* BATTERY: its own row below the CLOCK/DATE/CORE TEMP/INTAKE strip — the
+     * DATE value ("TRAXIAN STD ...") runs wider than the gap between DATE and
+     * CORE TEMP has room for, so this doesn't try to squeeze in beside them.
+     * Voltage/SOC on top, derived TO FULL/TO EMPTY trend underneath (see
+     * prop_battery.c — no coulomb counter on this board, just a raw ADC byte,
+     * so it's a firmware-side voltage-curve estimate, not a lab fuel gauge). */
+    lv_obj_t *bcap = lv_label_create(p);
+    lv_label_set_text(bcap, "BATTERY");
+    lv_obj_set_style_text_color(bcap, COL_MUTE, 0);
+    lv_obj_set_style_text_font(bcap, FONT_BODY, 0);
+    lv_obj_align(bcap, LV_ALIGN_TOP_LEFT, 24, 168);
+
+    s_home_batt = lv_label_create(p);
+    lv_label_set_text(s_home_batt, "--");
+    lv_obj_set_style_text_color(s_home_batt, COL_AMBER, 0);
+    lv_obj_set_style_text_font(s_home_batt, FONT_HEAD, 0);
+    lv_obj_align(s_home_batt, LV_ALIGN_TOP_LEFT, 24, 188);
+
+    s_home_batt_time = lv_label_create(p);
+    lv_label_set_text(s_home_batt_time, "");
+    lv_obj_set_style_text_color(s_home_batt_time, COL_MUTE, 0);
+    lv_obj_set_style_text_font(s_home_batt_time, FONT_BODY, 0);
+    lv_obj_align(s_home_batt_time, LV_ALIGN_TOP_LEFT, 230, 191);
 
     /* The function rail now lives in the persistent left strip; the console body
      * stays an uncluttered identity card. */
@@ -4430,11 +4519,12 @@ static uint16_t ir_thermal_rgb565(uint8_t v)
 }
 
 /* IR preview geometry: the 8x8 grid rasterised as 20x15 px cells. */
-#define LIDAR_IR_GRID 8
+/* Raster size of the sidebar thumbnail. Deliberately NOT tied to the zone grid any
+ * more — the source is whatever the rig sends (54x42 native, 8x8 from an older one),
+ * so the draw scales point-sampled into this fixed box. 160x120 is ~3x the native grid,
+ * enough that the upscale, not the sensor, is what limits what the eye sees. */
 #define LIDAR_IR_W 160
 #define LIDAR_IR_H 120
-_Static_assert(LIDAR_IR_GRID * LIDAR_IR_GRID == PROP_LIDAR_IR_CELLS,
-               "IR raster geometry must match the telemetry grid size");
 
 static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
 {
@@ -4472,6 +4562,7 @@ static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
     lv_obj_clear_flag(s_lidar_canvas, LV_OBJ_FLAG_CLICKABLE);   /* drags hit the bezel */
     s_lidar_canvas_set = false;
     s_lidar_last_seq = 0;
+    prop_lidar_set_active(true);   /* panel on screen -> the link may stream */
 
     /* Telemetry sidebar, right of the canvas. */
     lv_coord_t strip_x = 24 + LIDAR_CANVAS_SZ + 24;
@@ -4494,7 +4585,10 @@ static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
 
     /* Telemetry block: LINK / FPS / POINTS / REC. */
-    static const char *kNames[] = { "LINK", "FPS", "POINTS", "REC" };
+    /* "RX FPS" not "FPS": this row is the rate frames actually LAND at, not the rig's
+     * internal render rate — the two differ by more than an order of magnitude on this
+     * link, and showing the rig's number made a 0.5 fps panel advertise 29.9. */
+    static const char *kNames[] = { "LINK", "RX FPS", "POINTS", "REC" };
     lv_obj_t **kSlots[] = { &s_lidar_link, &s_lidar_fps, &s_lidar_pts, &s_lidar_rec };
     for (int i = 0; i < 4; i++) {
         lv_obj_t *lbl = lv_label_create(strip);
@@ -4537,6 +4631,9 @@ static lv_obj_t *build_lidar_panel(lv_obj_t *parent)
     lv_obj_set_style_text_color(ir_lbl, COL_MUTE, 0);
     lv_obj_align(ir_lbl, LV_ALIGN_TOP_LEFT, 0, 254);
 
+    s_lidar_ir_cur  = heap_caps_malloc(PROP_LIDAR_IR_MAX_CELLS, MALLOC_CAP_SPIRAM);
+    s_lidar_ir_last = heap_caps_malloc(PROP_LIDAR_IR_MAX_CELLS, MALLOC_CAP_SPIRAM);
+    s_lidar_ir_last_w = s_lidar_ir_last_h = 0;
     s_lidar_ir_buf = heap_caps_malloc(LIDAR_IR_W * LIDAR_IR_H * 2, MALLOC_CAP_SPIRAM);
     if (s_lidar_ir_buf) {
         memset(s_lidar_ir_buf, 0, LIDAR_IR_W * LIDAR_IR_H * 2);
@@ -5155,6 +5252,11 @@ static void ui_observer(const prop_state_t *st, void *ctx)
                                        (st->link == LINK_AP ? "LOCAL" : "SEEKING"));
         lv_obj_set_style_text_color(s_home_link,
                                     st->link == LINK_DOWN ? COL_MUTE : COL_AMBER, 0);
+
+        char bval[24], bsub[24];
+        battery_cell_text(bval, sizeof(bval), bsub, sizeof(bsub));
+        lv_label_set_text(s_home_batt, bval);
+        lv_label_set_text(s_home_batt_time, bsub);
     }
 
     /* Refresh the VITALS instrument (~2 Hz) only while it's the live panel. */
@@ -5178,11 +5280,15 @@ static void ui_observer(const prop_state_t *st, void *ctx)
         set_meter(s_vit_ram_bar, used, used > 85 ? COL_ALERT : COL_AMBER);
 
         uint32_t up = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-        /* Diegetic cell voltage: a gentle wander for on-camera life (no battery ADC). */
-        float cell = 3.85f + 0.12f * sinf(up * 0.05f);
-        snprintf(fbuf, sizeof(fbuf), "%.2f V", cell);
+        /* Real battery reading via the STC8H1K08 co-processor (prop_battery.c) —
+         * bar tracks the chip's own SOC%, not a voltage-range guess. */
+        char bsub[24];
+        battery_cell_text(fbuf, sizeof(fbuf), bsub, sizeof(bsub));
         lv_label_set_text(s_vit_cell, fbuf);
-        set_meter(s_vit_cell_bar, (int)((cell - 3.3f) / (4.2f - 3.3f) * 100.0f), COL_AMBER);
+        prop_battery_data_t bd;
+        prop_battery_get_data(&bd);
+        set_meter(s_vit_cell_bar, bd.valid ? bd.level_pct : 0,
+                  (bd.valid && bd.level_pct < 20) ? COL_ALERT : COL_AMBER);
         lv_label_set_text_fmt(s_vit_uptime, "%02u:%02u:%02u",
                               (unsigned)(up / 3600), (unsigned)((up / 60) % 60), (unsigned)(up % 60));
 
@@ -6164,6 +6270,12 @@ static void ui_observer(const prop_state_t *st, void *ctx)
                     }
                 }
                 s_lidar_last_seq = seq;
+                /* Hands the v2 link back one send credit. This is the ONLY thing that
+                 * makes the server send another frame on a flow-controlled session, and
+                 * it deliberately sits here — after the canvas is actually pointing at
+                 * the frame — rather than at receipt, so credit tracks real consumption.
+                 * Non-blocking; it just bumps a counter prop_lidar's task drains. */
+                prop_lidar_frame_consumed(seq);
             }
         }
 
@@ -6183,7 +6295,7 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             }
 
             char buf[40];
-            snprintf(buf, sizeof(buf), "%.1f", t.fps);
+            snprintf(buf, sizeof(buf), "%.1f", (double)t.link_fps);
             label_set_text_cached(s_lidar_fps, buf);
             snprintf(buf, sizeof(buf), "%d", t.point_count);
             label_set_text_cached(s_lidar_pts, buf);
@@ -6235,23 +6347,32 @@ static void ui_observer(const prop_state_t *st, void *ctx)
                 }
             }
 
-            /* IR preview: rasterise the 8x8 grid as 20x15 px thermal cells. Direct
-             * buffer write (same idiom as prop_fx) — repaint only when it changed. */
-            if (s_lidar_ir_canvas && s_lidar_ir_buf && t.has_ir_grid &&
-                (!s_lidar_ir_drawn ||
-                 memcmp(s_lidar_ir_last, t.ir_grid, sizeof(s_lidar_ir_last)) != 0)) {
-                memcpy(s_lidar_ir_last, t.ir_grid, sizeof(s_lidar_ir_last));
+            /* IR preview: point-sample the zone grid up into the 160x120 thumbnail.
+             * Direct buffer write (same idiom as prop_fx) — and only when the grid
+             * actually changed, which at telemetry rate skips most ticks. The source
+             * shape comes from the rig per message (54x42 native, 8x8 from a pre-
+             * negotiation server) and can transpose when its pane rotates, so nothing
+             * here assumes a size. */
+            int irw = 0, irh = 0;
+            int ircells = (s_lidar_ir_canvas && s_lidar_ir_buf && s_lidar_ir_cur)
+                          ? prop_lidar_get_ir_grid(s_lidar_ir_cur, PROP_LIDAR_IR_MAX_CELLS,
+                                                   &irw, &irh)
+                          : 0;
+            if (ircells > 0 && s_lidar_ir_last &&
+                (!s_lidar_ir_drawn || irw != s_lidar_ir_last_w || irh != s_lidar_ir_last_h ||
+                 memcmp(s_lidar_ir_last, s_lidar_ir_cur, (size_t)ircells) != 0)) {
+                memcpy(s_lidar_ir_last, s_lidar_ir_cur, (size_t)ircells);
+                s_lidar_ir_last_w = irw;
+                s_lidar_ir_last_h = irh;
                 s_lidar_ir_drawn = true;
-                for (int gy = 0; gy < LIDAR_IR_GRID; gy++) {
-                    for (int gx = 0; gx < LIDAR_IR_GRID; gx++) {
-                        uint16_t c = ir_thermal_rgb565(t.ir_grid[gy * LIDAR_IR_GRID + gx]);
-                        int y0 = gy * (LIDAR_IR_H / LIDAR_IR_GRID);
-                        int x0 = gx * (LIDAR_IR_W / LIDAR_IR_GRID);
-                        for (int y = 0; y < LIDAR_IR_H / LIDAR_IR_GRID; y++) {
-                            uint16_t *row = s_lidar_ir_buf + (size_t)(y0 + y) * LIDAR_IR_W + x0;
-                            for (int x = 0; x < LIDAR_IR_W / LIDAR_IR_GRID; x++) row[x] = c;
-                        }
-                    }
+                /* One palette pass instead of ~19k ir_thermal_rgb565 calls per repaint:
+                 * the source is 8-bit, so 256 entries cover every pixel it can produce. */
+                uint16_t lut[256];
+                for (int i = 0; i < 256; i++) lut[i] = ir_thermal_rgb565((uint8_t)i);
+                for (int y = 0; y < LIDAR_IR_H; y++) {
+                    const uint8_t *srow = s_lidar_ir_cur + (size_t)(y * irh / LIDAR_IR_H) * irw;
+                    uint16_t *drow = s_lidar_ir_buf + (size_t)y * LIDAR_IR_W;
+                    for (int x = 0; x < LIDAR_IR_W; x++) drow[x] = lut[srow[x * irw / LIDAR_IR_W]];
                 }
                 lv_obj_invalidate(s_lidar_ir_canvas);
             }

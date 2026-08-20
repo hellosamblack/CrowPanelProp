@@ -48,6 +48,7 @@ static const char *s_stage_names[BOOT_STAGE_COUNT] = {
     [BOOT_STAGE_AUDIO]       = "audio",
     [BOOT_STAGE_MOTION]      = "motion",
     [BOOT_STAGE_IMU]         = "imu",
+    [BOOT_STAGE_BATTERY]     = "battery",
     [BOOT_STAGE_TRACK]       = "track",
     [BOOT_STAGE_AUX_RADAR]   = "aux_radar",
     [BOOT_STAGE_NET]         = "net",

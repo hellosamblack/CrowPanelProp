@@ -9,6 +9,7 @@
 #include "prop_csi.h"
 #include "prop_ftm.h"
 #include "prop_imu.h"
+#include "prop_battery.h"
 #include "prop_motion.h"
 #include "prop_track.h"
 #include "prop_mic.h"
@@ -165,6 +166,23 @@ static char *telemetry_to_json(void)
         cJSON_AddNumberToObject(imu, "steps", d.step_count);
     }
 
+    if (prop_battery_available()) {
+        prop_battery_data_t bd;
+        prop_battery_get_data(&bd);
+        static const char *s_batt_state_name[] = { "idle", "charging", "full", "discharging", "error", "no_battery" };
+        cJSON *bat = cJSON_AddObjectToObject(root, "battery");
+        cJSON_AddBoolToObject(bat, "valid", bd.valid);
+        cJSON_AddNumberToObject(bat, "voltage_v", bd.voltage_mv / 1000.0);
+        cJSON_AddNumberToObject(bat, "level_pct", bd.level_pct);
+        cJSON_AddStringToObject(bat, "state", s_batt_state_name[bd.state]);
+        if (bd.time_to_empty_valid) {
+            cJSON_AddNumberToObject(bat, "time_to_empty_min", bd.time_to_empty_min);
+        }
+        if (bd.time_to_full_valid) {
+            cJSON_AddNumberToObject(bat, "time_to_full_min", bd.time_to_full_min);
+        }
+    }
+
     if (prop_motion_available()) {
         prop_motion_target_t tgt[PROP_MOTION_MAX_TARGETS];
         int n = prop_motion_get_targets(tgt, PROP_MOTION_MAX_TARGETS);
@@ -236,10 +254,22 @@ static char *telemetry_to_json(void)
         static const char *s_lidar_mode_name[] = { "point_cloud", "slam", "ir" };
         cJSON *ld = cJSON_AddObjectToObject(root, "lidar");
         cJSON_AddStringToObject(ld, "link", s_lidar_link_name[lt.link]);
+        /* Two different rates, and the gap between them is the whole diagnostic: "fps"
+         * is what the rig renders, "link_fps" is what this board actually receives. */
         cJSON_AddNumberToObject(ld, "fps", lt.fps);
+        cJSON_AddNumberToObject(ld, "link_fps", lt.link_fps);
         cJSON_AddStringToObject(ld, "mode", s_lidar_mode_name[lt.mode]);
         cJSON_AddBoolToObject(ld, "recording", lt.recording);
         cJSON_AddNumberToObject(ld, "seq", prop_lidar_get_seq());
+        /* Negotiated wire protocol + the server's per-client send stats (v2 only; zero
+         * against a v1 rig). "proto":2 with "encoding":"jpeg" is the whole acceptance
+         * check for the bandwidth work — and tx_fps next to link_fps says whether a low
+         * rate is the rig not sending or the link not delivering. */
+        cJSON_AddNumberToObject(ld, "proto", lt.proto);
+        cJSON_AddStringToObject(ld, "encoding", lt.jpeg ? "jpeg" : "rgb565");
+        cJSON_AddNumberToObject(ld, "tx_fps", lt.tx_fps);
+        cJSON_AddNumberToObject(ld, "tx_bytes_per_s", lt.tx_bytes_per_s);
+        cJSON_AddNumberToObject(ld, "dropped", lt.dropped);
     }
 
     char *out = cJSON_PrintUnformatted(root);
@@ -402,6 +432,22 @@ static esp_err_t dispatch_command(const char *json, int len)
                         else if (bsp_aio_get_mode(idx) == AIO_ANALOG_OUT)   err = bsp_aio_set_aout(idx, value->valueint);
                     }
                 }
+            }
+        } else if (strcmp(c, "lidar") == 0) {
+            /* Runtime LIDAR thin-link config, persisted in NVS.
+             *   {"cmd":"lidar","quality":90}   -- JPEG quality to request, 40..95
+             *   {"cmd":"lidar","quality":0}    -- clear the override, let the rig choose
+             *   {"cmd":"lidar","host":"1.2.3.4:8000"}  -- skip mDNS, use this endpoint
+             *   {"cmd":"lidar","host":""}      -- clear it, go back to mDNS discovery
+             * Both apply to the live session straight away: quality re-runs thin_hello,
+             * host drops and re-establishes the connection. */
+            const cJSON *quality = cJSON_GetObjectItem(root, "quality");
+            const cJSON *host    = cJSON_GetObjectItem(root, "host");
+            if (cJSON_IsNumber(quality)) {
+                err = prop_lidar_set_quality(quality->valueint);
+            }
+            if (cJSON_IsString(host)) {
+                err = prop_lidar_set_host(host->valuestring);
             }
         } else if (strcmp(c, "csi") == 0) {
             /* Runtime ESPectre/CSI config — no C6 reflash. Examples:

@@ -7,6 +7,7 @@
 #include "main.h"
 #include "prop_motion.h"
 #include "prop_imu.h"
+#include "prop_battery.h"
 #include "prop_track.h"
 #include "prop_aux_radar.h"
 #include "prop_lidar.h"
@@ -158,6 +159,15 @@ void app_main(void)
     if (imu_err != ESP_OK) {
         MAIN_ERROR("IMU unavailable (%s) — gimbal/VITALS motion data offline",
                    esp_err_to_name(imu_err));
+    }
+
+    /* STC8H1K08 co-processor battery telemetry, shared I2C_NUM_0 bus (addr 0x2F).
+     * NON-fatal: absent if the chip doesn't ACK; BATTERY reads show "--". */
+    prop_bootlog_mark(BOOT_STAGE_BATTERY);
+    esp_err_t batt_err = prop_battery_init();
+    if (batt_err != ESP_OK) {
+        MAIN_ERROR("battery telemetry unavailable (%s) — BATTERY will show offline",
+                   esp_err_to_name(batt_err));
     }
 
     /* Dead-reckoning / spatial memory (MINIMAP): fuses the DMP pedometer + radar
