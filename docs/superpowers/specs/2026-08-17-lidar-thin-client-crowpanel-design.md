@@ -187,6 +187,14 @@ in the client role instead of the server role.
   (`CONFIG_SOC_JPEG_DECODE_SUPPORTED=y`) and no LVGL image decoder is currently wired up.
   If bandwidth becomes a real constraint later, this is the documented upgrade path — not
   needed for v1's raw-RGB565 approach.
+
+> **RESOLVED 2026-08-18 — bandwidth is the constraint, and both deferred items above are
+> now required.** Measured on hardware: the rig pushes 10 fps / 37 Mbit/s happily to a
+> wired client, but the CrowPanel's link carries ~1-2 Mbit/s, so a 460 KB frame takes
+> 1.8-3.7 s and the panel tops out at **0.4 fps** with the queue backing up until the
+> session drops. See **`2026-08-18-lidar-thin-frame-bandwidth-protocol.md`** for the v2
+> protocol (credit-based flow control + a JPEG frame type) that supersedes the "Protocol
+> contract" and "Error handling" sections here.
 - **Ranging-profile control from the CrowPanel:** explicitly dropped from this design;
   device parameter control (exposure/FPS/power mode) stays a browser-only capability for
   now.

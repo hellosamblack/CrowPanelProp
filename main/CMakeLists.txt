@@ -50,6 +50,7 @@ idf_component_register(SRCS ${main}
                                 esp_wifi esp_netif esp_event nvs_flash
                                 esp_http_server app_update cjson mdns
                                 esp_driver_tsens esp_driver_i2s esp_driver_i2c
+                                esp_driver_jpeg   # P4 hardware JPEG decode (prop_lidar tag-2 frames)
                                 bt esp_hosted   # NimBLE host + C6 BT controller (prop_ble)
                                 esp_mm   # esp_cache.h for the /screenshot framebuffer read + PPA buffer sync
                                 esp_driver_ppa   # PPA blend engine (prop_ppa_spike)

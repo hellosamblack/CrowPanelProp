@@ -5,6 +5,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_mac.h"   /* MACSTR/MAC2STR */
@@ -23,11 +24,33 @@
 #define FTM_STALE_MS            (5 * 60 * 1000)    /* evict a BSSID unseen this long */
 #define FTM_FAILS_CLAMP         10     /* consecutive_fails clamp (2^10 * base > cap already) */
 
+/* How long the scan cycle keeps running after the RANGE panel closes — same trick as
+ * prop_lidar's IDLE_GRACE_MS: navigating away and straight back shouldn't cost a full
+ * empty-table repopulate. */
+#define FTM_IDLE_GRACE_MS       20000
+
 static prop_ftm_entry_t s_table[PROP_FTM_TABLE_MAX];
 static int s_count;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_available;
 static uint16_t s_next_req_id = 1;   /* 0 reserved/avoided for log clarity */
+
+/* Panel gating. A cycle's prop_net_scan_raw() is a FULL WiFi scan, which takes the STA
+ * radio off-channel across every channel for a second or more; at the old unconditional
+ * 8 s period that is a permanent, boot-long tax on everything else sharing the C6 —
+ * measured 2026-08-19 as an 861 ms average ping to the board with nothing else running
+ * (24 ms the day before, before this instrument's table got busy). It is exactly the
+ * failure prop_lidar_set_active exists to fix, in a different instrument, so it gets the
+ * same treatment: scan only while something is displaying the result.
+ *
+ * Written by the UI thread, read by ftm_task; a one-cycle skew either way is harmless.
+ * s_was_active starts false so the task idles from boot rather than treating "never
+ * opened" as "just closed" and burning a grace window of scans on every cold start. */
+static volatile bool     s_active;
+static volatile bool     s_was_active;
+static volatile uint32_t s_inactive_since_ms;
+static EventGroupHandle_t s_evt;
+#define FTM_EVT_ACTIVE (1 << 0)
 
 static inline uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000ULL); }
 
@@ -151,10 +174,40 @@ static void probe_one(prop_ftm_entry_t *snap)
     }
 }
 
+void prop_ftm_set_active(bool active)
+{
+    if (!s_evt) return;   /* init failed / not started: nothing to gate */
+    if (active) {
+        s_active = true;
+        s_was_active = true;
+        xEventGroupSetBits(s_evt, FTM_EVT_ACTIVE);   /* scan now, not up to 8 s from now */
+    } else {
+        /* Timestamp first: ftm_task only reads it once it has seen s_active false. */
+        s_inactive_since_ms = now_ms();
+        s_active = false;
+    }
+}
+
+/* True while the scan cycle should keep running: the panel is open, or it closed
+ * recently enough to still be inside the grace window. */
+static bool ftm_should_scan(void)
+{
+    if (s_active) return true;
+    if (!s_was_active) return false;   /* never opened this boot */
+    return (now_ms() - s_inactive_since_ms) <= FTM_IDLE_GRACE_MS;
+}
+
 static void ftm_task(void *arg)
 {
     (void)arg;
     for (;;) {
+        /* Idle — and stop scanning — while the RANGE panel is closed. Waking on the
+         * event bit rather than polling means opening the panel starts a scan
+         * immediately instead of up to FTM_CYCLE_MS later. */
+        while (!ftm_should_scan()) {
+            xEventGroupWaitBits(s_evt, FTM_EVT_ACTIVE, pdTRUE, pdFALSE, portMAX_DELAY);
+        }
+
         prop_ap_t scan[PROP_NET_SCAN_MAX];
         int n = prop_net_scan_raw(scan, PROP_NET_SCAN_MAX);
         uint32_t now = now_ms();
@@ -192,11 +245,15 @@ esp_err_t prop_ftm_init(void)
 {
     memset(s_table, 0, sizeof(s_table));
     s_count = 0;
+    s_evt = xEventGroupCreate();
+    if (!s_evt) return ESP_ERR_NO_MEM;
     if (xTaskCreatePinnedToCore(ftm_task, "prop_ftm", 4096, NULL, 3, NULL, 0) != pdPASS) {
+        vEventGroupDelete(s_evt);
+        s_evt = NULL;
         return ESP_ERR_NO_MEM;
     }
     s_available = true;
-    ESP_LOGI(FTM_TAG, "RANGE: FTM ranging task started");
+    ESP_LOGI(FTM_TAG, "RANGE: FTM ranging task started (idle until the panel opens)");
     return ESP_OK;
 }
 

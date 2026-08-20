@@ -53,6 +53,15 @@ esp_err_t prop_ftm_init(void);
 
 bool prop_ftm_available(void);
 
+/* Tells the ranging task whether the RANGE panel is currently on screen. A scan cycle
+ * is a FULL WiFi scan, which puts the shared C6 radio off-channel for a second or more;
+ * running it unconditionally taxes every other network user on the board for the whole
+ * boot (see the comment on the gating state in prop_ftm.c). So the cycle only runs while
+ * something is displaying its output, with a short grace window so navigating away and
+ * back doesn't cost a repopulate. Safe from the UI thread under the LVGL lock — it only
+ * sets a flag and an event bit. Same contract as prop_lidar_set_active. */
+void prop_ftm_set_active(bool active);
+
 /* Copy up to `max` tracked entries (FTM-capable first, then strongest RSSI)
  * into out. Cheap cached read (copied under a short critical section, mirrors
  * prop_ble_get_devices). Returns the count copied. */

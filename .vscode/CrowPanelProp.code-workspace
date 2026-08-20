@@ -2,9 +2,13 @@
 	"folders": [
 		{
 			"path": ".."
+		},
+		{
+			"path": "../../lidar-roomscanner"
 		}
 	],
 	"settings": {
-		"git.ignoreLimitWarning": true
+		"git.ignoreLimitWarning": true,
+		"stm32cube-ide-clangd.path": "cube"
 	}
 }
