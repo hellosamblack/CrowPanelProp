@@ -37,8 +37,6 @@ enough for the LVGL online viewer (see `ui/` below).
   `Elecrow-RD/CrowPanel-Advanced-7inch-ESP32-P4-HMI-AI-Display-1024x600`. Reference-only; not
   checked out by default. Run `git submodule update --init docs/referenceDesign` to get the
   vendor `example/`, `factory_firmware/`, `factory_sourcecode/`, `3D file/`, `Eagle_SCH&PCB/`, `readme.md`.
-- **`submodules/lidar-roomscanner`** — submodule → the separate LIDAR scanning rig this prop's
-  LIDAR panel streams from (`prop_lidar.c` is only the thin client). Not needed to build.
 
 ## Build / flash / monitor
 
