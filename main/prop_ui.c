@@ -264,10 +264,36 @@ static bool      s_pulse_prev_valid; /* false until the first paint */
 static float     s_pulse_sin[256];   /* scallop sin LUT (filled in build_motion_panel) */
 static lv_obj_t *s_motion_gdial[3];     /* YAW/PITCH/ROLL gimbal needle lines */
 static lv_obj_t *s_motion_gval[3];      /* per-dial value labels */
-static lv_obj_t *s_motion_ble_box[3];   /* 3 strongest BLE contact boxes */
+static lv_obj_t *s_motion_ble_panel;    /* single BLE CONTACTS block (row 2, col 2) */
+static lv_obj_t *s_motion_ble_box[3];   /* 3 contact rows inside s_motion_ble_panel */
 static lv_obj_t *s_motion_ble_name[3];  /* contact name (top, truncated) */
 static lv_obj_t *s_motion_ble_dist[3];  /* contact distance (large, metres) */
 static lv_obj_t *s_motion_ble_dbm[3];   /* contact RSSI (small, corner) */
+/* Row 2, col 0/1: mini LIDAR previews (live only while SCANNER is open — see
+ * build_motion_panel's prop_lidar_set_active(true) call). Same zero-copy/no-memcpy
+ * idioms as the PK_LIDAR panel (s_lidar_*), just smaller. Both show "LIDAR OFFLINE"
+ * only until the first grid/frame ever arrives — after that they keep showing the
+ * latest known-good data forever, same as PK_LIDAR's own canvas, which never
+ * re-hides on a link drop; gating on live link state instead flickered these to
+ * OFFLINE on ordinary SEARCHING/STALE blips even though prop_lidar was still
+ * caching perfectly good data underneath. */
+#define MOTION_IR_MAXW  132     /* IR mini raster width budget inside the box */
+#define MOTION_IR_MAXH  180     /* height budget below the header, in the taller row */
+#define MOTION_IR_Y0    26      /* canvas area top (clears the box header) */
+#define MOTION_VOX_SZ   132     /* mini voxel/point-cloud preview, square (source frame is 480x480) */
+#define MOTION_VOX_ZOOM (256 * MOTION_VOX_SZ / PROP_LIDAR_FRAME_W)   /* lv_image zoom, 256=1x */
+static lv_obj_t *s_motion_ir_canvas;    /* mini IR raster (hidden until the first grid arrives) */
+static lv_obj_t *s_motion_ir_offline;   /* "LIDAR OFFLINE" label, shown until then */
+static uint16_t *s_motion_ir_buf;       /* PSRAM RGB565, MOTION_IR_MAXW x MOTION_IR_MAXH capacity */
+static uint8_t  *s_motion_ir_cur;       /* fetched zone grid (see s_lidar_ir_cur) */
+static uint8_t  *s_motion_ir_last;      /* last-rendered zone grid, to skip repaints */
+static int       s_motion_ir_last_w, s_motion_ir_last_h;   /* source grid shape, for the diff check */
+static int       s_motion_ir_disp_w, s_motion_ir_disp_h;   /* current canvas dims (aspect-fit to the grid) */
+static bool      s_motion_ir_drawn;
+static lv_obj_t *s_motion_vox_canvas;   /* zero-copy, points at prop_lidar's front buffer */
+static lv_obj_t *s_motion_vox_offline;  /* "LIDAR OFFLINE" label, shown until the 1st frame arrives */
+static bool      s_motion_vox_canvas_set;
+static uint32_t  s_motion_vox_last_seq;
 /* All-sensor dashboard widgets (live inside the radar box, reference style). */
 #define MOTION_FLAG_COUNT 5
 static lv_obj_t *s_motion_flags[MOTION_FLAG_COUNT];   /* MOV IMU MIC BLE NET */
@@ -305,10 +331,18 @@ static lv_point_precise_t s_motion_apts[3][2];   /* bearing arrow points per tar
  * itself (mount/scale-independent) so subtracting it leaves only real motion. */
 static float s_motion_grav_lp[3];        /* low-pass gravity estimate (g) */
 static bool  s_motion_grav_primed;       /* seeded on first sample after panel open */
-/* SCANNER distance-ping (audio): chirps the closest radar target's range. */
-static lv_obj_t *s_scan_spk;             /* speaker toggle icon */
-static bool      s_scan_ping_en;         /* feedback enabled (persisted in NVS) */
-static uint32_t  s_scan_ping_next;       /* tick at which the next chirp may fire */
+/* SCANNER distance-ping (audio): chirps the closest radar target's range.
+ * Paced by a standalone task (scan_ping_task) rather than the LVGL ui_observer
+ * callback — see its definition for why. */
+static lv_obj_t    *s_scan_spk;          /* speaker toggle icon */
+static bool         s_scan_ping_en;      /* feedback enabled (persisted in NVS) */
+static TaskHandle_t s_scan_ping_task;    /* nudged on enable for an immediate first ping */
+/* Distance -> pitch transpose, on by default; toggled from SETUP -> AUDIO (not
+ * the SCANNER speaker icon, which is the whole feedback on/off switch). Off
+ * still keeps the per-zone cadence change, just always plays PA_PING at its
+ * natural/recorded pitch -- useful for SONAR/TORPEDO, where naive-resample
+ * pitch-shifting a real recording can sound artifacty at the extremes. */
+static bool         s_ping_pitch_en = true;
 
 /* Travel-direction calibration. s_dir_phi rotates the gravity-removed accel vector
  * before the quadrant pick, so the ring's North (top) lines up with the radar
@@ -385,7 +419,11 @@ static prop_track_mark_t  s_map_mark_scratch[PROP_TRACK_MAX_MARKS];
 #define MR_BOX_H 170                              /* per-cell height (3 rows fill the panel) */
 #define MR_ROW0  8                                /* gimbals row top */
 #define MR_ROW1  194                              /* targets row top */
-#define MR_ROW2  402                              /* BLE row top (header rides just above) */
+#define MR_ROW2  380                              /* IR/voxel/BLE row top (16px gap, matching row0->row1) */
+#define MR_ROW2_H (RADAR_Y + RADAR_H - MR_ROW2)   /* taller than MR_BOX_H — this row runs to the panel's
+                                                    * bottom edge instead of leaving dead space below it
+                                                    * (row 2 used to carry an external header the other
+                                                    * two rows didn't, hence the old shorter, offset box) */
 
 /* CSI CONFIG / auto-calibration panel (valid only while PK_CSICFG is current). */
 static lv_obj_t *s_cfg_motion;   /* live MOTION / IDLE */
@@ -510,11 +548,15 @@ static lv_obj_t *s_article_scroll;      /* PK_ARTICLE body scroll container (dia
  * async users (the WiFi scan task, the observer) never touch freed objects. */
 static void close_panel(void)
 {
-    /* Release the LIDAR stream the moment its panel goes away. A 460 KB/frame feed on
-     * this board's ~1-2 Mbit/s link saturates the radio for everything else, so it must
-     * not outlive the one screen that renders it. prop_lidar keeps the socket for a
-     * short grace period, so nav away-and-back doesn't pay a reconnect. */
-    if (s_cur_kind == PK_LIDAR) prop_lidar_set_active(false);
+    /* Release the LIDAR stream the moment neither screen that renders it is up. A
+     * 460 KB/frame feed on this board's ~1-2 Mbit/s link saturates the radio for
+     * everything else, so it must not outlive the screens that render it — that's now
+     * PK_LIDAR (full view) AND PK_MOTION (SCANNER's IR/voxel mini previews, live
+     * whenever SCANNER is open — SCANNER is the default landing screen, so this link
+     * is effectively always-on; a deliberate tradeoff for a live preview there).
+     * prop_lidar keeps the socket for a short grace period, so nav away-and-back
+     * doesn't pay a reconnect. */
+    if (s_cur_kind == PK_LIDAR || s_cur_kind == PK_MOTION) prop_lidar_set_active(false);
     /* Same deal for RANGE: its cycle is a full WiFi scan that takes the shared C6 radio
      * off-channel, so it must not outlive the panel that displays the result. */
     if (s_cur_kind == PK_RANGE) prop_ftm_set_active(false);
@@ -590,10 +632,21 @@ static void close_panel(void)
     if (s_pulse_buf) { free(s_pulse_buf); s_pulse_buf = NULL; }   /* its PSRAM backing is ours */
     s_pulse_prev_valid = false;
     for (int i = 0; i < 3; i++) { s_motion_gdial[i] = NULL; s_motion_gval[i] = NULL; }
+    s_motion_ble_panel = NULL;
     for (int i = 0; i < 3; i++) {
         s_motion_ble_box[i]  = NULL; s_motion_ble_name[i] = NULL;
         s_motion_ble_dist[i] = NULL; s_motion_ble_dbm[i]  = NULL;
     }
+    s_motion_ir_canvas = NULL; s_motion_ir_offline = NULL;
+    if (s_motion_ir_buf)  { free(s_motion_ir_buf);  s_motion_ir_buf  = NULL; }
+    if (s_motion_ir_cur)  { free(s_motion_ir_cur);  s_motion_ir_cur  = NULL; }
+    if (s_motion_ir_last) { free(s_motion_ir_last); s_motion_ir_last = NULL; }
+    s_motion_ir_last_w = s_motion_ir_last_h = 0;
+    s_motion_ir_disp_w = s_motion_ir_disp_h = 0;
+    s_motion_ir_drawn = false;
+    s_motion_vox_canvas = NULL; s_motion_vox_offline = NULL;
+    s_motion_vox_canvas_set = false;
+    s_motion_vox_last_seq = 0;
     for (int i = 0; i < MOTION_FLAG_COUNT; i++) s_motion_flags[i] = NULL;
     for (int i = 0; i < MOTION_BAR_COUNT; i++) { s_motion_bars[i] = NULL; s_motion_bar_lbls[i] = NULL; }
     for (int i = 0; i < 4; i++) s_motion_dir_q[i] = NULL;
@@ -1166,25 +1219,98 @@ static void audio_test_cb(lv_event_t *e)
     (void)e;
     prop_audio_play(PA_SIGNAL);
 }
+/* SCANNER distance-ping voice (NVS "ping_voice"; prop_audio reads it per
+ * PA_PING event — see prop_audio.c's s_ping_voices). NVS key names are capped
+ * at 15 chars + a null (NVS_KEY_NAME_MAX_SIZE=16) — "audio_ping_voice" (16
+ * chars) silently blew that limit: every write came back ESP_ERR_NVS_KEY_TOO_
+ * LONG, every read then fell through to the default, so the dropdown always
+ * looked reset to CLASSIC after leaving and returning to the panel even
+ * though nothing was actually wrong with the save/load wiring itself.
+ * Auditions itself on every change so trying candidates is just cycling the
+ * dropdown. */
+static void audio_ping_voice_cb(lv_event_t *e)
+{
+    uint32_t v = lv_dropdown_get_selected(lv_event_get_target(e));
+    prop_settings_set_u32("ping_voice", v);
+    prop_audio_play_pitched(PA_PING, 0);
+}
+/* PITCH SHIFT: gates the SCANNER ping's distance -> pitch transpose (NVS
+ * "ping_pitch", default on). Cadence still tracks distance either way -- this
+ * only affects the tone's pitch. Off is mainly useful for SONAR/TORPEDO: a
+ * naive-resample pitch shift on a real recording gets warbly at the extremes,
+ * where the synthesized voices' plain oscillator transposes cleanly. */
+static void audio_ping_pitch_cb(lv_event_t *e)
+{
+    s_ping_pitch_en = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    prop_settings_set_u32("ping_pitch", s_ping_pitch_en ? 1 : 0);
+}
+/* TEST PING fires PING_TEST_CYCLES back-to-back pings on a repeating LVGL timer
+ * (never block the UI task with vTaskDelay) so you can actually hear the voice's
+ * character/cadence instead of one single blip. PING_TEST_GAP_MS has headroom
+ * over the longest ping voice's total duration (TORPEDO's 1.6s ring-out) so
+ * cycles read as distinct during A/B testing — prop_audio's mixer can now
+ * genuinely overlap pings (voices ring out fully instead of being cut off by
+ * a retrigger), this is just picking a gap wide enough that testing doesn't
+ * stack 5 of them into a wall of sound. */
+#define PING_TEST_CYCLES  5
+#define PING_TEST_GAP_MS  1800
+static void audio_ping_test_tick(lv_timer_t *t)
+{
+    (void)t;
+    prop_audio_play_pitched(PA_PING, 0);
+}
+static void audio_ping_test_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_timer_t *t = lv_timer_create(audio_ping_test_tick, PING_TEST_GAP_MS, NULL);
+    lv_timer_set_repeat_count(t, PING_TEST_CYCLES);
+    lv_timer_ready(t);   /* fire the first ping immediately instead of waiting a full gap */
+}
 
 static lv_obj_t *build_audio_panel(lv_obj_t *parent)
 {
     lv_obj_t *p = make_panel(parent, "AUDIO", back_to_menu_cb);
     lv_obj_t *b = kit_body(p);
-    uint32_t vol = 60, mute = 0;
+    uint32_t vol = 60, mute = 0, ping_voice = 0;
     prop_settings_get_u32("audio_vol", &vol, 60);
     prop_settings_get_u32("audio_mute", &mute, 0);
+    prop_settings_get_u32("ping_voice", &ping_voice, 0);
 
     s_audio_vol_val = kit_slider_row(b, "VOLUME", 0, 100, vol, audio_vol_cb);
     kit_switch_row(b, "MUTE", mute != 0, audio_mute_cb, NULL);
 
     lv_obj_t *test = lv_btn_create(b);
     lv_obj_set_size(test, 200, 52);
-    kit_style_btn(test);
+    kit_style_btn_silent(test);   /* no click SFX -- it would mask the tone being tested */
     lv_obj_add_event_cb(test, audio_test_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *tl = lv_label_create(test);
     lv_label_set_text(tl, "TEST TONE");
     lv_obj_center(tl);
+
+    /* SCANNER distance-ping timbre: dropdown of voices + a dedicated test button
+     * (the dropdown itself also auditions on change, but a repeat-tap button is
+     * handy for A/B-ing the currently-selected voice without re-picking it). */
+    lv_obj_t *prow = kit_row(b);
+    lv_obj_t *pl = lv_label_create(prow);
+    lv_label_set_text(pl, "PING TONE");
+    lv_obj_set_style_text_color(pl, COL_AMBER, 0);
+    lv_obj_t *pdd = lv_dropdown_create(prow);
+    lv_dropdown_set_options(pdd, prop_audio_ping_voice_options());
+    int voice_count = prop_audio_ping_voice_count();
+    lv_dropdown_set_selected(pdd, ping_voice < (uint32_t)voice_count ? ping_voice : 0);
+    lv_obj_set_width(pdd, 220);
+    style_field(pdd);
+    lv_obj_add_event_cb(pdd, audio_ping_voice_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    kit_switch_row(b, "PITCH SHIFT", s_ping_pitch_en, audio_ping_pitch_cb, NULL);
+
+    lv_obj_t *ptest = lv_btn_create(b);
+    lv_obj_set_size(ptest, 200, 52);
+    kit_style_btn_silent(ptest);   /* no click SFX -- it would mask the ping being tested */
+    lv_obj_add_event_cb(ptest, audio_ping_test_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *ptl = lv_label_create(ptest);
+    lv_label_set_text(ptl, "TEST PING");
+    lv_obj_center(ptl);
 
     lv_obj_t *note = lv_label_create(b);
     lv_label_set_text(note, prop_audio_available()
@@ -3766,7 +3892,9 @@ static void scan_spk_toggle_cb(lv_event_t *e)
     (void)e;
     s_scan_ping_en = !s_scan_ping_en;
     prop_settings_set_u32("scan_ping", s_scan_ping_en ? 1 : 0);
-    s_scan_ping_next = 0;
+    if (s_scan_ping_task) {
+        xTaskNotifyGive(s_scan_ping_task);   /* wake it now instead of waiting out the sleep */
+    }
     if (s_scan_spk) {
         lv_label_set_text(s_scan_spk, s_scan_ping_en ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE);
         lv_obj_set_style_text_color(s_scan_spk, s_scan_ping_en ? COL_AMBER : COL_DIM, 0);
@@ -4102,20 +4230,25 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
         lv_obj_add_flag(s_motion_tarrow[i], LV_OBJ_FLAG_HIDDEN);
     }
 
-    /* BLE section header rides just above the contact row. */
-    lv_obj_t *blehdr = lv_label_create(p);
-    lv_label_set_text(blehdr, "BLE CONTACTS");
-    lv_obj_set_style_text_color(blehdr, COL_MUTE, 0);
-    lv_obj_set_style_text_font(blehdr, FONT_BODY, 0);
-    lv_obj_align(blehdr, LV_ALIGN_TOP_LEFT, MR_X0, MR_ROW2 - 22);
+    /* Row 2: three cells — LIDAR IR feed, LIDAR voxel/point-cloud view, BLE CONTACTS
+     * (a single block listing the 3 strongest contacts, not 3 separate blocks). This
+     * row runs the box height out to MR_ROW2_H (taller than the other two rows' MR_BOX_H
+     * — it used to carry an external header the other rows didn't and stopped short of
+     * the panel's bottom edge, leaving dead space above and below it). The two LIDAR
+     * previews are live only while SCANNER is open (prop_lidar_set_active(true) below)
+     * and read "LIDAR OFFLINE" until the rig is found and a frame/grid lands. */
 
-    /* Three strongest BLE contacts — same cell size as the target readout.
-     * Each: contact name (top), distance in metres (large), dBm (corner). */
-    for (int i = 0; i < 3; i++) {
+    /* Col 0: IR feed. Mini upscale of the rig's IR zone grid — same idiom as the
+     * PK_LIDAR panel's IR PREVIEW (ir_thermal_rgb565 LUT), just smaller. Sized to the
+     * grid's actual aspect ratio (fit within MOTION_IR_MAXW x MOTION_IR_MAXH) rather
+     * than forced into a fixed square, so the image is never stretched — the canvas
+     * buffer is allocated at ceiling capacity and (re)bound to the fitted size once the
+     * first grid arrives / whenever its shape changes (rare: rig connect, or the pane
+     * transposing with gravity), not on every repaint. */
+    {
         lv_obj_t *box = lv_obj_create(p);
-        s_motion_ble_box[i] = box;
-        lv_obj_set_size(box, MR_BOX_W, MR_BOX_H);
-        lv_obj_align(box, LV_ALIGN_TOP_LEFT, MR_X0 + i * MR_PITCH, MR_ROW2);
+        lv_obj_set_size(box, MR_BOX_W, MR_ROW2_H);
+        lv_obj_align(box, LV_ALIGN_TOP_LEFT, MR_X0 + 0 * MR_PITCH, MR_ROW2);
         lv_obj_set_style_bg_color(box, COL_PANEL_ITEM, 0);
         lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(box, COL_DIM, 0);
@@ -4124,28 +4257,150 @@ static lv_obj_t *build_motion_panel(lv_obj_t *parent)
         lv_obj_set_style_pad_all(box, 0, 0);
         lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
-        /* Contact name — full width, ellipsised if it overflows the box. */
-        s_motion_ble_name[i] = lv_label_create(box);
-        lv_label_set_long_mode(s_motion_ble_name[i], LV_LABEL_LONG_DOT);
-        lv_obj_set_width(s_motion_ble_name[i], MR_BOX_W - 8);
-        lv_label_set_text(s_motion_ble_name[i], "----");
-        lv_obj_set_style_text_color(s_motion_ble_name[i], COL_DIM, 0);
-        lv_obj_set_style_text_font(s_motion_ble_name[i], FONT_BODY, 0);
-        lv_obj_align(s_motion_ble_name[i], LV_ALIGN_TOP_LEFT, 4, 4);
+        lv_obj_t *hdr = lv_label_create(box);
+        lv_label_set_text(hdr, "IR FEED");
+        lv_obj_set_style_text_color(hdr, COL_MUTE, 0);
+        lv_obj_set_style_text_font(hdr, FONT_BODY, 0);
+        lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 6, 4);
 
-        s_motion_ble_dist[i] = lv_label_create(box);
-        lv_label_set_text(s_motion_ble_dist[i], "-- m");
-        lv_obj_set_style_text_color(s_motion_ble_dist[i], COL_DIM, 0);
-        lv_obj_set_style_text_font(s_motion_ble_dist[i], FONT_STATUS, 0);
-        lv_obj_align(s_motion_ble_dist[i], LV_ALIGN_LEFT_MID, 6, 0);
+        s_motion_ir_offline = lv_label_create(box);
+        lv_label_set_text(s_motion_ir_offline, "LIDAR\nOFFLINE");
+        lv_obj_set_style_text_align(s_motion_ir_offline, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(s_motion_ir_offline, COL_DIM, 0);
+        lv_obj_set_style_text_font(s_motion_ir_offline, FONT_BODY, 0);
+        lv_obj_align(s_motion_ir_offline, LV_ALIGN_CENTER, 0, 8);
 
-        /* RSSI in dBm — small, tucked in the bottom-right corner. */
-        s_motion_ble_dbm[i] = lv_label_create(box);
-        lv_label_set_text(s_motion_ble_dbm[i], "");
-        lv_obj_set_style_text_color(s_motion_ble_dbm[i], COL_MUTE, 0);
-        lv_obj_set_style_text_font(s_motion_ble_dbm[i], FONT_BODY, 0);
-        lv_obj_align(s_motion_ble_dbm[i], LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+        s_motion_ir_buf = heap_caps_malloc((size_t)MOTION_IR_MAXW * MOTION_IR_MAXH * 2, MALLOC_CAP_SPIRAM);
+        s_motion_ir_cur  = heap_caps_malloc(PROP_LIDAR_IR_MAX_CELLS, MALLOC_CAP_SPIRAM);
+        s_motion_ir_last = heap_caps_malloc(PROP_LIDAR_IR_MAX_CELLS, MALLOC_CAP_SPIRAM);
+        if (s_motion_ir_buf) {
+            memset(s_motion_ir_buf, 0, (size_t)MOTION_IR_MAXW * MOTION_IR_MAXH * 2);
+            s_motion_ir_canvas = lv_canvas_create(box);
+            lv_obj_set_style_border_color(s_motion_ir_canvas, COL_DIM, 0);
+            lv_obj_set_style_border_width(s_motion_ir_canvas, 1, 0);
+            lv_obj_clear_flag(s_motion_ir_canvas, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_flag(s_motion_ir_canvas, LV_OBJ_FLAG_HIDDEN);   /* no buffer until 1st grid */
+        } else {
+            ESP_LOGE(UI_TAG, "SCANNER: PSRAM alloc failed for IR mini preview");
+        }
+        s_motion_ir_drawn = false;
+        s_motion_ir_last_w = s_motion_ir_last_h = 0;
+        s_motion_ir_disp_w = s_motion_ir_disp_h = 0;
     }
+
+    /* Col 1: voxel/point-cloud view. Zero-copy — points straight at prop_lidar's
+     * front buffer and shrinks it with lv_image zoom/pivot, no memcpy of the 460 KB
+     * frame (same idiom as the PK_LIDAR panel's hero canvas, just scaled down). The
+     * source frame is square (480x480) so a single square target never stretches it. */
+    {
+        lv_obj_t *box = lv_obj_create(p);
+        lv_obj_set_size(box, MR_BOX_W, MR_ROW2_H);
+        lv_obj_align(box, LV_ALIGN_TOP_LEFT, MR_X0 + 1 * MR_PITCH, MR_ROW2);
+        lv_obj_set_style_bg_color(box, COL_PANEL_ITEM, 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(box, COL_DIM, 0);
+        lv_obj_set_style_border_width(box, 1, 0);
+        lv_obj_set_style_radius(box, 0, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *hdr = lv_label_create(box);
+        lv_label_set_text(hdr, "VOXEL VIEW");
+        lv_obj_set_style_text_color(hdr, COL_MUTE, 0);
+        lv_obj_set_style_text_font(hdr, FONT_BODY, 0);
+        lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 6, 4);
+
+        s_motion_vox_offline = lv_label_create(box);
+        lv_label_set_text(s_motion_vox_offline, "LIDAR\nOFFLINE");
+        lv_obj_set_style_text_align(s_motion_vox_offline, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(s_motion_vox_offline, COL_DIM, 0);
+        lv_obj_set_style_text_font(s_motion_vox_offline, FONT_BODY, 0);
+        lv_obj_align(s_motion_vox_offline, LV_ALIGN_CENTER, 0, 8);
+
+        /* Vertically centred in the header-cleared area below, matching the IR
+         * column's fitted content instead of hugging the header. */
+        lv_obj_t *bezel = lv_obj_create(box);
+        lv_obj_remove_style_all(bezel);
+        lv_obj_set_size(bezel, MOTION_VOX_SZ, MOTION_VOX_SZ);
+        lv_obj_align(bezel, LV_ALIGN_TOP_MID, 0, MOTION_IR_Y0 + (MOTION_IR_MAXH - MOTION_VOX_SZ) / 2);
+        lv_obj_set_style_bg_color(bezel, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(bezel, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(bezel, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+        s_motion_vox_canvas = lv_canvas_create(bezel);
+        lv_obj_set_pos(s_motion_vox_canvas, 0, 0);
+        lv_obj_add_flag(s_motion_vox_canvas, LV_OBJ_FLAG_HIDDEN);   /* no buffer until 1st frame */
+        lv_obj_clear_flag(s_motion_vox_canvas, LV_OBJ_FLAG_CLICKABLE);
+        s_motion_vox_canvas_set = false;
+        s_motion_vox_last_seq = 0;
+    }
+
+    /* Col 2: BLE CONTACTS — ONE block listing the 3 strongest contacts (not 3
+     * separate blocks). Each row: name (top), distance + dBm (bottom corners). */
+    {
+        lv_obj_t *panel = lv_obj_create(p);
+        s_motion_ble_panel = panel;
+        lv_obj_set_size(panel, MR_BOX_W, MR_ROW2_H);
+        lv_obj_align(panel, LV_ALIGN_TOP_LEFT, MR_X0 + 2 * MR_PITCH, MR_ROW2);
+        lv_obj_set_style_bg_color(panel, COL_PANEL_ITEM, 0);
+        lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(panel, COL_DIM, 0);
+        lv_obj_set_style_border_width(panel, 1, 0);
+        lv_obj_set_style_radius(panel, 0, 0);
+        lv_obj_set_style_pad_all(panel, 0, 0);
+        lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *hdr = lv_label_create(panel);
+        lv_label_set_text(hdr, "BLE CONTACTS");
+        lv_obj_set_style_text_color(hdr, COL_MUTE, 0);
+        lv_obj_set_style_text_font(hdr, FONT_BODY, 0);
+        lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 6, 4);
+
+#define MOTION_BLE_ROW_H ((MR_ROW2_H - 24) / 3)
+        for (int i = 0; i < 3; i++) {
+            lv_obj_t *row = lv_obj_create(panel);
+            s_motion_ble_box[i] = row;
+            lv_obj_remove_style_all(row);
+            lv_obj_set_size(row, MR_BOX_W - 12, MOTION_BLE_ROW_H - 4);
+            lv_obj_set_pos(row, 6, 24 + i * MOTION_BLE_ROW_H);
+            lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+            if (i > 0) {
+                /* Thin divider between rows so "a list of three" reads clearly. */
+                lv_obj_set_style_border_side(row, LV_BORDER_SIDE_TOP, 0);
+                lv_obj_set_style_border_color(row, COL_DIM, 0);
+                lv_obj_set_style_border_width(row, 1, 0);
+                lv_obj_set_style_border_opa(row, LV_OPA_50, 0);
+            }
+
+            /* Contact name — full width, ellipsised if it overflows the row. */
+            s_motion_ble_name[i] = lv_label_create(row);
+            lv_label_set_long_mode(s_motion_ble_name[i], LV_LABEL_LONG_DOT);
+            lv_obj_set_width(s_motion_ble_name[i], MR_BOX_W - 20);
+            lv_label_set_text(s_motion_ble_name[i], "----");
+            lv_obj_set_style_text_color(s_motion_ble_name[i], COL_DIM, 0);
+            lv_obj_set_style_text_font(s_motion_ble_name[i], FONT_BODY, 0);
+            lv_obj_align(s_motion_ble_name[i], LV_ALIGN_TOP_LEFT, 0, 1);
+
+            /* Distance + dBm share the bottom line (compact — 3 rows in one block). */
+            s_motion_ble_dist[i] = lv_label_create(row);
+            lv_label_set_text(s_motion_ble_dist[i], "-- m");
+            lv_obj_set_style_text_color(s_motion_ble_dist[i], COL_DIM, 0);
+            lv_obj_set_style_text_font(s_motion_ble_dist[i], FONT_BODY, 0);
+            lv_obj_align(s_motion_ble_dist[i], LV_ALIGN_BOTTOM_LEFT, 0, -1);
+
+            s_motion_ble_dbm[i] = lv_label_create(row);
+            lv_label_set_text(s_motion_ble_dbm[i], "");
+            lv_obj_set_style_text_color(s_motion_ble_dbm[i], COL_MUTE, 0);
+            lv_obj_set_style_text_font(s_motion_ble_dbm[i], FONT_BODY, 0);
+            lv_obj_align(s_motion_ble_dbm[i], LV_ALIGN_BOTTOM_RIGHT, 0, -1);
+        }
+#undef MOTION_BLE_ROW_H
+    }
+
+    /* SCANNER is on screen: the LIDAR link may stream for the IR/voxel previews
+     * above (mirrors PK_LIDAR's own prop_lidar_set_active(true) call). Released in
+     * close_panel() the moment SCANNER (or PK_LIDAR) is no longer the live panel. */
+    prop_lidar_set_active(true);
 
     /* ---- All-sensor overlay inside the radar box (reference layout) ---- */
 
@@ -5068,6 +5323,9 @@ static void build_screen(void)
     uint32_t ping = 0;
     prop_settings_get_u32("scan_ping", &ping, 0);
     s_scan_ping_en = (ping != 0);
+    uint32_t pshift = 1;
+    prop_settings_get_u32("ping_pitch", &pshift, 1);
+    s_ping_pitch_en = (pshift != 0);
 
     /* Travel-direction calibration: stored as signed milli-radians (u32 two's-comp). */
     uint32_t phi_mrad = 0;
@@ -5095,6 +5353,101 @@ static void label_set_text_cached(lv_obj_t *label, const char *txt)
     const char *cur = lv_label_get_text(label);
     if (!cur || strcmp(cur, txt) != 0) {
         lv_label_set_text(label, txt);
+    }
+}
+
+/* SCANNER distance-ping pacing: a standalone task, deliberately NOT part of
+ * ui_observer. ui_observer runs in the engine's animate_task context and has
+ * to acquire lvgl_port_lock() to touch widgets — on a busy frame (canvas
+ * blits, panel builds) that lock can be held by the real LVGL task on core 1,
+ * so ui_observer's 50ms-timeout lock attempt just skips the frame. That made
+ * the old tick-gated ping (paced by comparing engine ticks inside
+ * ui_observer) audibly jerky: whichever tick happened to land when the lock
+ * was free fired the chirp, not a steady beat.
+ *
+ * This task touches neither LVGL nor the lock — it reads targets straight
+ * from prop_motion_get_targets() (its own cheap, thread-safe cache) and hands
+ * the chirp to prop_audio's queued task, so its own sleep is the only thing
+ * that paces it. Pinned to core 0 alongside every other sensor/audio task
+ * (LVGL owns core 1 exclusively — see bsp_illuminate.c), at the same priority
+ * as prop_audio's task so it isn't starved by the lower-priority scan tasks.
+ *
+ * Distance zones are still fixed interval/pitch TARGETS, not a continuous
+ * function of range — that's what keeps the cadence itself steady rather
+ * than creeping with every mm of sensor jitter. Two refinements on top:
+ *  - hysteresis on which zone is "current" (HYST_M dead-band) so a target
+ *    sitting right on a boundary doesn't flip-flop zones beat to beat;
+ *  - the played interval/pitch eases toward the current zone's target each
+ *    beep instead of snapping to it, so crossing a boundary is a glide over
+ *    a couple of beeps rather than an abrupt jump. Finer zones (below) make
+ *    each glide step smaller and the transition smoother still. */
+static void scan_ping_task(void *arg)
+{
+    (void)arg;
+    static const struct { float max_m; uint32_t interval_ms; int semis; } zones[] = {
+        { 0.75f,  500, 9 },   /* <0.75 m: fast/high — "closing" */
+        { 1.25f,  650, 8 },
+        { 1.75f,  800, 7 },
+        { 2.25f,  975, 6 },
+        { 2.85f, 1175, 5 },
+        { 3.5f,  1400, 4 },
+        { 4.25f, 1675, 3 },
+        { 5.0f,  2000, 2 },
+        { 5.75f, 2375, 1 },
+        { 6.5f,  2800, 0 },   /* 5.75-6.5 m: slow/low — edge of range */
+    };
+    const int n_zones = (int)(sizeof(zones) / sizeof(zones[0]));
+    const float HYST_M = 0.15f;      /* boundary dead-band, meters */
+    const float GLIDE  = 0.4f;       /* fraction of the way to target per beep */
+
+    int   zi = 0;                    /* current zone, hysteresis-latched */
+    float cur_interval_ms = (float)zones[0].interval_ms;
+    float cur_semis       = (float)zones[0].semis;
+    bool  primed = false;            /* false -> next live reading snaps instead of gliding */
+
+    for (;;) {
+        uint32_t wait_ms = 150;   /* idle poll while gated off / panel closed / no target */
+
+        if (s_scan_ping_en && s_cur_kind == PK_MOTION && prop_audio_available()) {
+            prop_motion_target_t tgts[PROP_MOTION_MAX_TARGETS];
+            int cnt = prop_motion_get_targets(tgts, PROP_MOTION_MAX_TARGETS);
+            float best_m = 1e9f;
+            for (int i = 0; i < cnt; i++) {
+                float fx = (float)tgts[i].x_mm, fy = (float)tgts[i].y_mm;
+                float dm = sqrtf(fx * fx + fy * fy) / 1000.0f;
+                if (dm < best_m) best_m = dm;
+            }
+            if (cnt > 0 && best_m < 6.5f) {
+                /* Step at most one zone per beep in the direction of travel,
+                 * past the boundary by HYST_M, so noise sitting on a boundary
+                 * can't oscillate the zone selection every beep. */
+                while (zi < n_zones - 1 && best_m > zones[zi].max_m + HYST_M) zi++;
+                while (zi > 0 && best_m < zones[zi - 1].max_m - HYST_M) zi--;
+
+                if (!primed) {
+                    cur_interval_ms = (float)zones[zi].interval_ms;
+                    cur_semis = (float)zones[zi].semis;
+                    primed = true;
+                } else {
+                    cur_interval_ms += ((float)zones[zi].interval_ms - cur_interval_ms) * GLIDE;
+                    cur_semis       += ((float)zones[zi].semis - cur_semis) * GLIDE;
+                }
+
+                /* Cadence (wait_ms/cur_interval_ms) always tracks distance; the pitch
+                 * transpose is the part the AUDIO panel's PITCH SHIFT switch gates. */
+                prop_audio_play_pitched(PA_PING, s_ping_pitch_en ? (int)lroundf(cur_semis) : 0);
+                wait_ms = (uint32_t)(cur_interval_ms + 0.5f);
+            } else {
+                primed = false;   /* target lost — re-snap on reacquire, don't glide from stale */
+            }
+        } else {
+            primed = false;
+        }
+
+        /* ulTaskNotifyTake doubles as the sleep and an early-wake hook: toggling
+         * the feedback on notifies this task so it doesn't sit out the rest of an
+         * idle-poll sleep before giving the first chirp. */
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(wait_ms));
     }
 }
 
@@ -6120,30 +6473,106 @@ static void ui_observer(const prop_state_t *st, void *ctx)
             }
         }
 
-        /* Distance ping: chirp the closest radar target's range when enabled — pitch
-         * and repetition rate both rise as the target gets nearer. Closest target is
-         * the smallest range among the live radar targets (not BLE). */
-        if (s_scan_ping_en && prop_audio_available()) {
-            float best_m = 1e9f;
-            for (int i = 0; i < cnt; i++) {
-                float fx = (float)tgts[i].x_mm, fy = (float)tgts[i].y_mm;
-                float dm = sqrtf(fx * fx + fy * fy) / 1000.0f;
-                if (dm < best_m) best_m = dm;
-            }
-            if (cnt > 0 && best_m < 6.5f) {
-                if (st->tick >= s_scan_ping_next) {
-                    /* Closer -> higher pitch (capped, mellow) and shorter interval. */
-                    float t = (6.0f - best_m) / 6.0f;          /* 0 far .. 1 near */
-                    if (t < 0.0f) t = 0.0f;
-                    if (t > 1.0f) t = 1.0f;
-                    int semis = (int)(t * 7.0f + 0.5f);        /* 0..7 semitones */
-                    int interval = (int)(28.0f - t * 22.0f);   /* ~28 (1.4s) .. ~6 (0.3s) ticks */
-                    if (interval < 5) interval = 5;
-                    prop_audio_play_pitched(PA_PING, semis);
-                    s_scan_ping_next = st->tick + interval;
+        /* Distance ping scheduling used to live here, gated on engine `tick` — but
+         * ui_observer runs on the LVGL task (core 1), and heavy draw work (canvas
+         * blits, panel fills) could delay this callback enough to make the pulse
+         * audibly jerky. It's now a standalone task (scan_ping_task, below) pinned
+         * to core 0 with vTaskDelayUntil, decoupled from render load entirely; it
+         * reads targets straight from prop_motion_get_targets() itself. */
+    }
+
+    /* SCANNER row-2 LIDAR mini previews (IR feed + voxel view), throttled to ~5 Hz
+     * like the PK_LIDAR sidebar — the link itself only carries a few fps at best on
+     * this board, so checking faster buys nothing. prop_lidar caches the latest grid
+     * and frame indefinitely (they are never cleared on a disconnect, only replaced by
+     * newer data), so — same as PK_LIDAR's own canvas — once something has arrived we
+     * just keep showing it; we do NOT re-hide on SEARCHING/STALE. Do that and this pair
+     * flickers to "LIDAR OFFLINE" on ordinary link jitter even though prop_lidar is
+     * still holding perfectly good data underneath, which read as "the feed keeps going
+     * offline" even though the underlying link was fine. "OFFLINE" now means only
+     * "nothing has ever arrived yet", exactly like the placeholder text's intent. */
+    if (s_cur_kind == PK_MOTION && (s_motion_ir_canvas || s_motion_vox_canvas) && st->tick % 4 == 0) {
+        if (s_motion_ir_canvas && s_motion_ir_buf && s_motion_ir_cur) {
+            int irw = 0, irh = 0;
+            int ircells = prop_lidar_get_ir_grid(s_motion_ir_cur, PROP_LIDAR_IR_MAX_CELLS,
+                                                 &irw, &irh);
+            if (ircells > 0) {
+                if (s_motion_ir_offline) lv_obj_add_flag(s_motion_ir_offline, LV_OBJ_FLAG_HIDDEN);
+                if (!s_motion_ir_drawn || irw != s_motion_ir_last_w || irh != s_motion_ir_last_h ||
+                    memcmp(s_motion_ir_last, s_motion_ir_cur, (size_t)ircells) != 0) {
+                    memcpy(s_motion_ir_last, s_motion_ir_cur, (size_t)ircells);
+                    s_motion_ir_last_w = irw;
+                    s_motion_ir_last_h = irh;
+                    s_motion_ir_drawn = true;
+
+                    /* Fit the grid's real aspect ratio into the box budget instead of
+                     * forcing it into a fixed square (which stretched non-square grids —
+                     * the rig's native shape is ~54x42 and can transpose). Only (re)binds
+                     * the canvas buffer when the shape actually changed. */
+                    float sx = (float)MOTION_IR_MAXW / (float)irw;
+                    float sy = (float)MOTION_IR_MAXH / (float)irh;
+                    float scale = (sx < sy) ? sx : sy;
+                    int dw = (int)(irw * scale + 0.5f);
+                    int dh = (int)(irh * scale + 0.5f);
+                    if (dw < 1) dw = 1;
+                    if (dw > MOTION_IR_MAXW) dw = MOTION_IR_MAXW;
+                    if (dh < 1) dh = 1;
+                    if (dh > MOTION_IR_MAXH) dh = MOTION_IR_MAXH;
+                    if (dw != s_motion_ir_disp_w || dh != s_motion_ir_disp_h) {
+                        lv_canvas_set_buffer(s_motion_ir_canvas, s_motion_ir_buf, dw, dh,
+                                             LV_COLOR_FORMAT_RGB565);
+                        lv_obj_align(s_motion_ir_canvas, LV_ALIGN_TOP_MID, 0,
+                                     MOTION_IR_Y0 + (MOTION_IR_MAXH - dh) / 2);
+                        s_motion_ir_disp_w = dw;
+                        s_motion_ir_disp_h = dh;
+                    }
+                    lv_obj_clear_flag(s_motion_ir_canvas, LV_OBJ_FLAG_HIDDEN);
+
+                    /* One palette pass instead of a per-pixel ir_thermal_rgb565 call
+                     * (same idiom as the PK_LIDAR IR PREVIEW rasteriser). */
+                    uint16_t lut[256];
+                    for (int i = 0; i < 256; i++) lut[i] = ir_thermal_rgb565((uint8_t)i);
+                    for (int y = 0; y < dh; y++) {
+                        const uint8_t *srow = s_motion_ir_cur + (size_t)(y * irh / dh) * irw;
+                        uint16_t *drow = s_motion_ir_buf + (size_t)y * dw;
+                        for (int x = 0; x < dw; x++)
+                            drow[x] = lut[srow[x * irw / dw]];
+                    }
+                    lv_obj_invalidate(s_motion_ir_canvas);
                 }
-            } else {
-                s_scan_ping_next = st->tick;   /* no target — ready to chirp immediately */
+            }
+        }
+
+        if (s_motion_vox_canvas) {
+            uint32_t seq = 0;
+            const uint16_t *frame = prop_lidar_peek_frame(&seq);
+            if (frame) {
+                if (s_motion_vox_offline) lv_obj_add_flag(s_motion_vox_offline, LV_OBJ_FLAG_HIDDEN);
+                if (seq != s_motion_vox_last_seq) {
+                    /* Zero-copy retarget, exactly like PK_LIDAR's hero canvas — just
+                     * scaled down in place via lv_image zoom/pivot, no memcpy. */
+                    if (!s_motion_vox_canvas_set) {
+                        lv_canvas_set_buffer(s_motion_vox_canvas, (void *)frame,
+                                             PROP_LIDAR_FRAME_W, PROP_LIDAR_FRAME_H,
+                                             LV_COLOR_FORMAT_RGB565);
+                        lv_image_set_pivot(s_motion_vox_canvas, 0, 0);
+                        lv_image_set_scale(s_motion_vox_canvas, MOTION_VOX_ZOOM);
+                        lv_obj_clear_flag(s_motion_vox_canvas, LV_OBJ_FLAG_HIDDEN);
+                        s_motion_vox_canvas_set = true;
+                    } else {
+                        lv_draw_buf_t *db = lv_canvas_get_draw_buf(s_motion_vox_canvas);
+                        if (db) {
+                            db->data = (uint8_t *)frame;
+                            lv_obj_invalidate(s_motion_vox_canvas);
+                        }
+                    }
+                    s_motion_vox_last_seq = seq;
+                    /* Grants the v2 link one send credit, same rule as PK_LIDAR:
+                     * call only after the canvas actually points at the frame. Safe to
+                     * call even if the link has since dropped — pump_ready() no-ops fast
+                     * with no socket. */
+                    prop_lidar_frame_consumed(seq);
+                }
             }
         }
     }
@@ -6640,6 +7069,12 @@ esp_err_t prop_ui_init(void)
     build_screen();
     fps_init();
     lvgl_port_unlock();
+
+    if (xTaskCreatePinnedToCore(scan_ping_task, "scan_ping", 3072, NULL, 5,
+                                &s_scan_ping_task, 0) != pdPASS) {
+        ESP_LOGW(UI_TAG, "scan_ping_task create failed — distance-ping feedback disabled");
+        s_scan_ping_task = NULL;
+    }
 
     esp_err_t err = prop_engine_add_observer(ui_observer, NULL);
     ESP_LOGI(UI_TAG, "cassette-futurism UI ready");

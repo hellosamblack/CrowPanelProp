@@ -34,3 +34,9 @@ wifi_secret.env
 
 # Subagent-driven-development scratch workspace (ledgers, briefs, review packages).
 .superpowers/
+
+# Scratch drop folder for files the user attaches mid-session (e.g. reference audio) —
+# root-owned in this sandbox, not writable by the dev user, so nothing here can be
+# cleaned up or moved by tooling. Permanent copies of anything worth keeping belong in
+# a real project folder (e.g. docs/design/audio-reference/ for the sonar ping WAVs).
+/temp/

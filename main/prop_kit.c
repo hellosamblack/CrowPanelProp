@@ -70,7 +70,7 @@ void kit_phosphor_grad(lv_obj_t *obj, lv_color_t c1, lv_color_t c2, lv_grad_dir_
 }
 
 /* ---- Styling primitives ------------------------------------------------- */
-void kit_style_btn(lv_obj_t *b)
+static void kit_style_btn_base(lv_obj_t *b)
 {
     lv_obj_set_style_bg_color(b, COL_PANEL_ITEM, 0);
     lv_obj_set_style_bg_color(b, COL_DIM, LV_PART_MAIN | LV_STATE_PRESSED);
@@ -78,8 +78,19 @@ void kit_style_btn(lv_obj_t *b)
     lv_obj_set_style_border_width(b, 1, 0);
     lv_obj_set_style_radius(b, 0, 0);
     lv_obj_set_style_text_color(b, COL_AMBER, 0);
+}
+void kit_style_btn(lv_obj_t *b)
+{
+    kit_style_btn_base(b);
     /* Every themed button clicks when pressed (one callback per styled button). */
     lv_obj_add_event_cb(b, kit_btn_sfx_cb, LV_EVENT_CLICKED, NULL);
+}
+void kit_style_btn_silent(lv_obj_t *b)
+{
+    /* Same look as kit_style_btn, minus the click SFX -- for buttons whose own
+     * sound IS the point (audio test/preview controls), where the click would
+     * otherwise play right on top of and mask the very sound being auditioned. */
+    kit_style_btn_base(b);
 }
 void kit_style_field(lv_obj_t *f)
 {

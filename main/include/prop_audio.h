@@ -27,7 +27,7 @@ typedef enum {
     PA_SIGNAL,          /* SIGNAL DETECTED — bright 3-note sting */
     PA_ALERT,           /* ALERT — square klaxon */
     PA_BOOT,            /* startup chime */
-    PA_PING,            /* radar range ping — soft rising sine chirp (pitched by distance) */
+    PA_PING,            /* radar range ping — voice selectable, see prop_audio_ping_voice_* below */
     PA_EVENT_COUNT,
 } prop_audio_event_t;
 
@@ -45,5 +45,13 @@ void prop_audio_play(prop_audio_event_t event);
 /* As prop_audio_play, but transpose the event's tones by `semitones` (noise is
  * unaffected). Used to pitch the screen-change clack up with nesting depth. */
 void prop_audio_play_pitched(prop_audio_event_t event, int semitones);
+
+/* PA_PING has several selectable timbres ("voices") instead of one fixed tone —
+ * see the s_ping_voices table in prop_audio.c. The active voice is NVS
+ * "ping_voice" (u32 index, default 0); SETUP -> AUDIO writes it directly
+ * and prop_audio reads it per PA_PING event, so a change takes effect on the
+ * very next chirp. These two just describe the table for that UI. */
+const char *prop_audio_ping_voice_options(void);  /* "\n"-joined names, LVGL dropdown format */
+int prop_audio_ping_voice_count(void);
 
 #endif /* _PROP_AUDIO_H_ */

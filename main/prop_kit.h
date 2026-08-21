@@ -47,6 +47,7 @@ void kit_phosphor_grad(lv_obj_t *obj, lv_color_t c1, lv_color_t c2, lv_grad_dir_
 
 /* ---- Styling primitives (theme a raw widget; the kit is the single source) --- */
 void kit_style_btn(lv_obj_t *o);      /* amber-bordered button on the panel fill   */
+void kit_style_btn_silent(lv_obj_t *o); /* kit_style_btn without the click SFX -- audio test/preview buttons */
 void kit_style_field(lv_obj_t *o);    /* dropdown/textarea: dim border, amber text  */
 void kit_style_slider(lv_obj_t *o);   /* square amber slider                        */
 void kit_style_switch(lv_obj_t *o);   /* square amber switch                        */

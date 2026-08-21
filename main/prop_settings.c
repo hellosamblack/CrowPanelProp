@@ -8,6 +8,23 @@
 #define SET_TAG "PROP_SET"
 #define NVS_NAMESPACE "propcfg"
 
+/* NVS caps key names at NVS_KEY_NAME_MAX_SIZE-1 = 15 chars; a longer key is
+ * silently rejected by the underlying nvs_set_u32/nvs_get_str/etc. calls
+ * (ESP_ERR_NVS_KEY_TOO_LONG), and every accessor below only special-cases
+ * ESP_ERR_NVS_NOT_FOUND, so an over-length key used to just look like "this
+ * setting always resets to its default" with nothing in the log to explain
+ * why. Catch it up front and say so loudly instead — this bit a real feature
+ * once ("audio_ping_voice", 16 chars, one over the limit). */
+static bool key_len_ok(const char *key)
+{
+    if (strlen(key) >= NVS_KEY_NAME_MAX_SIZE) {
+        ESP_LOGE(SET_TAG, "key '%s' is %d chars, NVS caps keys at %d -- rejected",
+                 key, (int)strlen(key), NVS_KEY_NAME_MAX_SIZE - 1);
+        return false;
+    }
+    return true;
+}
+
 esp_err_t prop_settings_init(void)
 {
     esp_err_t ret = nvs_flash_init();
@@ -31,6 +48,9 @@ esp_err_t prop_settings_get_str(const char *key, char *out, size_t out_len, cons
     }
     /* Seed with default so callers always get a usable value. */
     strlcpy(out, def ? def : "", out_len);
+    if (!key_len_ok(key)) {
+        return ESP_ERR_NVS_KEY_TOO_LONG;
+    }
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &h);
@@ -51,6 +71,9 @@ esp_err_t prop_settings_set_str(const char *key, const char *value)
 {
     if (!key) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (!key_len_ok(key)) {
+        return ESP_ERR_NVS_KEY_TOO_LONG;
     }
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
@@ -74,6 +97,9 @@ esp_err_t prop_settings_get_u32(const char *key, uint32_t *out, uint32_t def)
         return ESP_ERR_INVALID_ARG;
     }
     *out = def;
+    if (!key_len_ok(key)) {
+        return ESP_ERR_NVS_KEY_TOO_LONG;
+    }
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
         return ESP_OK;
@@ -91,6 +117,9 @@ esp_err_t prop_settings_set_u32(const char *key, uint32_t value)
 {
     if (!key) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (!key_len_ok(key)) {
+        return ESP_ERR_NVS_KEY_TOO_LONG;
     }
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
